@@ -1,0 +1,8 @@
+/data/*/*.txt
+
+
+.env
+
+/node_modules
+
+/build
