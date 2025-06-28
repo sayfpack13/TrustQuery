@@ -1,54 +1,93 @@
-// === backend/parser.js ===
 const readline = require("readline");
-const { createReadStream } = require("fs");
+const { createReadStream, promises: fsPromises } = require("fs");
+
 
 exports.countLines = async function (filePath, progressCallback = () => {}) {
   let lineCount = 0;
-  const readStream = createReadStream(filePath);
-  const rl = readline.createInterface({
-    input: readStream,
-    crlfDelay: Infinity,
-  });
+  const CHUNK_SIZE = 64 * 1024; // 64 KB
+  const buffer = Buffer.alloc(CHUNK_SIZE);
+  let bytesRead;
+  let fileHandle;
 
-  for await (const line of rl) {
-    lineCount++;
-    progressCallback(lineCount);
+  try {
+    fileHandle = await fsPromises.open(filePath, 'r');
+    let position = 0;
+
+    while ((bytesRead = await fileHandle.read(buffer, 0, CHUNK_SIZE, position)).bytesRead > 0) {
+      for (let i = 0; i < bytesRead.bytesRead; i++) {
+        if (buffer[i] === 10) {
+          lineCount++;
+        }
+      }
+      position += bytesRead.bytesRead;
+      progressCallback(lineCount);
+    }
+
+
+    if (lineCount === 0 && position > 0) {
+        lineCount = 1;
+    }
+
+    return lineCount;
+
+  } catch (error) {
+    throw error;
+  } finally {
+    if (fileHandle) {
+      await fileHandle.close();
+    }
   }
-  return lineCount;
 };
 
-// New signature for parseFile: takes an onBatch callback and a batchSize
-exports.parseFile = async function (filePath, onBatch, batchSize = 1000, progressCallback = () => {}) {
-  const readStream = createReadStream(filePath, { encoding: "utf-8" });
-  const rl = readline.createInterface({ input: readStream });
 
-  let currentBatch = [];
-  let totalProcessedLines = 0; // Renamed for clarity as we're now just processing lines
 
-  for await (const line of rl) {
-    totalProcessedLines++;
-    let clean = line.trim();
 
-    // Basic validation: ensure line is not empty and contains 'http' to be considered valid
-    if (!clean) {
+exports.parseFile = async function (filePath, onBatch, batchSize = 1000,  progressCallback = () => {}) {
+  return new Promise((resolve, reject) => {
+    const readStream = createReadStream(filePath, { encoding: "utf-8" });
+    const rl = readline.createInterface({
+      input: readStream,
+      crlfDelay: Infinity,
+      maxLineLength:  1024 * 1024,
+    });
+
+    let currentBatch = [];
+    let totalProcessedLines = 0;
+
+    rl.on('line', (line) => {
+      totalProcessedLines++;
+      const cleanLine = line.trim();
+
+      // Skip lines that contain spaces after trimming leading/trailing whitespace.
+      if (cleanLine.includes(' ') && cleanLine.length > 0) {
+        return; // Skip this line
+      }
+
+      currentBatch.push(line);
       progressCallback(totalProcessedLines);
-      continue;
-    }
 
-    currentBatch.push({ raw_line: clean }); // Store the raw, cleaned line
+      if (currentBatch.length >= batchSize) {
+        onBatch(currentBatch);
+        currentBatch = [];
+      }
+    });
 
-    // If the batch is full, process it
-    if (currentBatch.length >= batchSize) {
-      await onBatch(currentBatch);
-      currentBatch = [];
-    }
-    progressCallback(totalProcessedLines);
-  }
+    rl.on('close', () => {
+      // Process any remaining lines in the last batch
+      if (currentBatch.length > 0) {
+        onBatch(currentBatch);
+      }
+      resolve();
+    });
 
-  // Process any remaining lines in the last batch
-  if (currentBatch.length > 0) {
-    await onBatch(currentBatch);
-  }
+    rl.on('error', (err) => {
+      // This will catch the 'ERR_BUFFER_TOO_LARGE' error when a line exceeds maxLineLength.
+      if (err.code === 'ERR_BUFFER_TOO_LARGE') {
 
-  return totalProcessedLines; // Return total lines processed (including skipped ones for consistency)
+      } else {
+        // If it's a different error, reject the promise.
+        reject(err);
+      }
+    });
+  });
 };

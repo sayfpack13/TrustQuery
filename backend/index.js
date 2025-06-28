@@ -79,7 +79,6 @@ const es = new Client({ node: "http://localhost:9200" });
                   type: "edge_ngram",
                   min_gram: 2,
                   max_gram: 10,
-                  // Removed token_chars as a troubleshooting step for "unknown setting" error
                 }
               }
             }
@@ -281,20 +280,13 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
         });
         return;
       }
-
+      
+      // We will now calculate the total lines across all files as we parse them.
       let totalLinesAcrossAllFiles = 0;
-      for (const filename of txtFiles) {
-        const filePath = path.join(UNPARSED_DIR, filename);
-        try {
-          totalLinesAcrossAllFiles += await parser.countLines(filePath);
-        } catch (countError) {
-          console.warn(`Task ${taskId}: Could not count lines for ${filename}, skipping from total:`, countError.message);
-        }
-      }
 
       updateTask(taskId, {
         total: totalLinesAcrossAllFiles,
-        message: `Found ${txtFiles.length} files with ${totalLinesAcrossAllFiles} lines to parse. Starting...`
+        message: `Found ${txtFiles.length} files to parse. Starting...`
       });
 
       let cumulativeProcessedLines = 0;
@@ -304,18 +296,16 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
         const filePath = path.join(UNPARSED_DIR, filename);
         const parsedFilePath = path.join(PARSED_DIR, filename);
 
-        let totalLinesInCurrentFile = 0;
         try {
-          totalLinesInCurrentFile = await parser.countLines(filePath);
-          console.log(`Task ${taskId}: Parsing file ${filename} - Found ${totalLinesInCurrentFile} lines.`);
-
-
+          // Remove the initial countLines call for each file.
+          let totalLinesInCurrentFile = 0; 
+          
           await parser.parseFile(
             filePath,
             async (batch) => {
               const bulkBody = batch.flatMap((doc) => [
                 { index: { _index: "accounts" } },
-                { raw_line: doc.raw_line }, // Store raw_line
+                { raw_line: doc }, // Assuming 'doc' is the raw line, as there is no 'doc.raw_line'
               ]);
 
               if (bulkBody.length > 0) {
@@ -324,22 +314,26 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
             },
             BATCH_SIZE,
             (processedLinesInCurrentFile) => {
+              totalLinesInCurrentFile = processedLinesInCurrentFile;
               const newCumulativeProgress = cumulativeProcessedLines + processedLinesInCurrentFile;
               updateTask(taskId, {
                 status: "processing files",
                 progress: newCumulativeProgress,
-                message: `Processing file ${filename}: ${processedLinesInCurrentFile}/${totalLinesInCurrentFile} lines processed. Overall: ${newCumulativeProgress}/${totalLinesAcrossAllFiles} lines.`
+                message: `Processing file ${filename}: ${processedLinesInCurrentFile} lines processed. Overall: ${newCumulativeProgress} lines.`
               });
             }
           );
-
+          
           cumulativeProcessedLines += totalLinesInCurrentFile;
+          totalLinesAcrossAllFiles += totalLinesInCurrentFile;
           filesParsedCount++;
 
-          console.log(`Task ${taskId}: Successfully processed and indexed lines from ${filename}.`);
-          await fs.rename(filePath, parsedFilePath);
-          console.log(`Task ${taskId}: Moved ${filename} to parsed directory.`);
+          // Update the total count of the task after each file is processed.
+          updateTask(taskId, {
+            total: totalLinesAcrossAllFiles,
+          });
 
+          await fs.rename(filePath, parsedFilePath);
         } catch (fileError) {
           console.error(`Task ${taskId}: Error processing file ${filename}:`, fileError);
           updateTask(taskId, {
@@ -392,7 +386,6 @@ app.get("/api/admin/parsed-files", verifyJwt, async (req, res) => {
 });
 
 // UPLOAD endpoint
-// UPLOAD endpoint - Modified to handle multiple files
 app.post("/api/admin/upload", verifyJwt, upload.array("files"), async (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: "No files uploaded" });
@@ -433,29 +426,22 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
     return res.status(404).json({ error: "File not found in unparsed directory." });
   }
 
-  const taskId = createTask("Parse File", "counting lines");
+  const taskId = createTask("Parse File", "initializing"); // Initial status changed to initializing
   res.json({ taskId });
 
   (async () => {
-    let totalLines = 0;
+    let totalLines = 0; // Initialize totalLines to 0, it will be updated during parsing
     try {
-      console.log(`Task ${taskId}: Starting line counting for ${filename}`);
-      totalLines = await parser.countLines(filePath, (currentLines) => {
-        updateTask(taskId, {
-          status: "counting lines",
-          progress: currentLines,
-        });
-      });
-      console.log(`Task ${taskId}: Total lines counted: ${totalLines}`);
-      updateTask(taskId, { total: totalLines, status: "parsing" });
+      console.log(`Task ${taskId}: Starting parsing for ${filename}`);
 
-
-      const totalProcessedLines = await parser.parseFile(
+      // parseFile now returns the total processed lines.
+      // We pass a maxLineLength parameter to the parseFile function.
+      const processedLinesResult = await parser.parseFile(
         filePath,
         async (batch) => {
           const bulkBody = batch.flatMap((doc) => [
             { index: { _index: "accounts" } },
-            { raw_line: doc.raw_line }, // Store raw_line
+            { raw_line: doc }, // Assuming 'doc' is the raw line based on parser.js
           ]);
 
           if (bulkBody.length > 0) {
@@ -463,27 +449,32 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
           }
         },
         BATCH_SIZE,
-        (processedLines) => {
+        parseInt(process.env.MAX_LINE_LENGTH) || 1024 * 1024, // Use MAX_LINE_LENGTH from .env or default
+        (currentProcessedLines) => { // This callback gives real-time progress
+          totalLines = currentProcessedLines; // Update totalLines in real-time
           updateTask(taskId, {
             status: "parsing",
-            progress: processedLines,
-            total: totalLines,
-            message: `Parsing file: ${processedLines}/${totalLines} lines...`
+            progress: currentProcessedLines,
+            // The 'total' will progressively increase as more lines are counted
+            total: currentProcessedLines, 
+            message: `Parsing file: ${currentProcessedLines} lines processed...`
           });
         }
       );
 
-      console.log(`Task ${taskId}: Successfully parsed and indexed ${totalProcessedLines} lines.`);
+      // The final total lines will be the value returned by parseFile
+      totalLines = processedLinesResult; 
+      console.log(`Task ${taskId}: Successfully parsed and indexed ${totalLines} lines.`);
 
       await fs.rename(filePath, parsedFilePath);
       console.log(`Task ${taskId}: Moved ${filename} to parsed directory.`);
 
       updateTask(taskId, {
         status: "completed",
-        progress: totalProcessedLines,
-        total: totalProcessedLines,
+        progress: totalLines,
+        total: totalLines, // Set the final total lines
         completed: true,
-        message: `Parsed and indexed ${totalProcessedLines} lines from ${filename}`,
+        message: `Parsed and indexed ${totalLines} lines from ${filename}`,
       });
       console.log(`Task ${taskId} completed successfully.`);
     } catch (error) {

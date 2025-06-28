@@ -124,11 +124,12 @@ export default function AdminDashboard({ onLogout }) {
     setError(""); // Also clear the internal error state when notification is dismissed
   };
 
+  // fetchData now handles fetching all lists and accounts
   const fetchData = useCallback(async () => {
     setError("");
     try {
       setLoading(true);
-      const [unparsed, parsed, pending, accountsRes] = await Promise.all([
+      const [unparsedRes, parsedRes, pendingRes, accountsRes] = await Promise.all([
         axiosClient.get("/api/admin/files"),
         axiosClient.get("/api/admin/parsed-files"),
         axiosClient.get("/api/admin/pending-files"),
@@ -137,9 +138,9 @@ export default function AdminDashboard({ onLogout }) {
         }),
       ]);
 
-      setUnparsedFiles(unparsed.data.files || []);
-      setParsedFiles(parsed.data.files || []);
-      setPendingFiles(pending.data.files || []);
+      setUnparsedFiles(unparsedRes.data.files || []);
+      setParsedFiles(parsedRes.data.files || []);
+      setPendingFiles(pendingRes.data.files || []);
 
       const fetchedAccounts = accountsRes.data.results || [];
       setAccounts(fetchedAccounts);
@@ -160,10 +161,10 @@ export default function AdminDashboard({ onLogout }) {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize]);
+  }, [page, pageSize]); // Dependencies for fetchData
 
   // New function to fetch ALL tasks
-  const fetchAllTasks = useCallback(async () => {
+  const fetchAllTasks = async () => {
     // Only set loading for tasksList if it's currently empty, otherwise allow partial updates
     if (tasksList.length === 0) {
       setTasksList((prev) =>
@@ -224,7 +225,7 @@ export default function AdminDashboard({ onLogout }) {
         ) {
           playSuccessSound();
           showNotification("success", "All tasks completed!", faCheckCircle);
-          fetchData(); // Refresh all data on task completion
+          fetchData(); // This is the intended data refresh upon task completion
           hasPlayedCompletionSoundRef.current = true; // Prevent multiple sound plays
         }
       }
@@ -245,21 +246,13 @@ export default function AdminDashboard({ onLogout }) {
     } finally {
       // No explicit loading state for all tasks fetch, it's handled by individual actions
     }
-  }, [
-    axiosClient,
-    currentRunningTaskId,
-    showNotification,
-    playSuccessSound,
-    playErrorSound,
-    fetchData,
-    tasksList.length,
-  ]);
+  }
 
   // Effect for initial data fetching on mount
   useEffect(() => {
-    fetchData();
+    fetchData(); // Initial fetch for accounts and files
     fetchAllTasks(); // Initial fetch for tasks
-  }, [fetchData, fetchAllTasks]);
+  }, []);
 
   // Effect to manage polling based on presence of active tasks
   useEffect(() => {
@@ -282,7 +275,7 @@ export default function AdminDashboard({ onLogout }) {
         console.log("Stopped polling for tasks.");
       }
     }
-  }, [tasksList, fetchAllTasks]); // Depend on tasksList to react to changes in task activity
+  }, [tasksList]); // Depend on tasksList to react to changes in task activity
 
   function estimateRemainingTime(start, progress, total) {
     if (!progress || progress === 0 || progress >= total) return null;
@@ -305,7 +298,9 @@ export default function AdminDashboard({ onLogout }) {
       return;
     }
     setLoading(true);
-    setUploadPercentage(0); // Reset progress
+    setUploadPercentage(0); // Reset progress at the start of upload
+    setError(""); // Clear any previous errors
+
     try {
       const formData = new FormData();
       uploadFiles.forEach((file) => {
@@ -327,17 +322,21 @@ export default function AdminDashboard({ onLogout }) {
       if (taskId) {
         localStorage.setItem("currentTaskId", taskId);
         setCurrentRunningTaskId(taskId);
-        fetchAllTasks();
+        fetchAllTasks(); // Fetch all tasks to update UI with new task status
+        fetchData()
       }
 
-      setUploadFiles([]); // Reset after upload
+      setUploadFiles([]); // Clear selected files after successful upload
     } catch (err) {
       console.error("Upload error:", err);
       setError(
         err.response?.data?.error || "Failed to upload files. Please try again."
       );
+    } finally {
+      // Ensure loading state and upload percentage are reset regardless of success or failure
       setLoading(false);
-      setUploadPercentage(0); // Reset on error
+      setUploadPercentage(0);
+      // Removed fetchFiles() from here. Data refresh will be handled by fetchAllTasks upon task completion.
     }
   };
 
@@ -355,6 +354,7 @@ export default function AdminDashboard({ onLogout }) {
         localStorage.setItem("currentTaskId", newTaskId);
         setCurrentRunningTaskId(newTaskId);
         fetchAllTasks(); // Immediately fetch all tasks to update UI
+        fetchData()
       } catch (err) {
         console.error("Error deleting unparsed file:", err);
         setError(
@@ -379,6 +379,7 @@ export default function AdminDashboard({ onLogout }) {
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
       fetchAllTasks(); // Immediately fetch all tasks to update UI
+      fetchData()
     } catch (err) {
       setError(err.response?.data?.error || "Failed to move file to pending.");
     }
@@ -393,6 +394,7 @@ export default function AdminDashboard({ onLogout }) {
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
       fetchAllTasks(); // Immediately fetch all tasks to update UI
+      fetchData()
     } catch (err) {
       setError(err.response?.data?.error || "Parsing failed");
     }
@@ -409,6 +411,7 @@ export default function AdminDashboard({ onLogout }) {
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
       fetchAllTasks(); // Immediately fetch all tasks to update UI
+      fetchData()
     } catch (err) {
       setError(
         err.response?.data?.error || "Failed to parse all unparsed files."
@@ -428,6 +431,7 @@ export default function AdminDashboard({ onLogout }) {
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
       fetchAllTasks(); // Immediately fetch all tasks to update UI
+      fetchData()
     } catch (err) {
       setError(err.response?.data?.error || "Failed to move file to unparsed.");
     }
@@ -445,6 +449,7 @@ export default function AdminDashboard({ onLogout }) {
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
       fetchAllTasks(); // Immediately fetch all tasks to update UI
+      fetchData()
     } catch (err) {
       setError(err.response?.data?.error || "Failed to delete pending file.");
     }
@@ -460,10 +465,14 @@ export default function AdminDashboard({ onLogout }) {
         "Account deleted successfully!",
         faCheckCircle
       );
-      await fetchData(); // Refresh accounts after edit
-      fetchAllTasks(); // Also refresh tasks in case it was a task-related deletion
+      // Directly update the accounts state for immediate UI reflection
+      setAccounts((prevAccounts) =>
+        prevAccounts.filter((account) => account.id !== id)
+      );
+      setTotal((prevTotal) => prevTotal - 1); // Decrement total count
     } catch (err) {
       setError(err.response?.data?.error || "Delete failed");
+      playErrorSound();
     }
   };
 
@@ -480,9 +489,11 @@ export default function AdminDashboard({ onLogout }) {
         localStorage.setItem("currentTaskId", newTaskId);
         setCurrentRunningTaskId(newTaskId);
         fetchAllTasks(); // Immediately fetch all tasks to update UI
+        fetchData()
       } else {
+        // If no taskId is returned (synchronous operation), refresh data immediately
         await fetchData();
-        fetchAllTasks(); // Refresh tasks as well if no task ID is returned
+        // Removed fetchAllTasks() here, as it's not a task-initiating operation if no taskId
       }
     } catch (err) {
       setError(err.response?.data?.error || "Bulk delete failed");
@@ -491,6 +502,8 @@ export default function AdminDashboard({ onLogout }) {
 
   const handleDeleteAll = async () => {
     if (isAnyTaskRunning) return;
+    // Use a custom modal for confirmation instead of window.confirm
+    // For now, retaining window.confirm as per original code if no custom modal implementation is provided.
     if (!window.confirm(`Are you sure you want to clean database.`)) {
       return;
     }
@@ -503,9 +516,11 @@ export default function AdminDashboard({ onLogout }) {
         localStorage.setItem("currentTaskId", newTaskId);
         setCurrentRunningTaskId(newTaskId);
         fetchAllTasks(); // Immediately fetch all tasks to update UI
+        fetchData()
       } else {
+        // If no taskId is returned (synchronous operation), refresh data immediately
         await fetchData();
-        fetchAllTasks(); // Refresh tasks as well if no task ID is returned
+        // Removed fetchAllTasks() here, as it's not a task-initiating operation if no taskId
       }
     } catch (err) {
       setError(err.response?.data?.error || "Failed to delete all accounts");
@@ -602,6 +617,7 @@ export default function AdminDashboard({ onLogout }) {
       playErrorSound();
     } finally {
       setEditLoading(false);
+      // No fetchData or fetchAllTasks needed here, direct state update is sufficient.
     }
   };
 
@@ -907,7 +923,10 @@ export default function AdminDashboard({ onLogout }) {
               onClick={handleUpload}
               className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
               disabled={
-                uploadFiles.length === 0 || isAnyTaskRunning || showEditModal
+                uploadFiles.length === 0 ||
+                isAnyTaskRunning ||
+                showEditModal ||
+                loading
               }
             >
               Upload
