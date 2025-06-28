@@ -651,7 +651,6 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
 
 // DELETE ALL accounts and move parsed files back to unparsed
 app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
-  return
   const taskId = createTask("Clean Database", "initializing");
   res.json({ taskId });
 
