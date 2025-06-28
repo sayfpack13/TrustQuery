@@ -280,7 +280,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
         });
         return;
       }
-      
+
       // We will now calculate the total lines across all files as we parse them.
       let totalLinesAcrossAllFiles = 0;
 
@@ -298,8 +298,8 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
 
         try {
           // Remove the initial countLines call for each file.
-          let totalLinesInCurrentFile = 0; 
-          
+          let totalLinesInCurrentFile = 0;
+
           await parser.parseFile(
             filePath,
             async (batch) => {
@@ -323,7 +323,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
               });
             }
           );
-          
+
           cumulativeProcessedLines += totalLinesInCurrentFile;
           totalLinesAcrossAllFiles += totalLinesInCurrentFile;
           filesParsedCount++;
@@ -456,14 +456,14 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
             status: "parsing",
             progress: currentProcessedLines,
             // The 'total' will progressively increase as more lines are counted
-            total: currentProcessedLines, 
+            total: currentProcessedLines,
             message: `Parsing file: ${currentProcessedLines} lines processed...`
           });
         }
       );
 
       // The final total lines will be the value returned by parseFile
-      totalLines = processedLinesResult; 
+      totalLines = processedLinesResult;
       console.log(`Task ${taskId}: Successfully parsed and indexed ${totalLines} lines.`);
 
       await fs.rename(filePath, parsedFilePath);
@@ -600,33 +600,54 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
 
   (async () => {
     try {
-      const chunkSize = 1000;
+      const chunkSize = 1000;  // ✅ FIXED: Define chunkSize
       let deletedCount = 0;
 
       for (let i = 0; i < ids.length; i += chunkSize) {
         const chunkIds = ids.slice(i, i + chunkSize);
-        const { body: bulkBody } = await es.bulk({
-          refresh: true,
-          body: chunkIds.flatMap((id) => [{ delete: { _index: "accounts", _id: id } }]),
-        });
 
-        const currentDeleted = bulkBody.items.filter(item => item.delete && item.delete.result === 'deleted').length;
+        let bulkResponse;
+        try {
+          bulkResponse = await es.bulk({
+            refresh: true,
+            body: chunkIds.flatMap((id) => [{ delete: { _index: "accounts", _id: id } }]),
+          });
+        } catch (esError) {
+          console.error(`Elasticsearch bulk request failed at chunk starting with ID ${chunkIds[0]}:`, esError);
+          updateTask(taskId, {
+            status: "error",
+            error: esError.message,
+            completed: true,
+          });
+          return;
+        }
+
+        const bulkItems = bulkResponse.items
+
+        const currentDeleted = bulkItems.filter(
+          (item) =>
+            item.delete &&
+            (item.delete.result === "deleted" || item.delete.result === "not_found")
+        ).length;
+
         deletedCount += currentDeleted;
+
 
         updateTask(taskId, {
           status: "deleting",
           progress: deletedCount,
           total: ids.length,
-          message: `Deleted ${deletedCount}/${ids.length} accounts.`
+          message: `Deleted ${deletedCount}/${ids.length} accounts (including missing).`
         });
       }
+
 
       updateTask(taskId, {
         status: "completed",
         progress: deletedCount,
         total: ids.length,
         completed: true,
-        message: `Bulk deleted ${deletedCount} accounts.`
+        message: `Bulk delete completed: ${deletedCount} accounts processed.`
       });
       console.log(`Task ${taskId} completed: Bulk deleted ${deletedCount} accounts.`);
     } catch (error) {
@@ -639,6 +660,7 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
     }
   })();
 });
+
 
 // DELETE ALL accounts and move parsed files back to unparsed
 app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
