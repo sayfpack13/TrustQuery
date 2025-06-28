@@ -2,7 +2,7 @@
 
 **A Scalable Search and Data Management Engine**
 
-![Project Screenshot](https://via.placeholder.com/1200x600.png?text=TrustQuery+Screenshot)
+![Project Screenshot](/frontend/public/favicon.png)
 
 ## 🚀 About the Project
 
