@@ -48,10 +48,11 @@ exports.parseFile = async function (
   progressCallback = () => {}
 ) {
   return new Promise((resolve, reject) => {
-    let buffer = ""; // Use 'let' to allow reassignment.
+    let buffer = "";
     let currentBatch = [];
     let totalProcessedLines = 0;
     let readStream;
+    const MAX_LINE_LENGTH = 10 * 1024 * 1024; // 10 MB
 
     try {
       readStream = createReadStream(filePath, { encoding: "utf8" });
@@ -59,30 +60,19 @@ exports.parseFile = async function (
       return reject(error);
     }
 
-    readStream.on("data", (chunk) => {
-      // Append the new chunk to the buffer.
-      buffer += chunk;
-      // Split the buffer by newlines. The last element might be an incomplete line.
-      const lines = buffer.split("\n");
-      // Keep the last part of the buffer (which may not be a complete line) for the next chunk.
-      buffer = lines.pop();
-
-      for (const line of lines) {
-        // Increment the total processed lines counter for each complete line.
+    const processLine = (line) => {
         totalProcessedLines++;
         
         const cleanLine = line.trim();
 
-        // Skip lines that contain spaces after trimming leading/trailing whitespace.
+        // Skip lines that contain spaces after trimming
         if (cleanLine.includes(' ') && cleanLine.length > 0) {
-          continue;
+          return;
         }
 
-        // You can set a maximum length for the lines you process
-        const MAX_LINE_LENGTH = 1024 * 1024; // 1 MB
-        if (cleanLine.length > MAX_LINE_LENGTH) {
-          console.warn(`Skipping a line with length ${cleanLine.length} as it exceeds the maximum allowed length.`);
-          continue;
+        if (line.length > MAX_LINE_LENGTH) {
+          console.warn(`Skipping a line with length ${line.length} as it exceeds the maximum allowed length of ${MAX_LINE_LENGTH} bytes.`);
+          return;
         }
 
         currentBatch.push(line);
@@ -92,20 +82,29 @@ exports.parseFile = async function (
           onBatch(currentBatch);
           currentBatch = [];
         }
+    };
+
+    readStream.on("data", (chunk) => {
+      buffer += chunk;
+      
+      // Safety check to prevent heap exhaustion from a very long line without a newline.
+      if (buffer.length > MAX_LINE_LENGTH && buffer.indexOf('\n') === -1) {
+        readStream.destroy();
+        return reject(new Error(`File processing stopped: a line exceeds ${MAX_LINE_LENGTH / (1024*1024)}MB without a newline.`));
+      }
+
+      let newlineIndex;
+      while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.substring(0, newlineIndex);
+        buffer = buffer.substring(newlineIndex + 1);
+        processLine(line);
       }
     });
 
     readStream.on("end", () => {
-      // Process any remaining line in the buffer after the stream ends.
+      // Process any remaining data in the buffer as the last line.
       if (buffer.length > 0) {
-        const remainingLines = buffer.split('\n');
-        for (const line of remainingLines) {
-          const cleanLine = line.trim();
-          if (cleanLine.includes(' ') && cleanLine.length > 0) {
-            continue;
-          }
-          currentBatch.push(line);
-        }
+        processLine(buffer);
       }
 
       // Process any remaining lines in the last batch.
