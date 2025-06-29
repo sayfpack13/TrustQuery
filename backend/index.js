@@ -449,7 +449,6 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
           }
         },
         BATCH_SIZE,
-        parseInt(process.env.MAX_LINE_LENGTH) || 1024 * 1024, // Use MAX_LINE_LENGTH from .env or default
         (currentProcessedLines) => { // This callback gives real-time progress
           totalLines = currentProcessedLines; // Update totalLines in real-time
           updateTask(taskId, {
