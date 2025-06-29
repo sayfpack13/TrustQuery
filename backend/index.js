@@ -11,7 +11,7 @@ const { randomUUID } = require("crypto");
 const cors = require("cors");
 
 const app = express();
-const PORT = process.env.PORT || 5000
+const PORT = process.env.PORT || 5000;
 
 
 const SECRET_KEY = process.env.SECRET_KEY;
@@ -20,7 +20,7 @@ const ADMIN_PASS = process.env.ADMIN_PASS;
 const MIN_VISIBLE_CHARS = parseInt(process.env.MIN_VISIBLE_CHARS) || 2;
 const MASKING_RATIO = parseFloat(process.env.MASKING_RATIO) || 0.2;
 const USERNAME_MASKING_RATIO = parseFloat(process.env.USERNAME_MASKING_RATIO) || 0.4;
-const BATCH_SIZE = process.env.BATCH_SIZE
+const BATCH_SIZE = process.env.BATCH_SIZE;
 
 const DATA_DIR = path.join(__dirname, "data");
 const UNPARSED_DIR = path.join(DATA_DIR, "unparsed");
@@ -108,7 +108,8 @@ const es = new Client({ node: "http://localhost:9200" });
 // In-memory task store
 const tasks = {};
 
-function createTask(type, initialStatus = "pending") {
+// Helper function to create a new task and add it to the in-memory store
+function createTask(type, initialStatus = "pending", filename = null) {
   const taskId = randomUUID();
   tasks[taskId] = {
     taskId: taskId,
@@ -120,17 +121,19 @@ function createTask(type, initialStatus = "pending") {
     completed: false,
     startTime: Date.now(),
     fileMovedCount: 0,
+    filename: filename, // Store filename for single file parsing tasks
   };
   return taskId;
 }
 
+// Helper function to update an existing task
 function updateTask(taskId, updates) {
   if (tasks[taskId]) {
     Object.assign(tasks[taskId], updates);
   }
 }
 
-// Middleware to verify JWT
+// Middleware to verify JWT for authenticated routes
 const verifyJwt = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ error: "No token provided" });
@@ -145,7 +148,7 @@ const verifyJwt = (req, res, next) => {
   });
 };
 
-// Admin Login
+// Admin Login endpoint
 app.post("/api/admin/login", (req, res) => {
   const { username, password } = req.body;
   if (username === ADMIN_USER && password === ADMIN_PASS) {
@@ -174,7 +177,7 @@ app.post("/api/admin/move-to-unparsed/:filename", verifyJwt, async (req, res) =>
   const pendingFilePath = path.join(PENDING_DIR, filename);
   const unparsedFilePath = path.join(UNPARSED_DIR, filename);
 
-  const taskId = createTask("Move to Unparsed", "moving");
+  const taskId = createTask("Move to Unparsed", "moving", filename);
   res.json({ taskId });
 
   (async () => {
@@ -205,7 +208,7 @@ app.post("/api/admin/move-to-pending/:filename", verifyJwt, async (req, res) => 
   const unparsedFilePath = path.join(UNPARSED_DIR, filename);
   const pendingFilePath = path.join(PENDING_DIR, filename);
 
-  const taskId = createTask("Move to Pending", "moving");
+  const taskId = createTask("Move to Pending", "moving", filename);
   res.json({ taskId });
 
   (async () => {
@@ -230,12 +233,12 @@ app.post("/api/admin/move-to-pending/:filename", verifyJwt, async (req, res) => 
   })();
 });
 
-// DELETE pending file (similar to delete unparsed)
+// DELETE pending file
 app.delete("/api/admin/pending-files/:filename", verifyJwt, async (req, res) => {
   const { filename } = req.params;
   const filePath = path.join(PENDING_DIR, filename);
 
-  const taskId = createTask("Delete Pending File", "deleting");
+  const taskId = createTask("Delete Pending File", "deleting", filename);
   res.json({ taskId });
 
   (async () => {
@@ -260,8 +263,7 @@ app.delete("/api/admin/pending-files/:filename", verifyJwt, async (req, res) => 
   })();
 });
 
-// Parse all .txt files in the unparsed directory
-/*
+// Parse all .txt files in the unparsed directory with accurate progress
 app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
   const taskId = createTask("Parse All Unparsed Files", "initializing");
   res.json({ taskId });
@@ -282,128 +284,62 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
         return;
       }
 
-      // We will now calculate the total lines across all files as we parse them.
-      let totalLinesAcrossAllFiles = 0;
-
+      // === Step 1: Calculate grand total lines across all files ===
+      let grandTotalLines = 0;
       updateTask(taskId, {
-        total: totalLinesAcrossAllFiles,
-        message: `Found ${txtFiles.length} files to parse. Starting...`
+        status: "counting lines",
+        message: `Counting lines in ${txtFiles.length} files...`
       });
-
-      let cumulativeProcessedLines = 0;
-      let filesParsedCount = 0;
-
       for (const filename of txtFiles) {
         const filePath = path.join(UNPARSED_DIR, filename);
-        const parsedFilePath = path.join(PARSED_DIR, filename);
-
         try {
-          // Remove the initial countLines call for each file.
-          let totalLinesInCurrentFile = 0;
-
-          await parser.parseFile(
-            filePath,
-            async (batch) => {
-              const bulkBody = batch.flatMap((doc) => [
-                { index: { _index: "accounts" } },
-                { raw_line: doc }, // Assuming 'doc' is the raw line, as there is no 'doc.raw_line'
-              ]);
-
-              if (bulkBody.length > 0) {
-                await es.bulk({ refresh: false, body: bulkBody });
-              }
-            },
-            BATCH_SIZE,
-            (processedLinesInCurrentFile) => {
-              totalLinesInCurrentFile = processedLinesInCurrentFile;
-              const newCumulativeProgress = cumulativeProcessedLines + processedLinesInCurrentFile;
-              updateTask(taskId, {
-                status: "processing files",
-                progress: newCumulativeProgress,
-                message: `Processing file ${filename}: ${processedLinesInCurrentFile} lines processed. Overall: ${newCumulativeProgress} lines.`
-              });
-            }
-          );
-
-          cumulativeProcessedLines += totalLinesInCurrentFile;
-          totalLinesAcrossAllFiles += totalLinesInCurrentFile;
-          filesParsedCount++;
-
-          // Update the total count of the task after each file is processed.
+          const linesInFile = await parser.countLines(filePath);
+          grandTotalLines += linesInFile;
+          // Update total in task as we count, providing early feedback
           updateTask(taskId, {
-            total: totalLinesAcrossAllFiles,
+            total: grandTotalLines,
+            message: `Counting lines: ${linesInFile} in ${filename}. Total: ${grandTotalLines} lines found.`
           });
-
-          await fs.rename(filePath, parsedFilePath);
-        } catch (fileError) {
-          console.error(`Task ${taskId}: Error processing file ${filename}:`, fileError);
+        } catch (countError) {
+          console.warn(`Task ${taskId}: Could not count lines for ${filename}:`, countError.message);
+          // If a file causes an error during counting, you might want to skip it or mark the task as error
           updateTask(taskId, {
             status: "error",
-            error: `Error processing ${filename}: ${fileError.message}`,
+            error: `Error counting lines in ${filename}: ${countError.message}`,
+            completed: true, // Mark this specific file counting as an error
           });
+          return; // Abort overall task if counting fails
         }
       }
 
-      updateTask(taskId, {
-        status: "completed",
-        progress: totalLinesAcrossAllFiles,
-        completed: true,
-        message: `Successfully parsed and moved ${filesParsedCount} out of ${txtFiles.length} files. Total lines processed: ${totalLinesAcrossAllFiles}.`
-      });
-      console.log(`Task ${taskId} completed.`);
-    } catch (error) {
-      console.error(`Parse all unparsed task ${taskId} failed:`, error);
-      updateTask(taskId, {
-        status: "error",
-        error: error.message,
-        completed: true,
-      });
-    }
-  })();
-});
-
-*/
-
-
-// backend/index.js
-// ... other code
-app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
-  const taskId = createTask("Parse All Unparsed Files", "initializing");
-  res.json({ taskId });
-
-  (async () => {
-    try {
-      const files = await fs.readdir(UNPARSED_DIR);
-      const txtFiles = files.filter(file => path.extname(file).toLowerCase() === '.txt');
-
-      if (txtFiles.length === 0) {
-        updateTask(taskId, {
-          status: "completed",
-          progress: 0,
-          total: 0,
-          completed: true,
-          message: "No .txt files found in unparsed directory to parse."
-        });
-        return;
+      if (grandTotalLines === 0) {
+          updateTask(taskId, {
+              status: "completed",
+              progress: 0,
+              total: 0,
+              completed: true,
+              message: "No lines found in any .txt files to parse."
+          });
+          return;
       }
 
-      // We will now calculate the total lines across all files as we parse them.
-      let totalLinesAcrossAllFiles = 0;
-
+      // Set the final grand total lines for the entire parsing operation
       updateTask(taskId, {
-        total: totalLinesAcrossAllFiles,
-        message: `Found ${txtFiles.length} files to parse. Starting...`
+        total: grandTotalLines,
+        message: `Found ${grandTotalLines} lines across ${txtFiles.length} files. Starting parsing...`
       });
 
       let cumulativeProcessedLines = 0;
       let filesParsedCount = 0;
 
+      // === Step 2: Start parsing each file ===
       for (const filename of txtFiles) {
         const filePath = path.join(UNPARSED_DIR, filename);
         const parsedFilePath = path.join(PARSED_DIR, filename);
 
         try {
-          let totalLinesInCurrentFile = 0;
+          // This call needs to get the actual lines processed for *this* file
+          // The parser.parseFile's progressCallback will update the cumulative progress
           await parser.parseFile(
             filePath,
             async (batch) => {
@@ -413,45 +349,50 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
               ]);
 
               if (bulkBody.length > 0) {
-                await es.bulk({ refresh: false, body: bulkBody });
+                if (es && es.bulk) {
+                  await es.bulk({ refresh: false, body: bulkBody });
+                } else {
+                  console.warn("Elasticsearch client not available for bulk indexing.");
+                }
               }
             },
             BATCH_SIZE,
             (processedLinesInCurrentFile) => {
-              totalLinesInCurrentFile = processedLinesInCurrentFile;
-              const newCumulativeProgress = cumulativeProcessedLines + processedLinesInCurrentFile;
+              // Update the overall task's progress with the cumulative lines processed so far
+              const currentCumulativeProgress = cumulativeProcessedLines + processedLinesInCurrentFile;
               updateTask(taskId, {
                 status: "processing files",
-                progress: newCumulativeProgress,
-                message: `Processing file ${filename}: ${processedLinesInCurrentFile} lines processed. Overall: ${newCumulativeProgress} lines.`
+                progress: currentCumulativeProgress, // Update overall progress
+                message: `Processing file ${filename}: ${processedLinesInCurrentFile} lines processed. Overall: ${currentCumulativeProgress}/${grandTotalLines} lines.`
               });
             }
           );
-          
-          cumulativeProcessedLines += totalLinesInCurrentFile;
-          totalLinesAcrossAllFiles += totalLinesInCurrentFile;
+
+          // After a file is completely parsed, ensure its full line count is added to cumulative total
+          // The `parseFile` promise resolves with the total processed lines for that file
+          const totalLinesProcessedForFile = await parser.countLines(filePath); // Recount to be sure, or modify parseFile to return this
+          cumulativeProcessedLines += totalLinesProcessedForFile;
+
           filesParsedCount++;
+          await fs.rename(filePath, parsedFilePath); // Move file to parsed directory
 
-          // Update the total count of the task after each file is processed.
-          updateTask(taskId, {
-            total: totalLinesAcrossAllFiles,
-          });
-
-          await fs.rename(filePath, parsedFilePath);
         } catch (fileError) {
           console.error(`Task ${taskId}: Error processing file ${filename}:`, fileError);
           updateTask(taskId, {
             status: "error",
             error: `Error processing ${filename}: ${fileError.message}`,
+            completed: true, // Mark task as completed with error
           });
+          // Depending on requirements, you might want to stop the whole process or continue with other files
+          break; // For simplicity, stopping on first file error
         }
       }
 
       updateTask(taskId, {
         status: "completed",
-        progress: totalLinesAcrossAllFiles,
+        progress: cumulativeProcessedLines, // Final progress should match grandTotalLines if successful
         completed: true,
-        message: `Successfully parsed and moved ${filesParsedCount} out of ${txtFiles.length} files. Total lines processed: ${totalLinesAcrossAllFiles}.`
+        message: `Successfully parsed and moved ${filesParsedCount} out of ${txtFiles.length} files. Total lines processed: ${cumulativeProcessedLines}.`
       });
       console.log(`Task ${taskId} completed.`);
     } catch (error) {
@@ -495,7 +436,7 @@ app.post("/api/admin/upload", verifyJwt, upload.array("files"), async (req, res)
     return res.status(400).json({ error: "No files uploaded" });
   }
 
-  const taskId = createTask("Upload Files", "uploading");
+  const taskId = createTask("Upload Files", "uploading", req.files.map(f => f.originalname).join(', '));
   res.json({ taskId });
 
   try {
@@ -518,7 +459,7 @@ app.post("/api/admin/upload", verifyJwt, upload.array("files"), async (req, res)
   }
 });
 
-// PARSE endpoint
+// PARSE endpoint (single file parsing with accurate progress)
 app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
   const { filename } = req.params;
   const filePath = path.join(UNPARSED_DIR, filename);
@@ -530,17 +471,21 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
     return res.status(404).json({ error: "File not found in unparsed directory." });
   }
 
-  const taskId = createTask("Parse File", "initializing"); // Initial status changed to initializing
+  const taskId = createTask("Parse File", "initializing", filename); // Pass filename to task
   res.json({ taskId });
 
   (async () => {
-    let totalLines = 0; // Initialize totalLines to 0, it will be updated during parsing
     try {
       console.log(`Task ${taskId}: Starting parsing for ${filename}`);
 
-      // parseFile now returns the total processed lines.
-      // We pass a maxLineLength parameter to the parseFile function.
-      const processedLinesResult = await parser.parseFile(
+      // === Get total lines for this file once at the beginning ===
+      const totalLinesInFile = await parser.countLines(filePath);
+      updateTask(taskId, {
+        total: totalLinesInFile, // Set the fixed total for this file
+        message: `Found ${totalLinesInFile} lines in ${filename}. Starting parsing...`
+      });
+
+      await parser.parseFile(
         filePath,
         async (batch) => {
           const bulkBody = batch.flatMap((doc) => [
@@ -549,35 +494,35 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
           ]);
 
           if (bulkBody.length > 0) {
-            await es.bulk({ refresh: false, body: bulkBody });
+            if (es && es.bulk) {
+              await es.bulk({ refresh: false, body: bulkBody });
+            } else {
+              console.warn("Elasticsearch client not available for bulk indexing.");
+            }
           }
         },
         BATCH_SIZE,
         (currentProcessedLines) => { // This callback gives real-time progress
-          totalLines = currentProcessedLines; // Update totalLines in real-time
           updateTask(taskId, {
             status: "parsing",
             progress: currentProcessedLines,
-            // The 'total' will progressively increase as more lines are counted
-            total: currentProcessedLines,
-            message: `Parsing file: ${currentProcessedLines} lines processed...`
+            // 'total' remains fixed from initial count
+            message: `Parsing file: ${currentProcessedLines}/${totalLinesInFile} lines processed...`
           });
         }
       );
 
-      // The final total lines will be the value returned by parseFile
-      totalLines = processedLinesResult;
-      console.log(`Task ${taskId}: Successfully parsed and indexed ${totalLines} lines.`);
+      console.log(`Task ${taskId}: Successfully parsed and indexed ${totalLinesInFile} lines.`);
 
       await fs.rename(filePath, parsedFilePath);
       console.log(`Task ${taskId}: Moved ${filename} to parsed directory.`);
 
       updateTask(taskId, {
         status: "completed",
-        progress: totalLines,
-        total: totalLines, // Set the final total lines
+        progress: totalLinesInFile, // Final progress should match totalLinesInFile if successful
+        total: totalLinesInFile, // Confirm final total
         completed: true,
-        message: `Parsed and indexed ${totalLines} lines from ${filename}`,
+        message: `Parsed and indexed ${totalLinesInFile} lines from ${filename}`,
       });
       console.log(`Task ${taskId} completed successfully.`);
     } catch (error) {
@@ -596,7 +541,7 @@ app.delete("/api/admin/unparsed-files/:filename", verifyJwt, async (req, res) =>
   const { filename } = req.params;
   const filePath = path.join(UNPARSED_DIR, filename);
 
-  const taskId = createTask("Delete Unparsed File", "deleting");
+  const taskId = createTask("Delete Unparsed File", "deleting", filename);
   res.json({ taskId });
 
   (async () => {
@@ -703,7 +648,7 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
 
   (async () => {
     try {
-      const chunkSize = 1000;  // ✅ FIXED: Define chunkSize
+      const chunkSize = 1000;
       let deletedCount = 0;
 
       for (let i = 0; i < ids.length; i += chunkSize) {
@@ -795,6 +740,7 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
       filesToMove = parsedFiles.length;
       console.log(`Task ${taskId}: Found ${filesToMove} files to move.`);
 
+      // Estimated total progress units is sum of accounts and files
       const estimatedTotalProgressUnits = accountsToDelete + filesToMove;
       updateTask(taskId, {
         total: estimatedTotalProgressUnits,
@@ -806,12 +752,13 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
         message: `Starting deletion of ${accountsToDelete} accounts...`
       });
 
+      // Perform delete by query
       const deleteResponse = await es.deleteByQuery({
         index: "accounts",
         body: {
           query: { match_all: {} },
         },
-        refresh: true,
+        refresh: true, // Refresh index after deletion
       });
 
       accountsDeleted = (deleteResponse.body && deleteResponse.body.deleted !== undefined) ? deleteResponse.body.deleted : 0;
@@ -831,6 +778,7 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
 
         updateTask(taskId, {
           status: "moving files",
+          // Progress is sum of deleted accounts and moved files
           progress: accountsDeleted + filesMoved,
           message: `Moving files: ${filesMoved}/${filesToMove} files moved.`
         });

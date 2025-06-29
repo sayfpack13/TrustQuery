@@ -45,7 +45,7 @@ export default function AdminDashboard({ onLogout }) {
   const [currentRunningTaskId, setCurrentRunningTaskId] = useState(
     () => localStorage.getItem("currentTaskId") || null
   );
-  const [taskStatus, setTaskStatus] = useState(null); // Holds the full task object from backend for the 'currentRunningTaskId'
+  // `taskStatus` is no longer a separate state, but a derived property from `tasksList` if needed.
   const [tasksList, setTasksList] = useState([]); // List of all tracked tasks (for TaskDetails component)
 
   // For disabling buttons that trigger tasks - now based on any task running in the list
@@ -84,6 +84,7 @@ export default function AdminDashboard({ onLogout }) {
   // Ref to track if success sound has been played for the current batch of task completions
   const hasPlayedCompletionSoundRef = useRef(false);
 
+  // Function to show a notification message
   const showNotification = useCallback(
     (type, message, icon, isLoading = false) => {
       setNotification({
@@ -165,12 +166,6 @@ export default function AdminDashboard({ onLogout }) {
 
   // New function to fetch ALL tasks
   const fetchAllTasks = async () => {
-    // Only set loading for tasksList if it's currently empty, otherwise allow partial updates
-    if (tasksList.length === 0) {
-      setTasksList((prev) =>
-        prev.map((task) => ({ ...task, isLoading: true }))
-      ); // Indicate loading for existing tasks
-    }
     try {
       const response = await axiosClient.get("/api/admin/tasks");
       const fetchedTasks = response.data || [];
@@ -178,38 +173,28 @@ export default function AdminDashboard({ onLogout }) {
       // Update tasksList with the fetched tasks
       setTasksList(fetchedTasks);
 
-      // Check if the currentRunningTaskId (from localStorage) still exists and is active
-      const activeRunningTask = fetchedTasks.find(
-        (t) =>
-          t.taskId === currentRunningTaskId &&
-          !t.completed &&
-          t.status !== "error"
+      // Determine if there's any active task (any task that is not completed and not in error state)
+      const anyActiveTask = fetchedTasks.find(
+        (t) => !t.completed && t.status !== "error"
       );
-      if (activeRunningTask) {
-        setTaskStatus(activeRunningTask); // Update main taskStatus if it's still running
+
+      if (anyActiveTask) {
+        localStorage.setItem("currentTaskId", anyActiveTask.taskId); // Keep localStorage updated
+        setCurrentRunningTaskId(anyActiveTask.taskId); // Set the current running task ID for notifications
         showNotification(
           "info",
-          `${activeRunningTask.type} - ${
-            activeRunningTask.message || "Processing..."
+          `${anyActiveTask.type}${anyActiveTask.filename ? ` (${anyActiveTask.filename})` : ''} - ${
+            anyActiveTask.message || "Processing..."
           }`,
           faCircleNotch,
           true
         );
         hasPlayedCompletionSoundRef.current = false; // Reset sound flag if tasks are active
       } else {
-        // If currentRunningTaskId is no longer active, clear it from localStorage and state
-        if (
-          currentRunningTaskId &&
-          fetchedTasks.every(
-            (t) =>
-              t.taskId !== currentRunningTaskId ||
-              t.completed ||
-              t.status === "error"
-          )
-        ) {
+        // If no active tasks, clear currentRunningTaskId if it was set
+        if (currentRunningTaskId) {
           localStorage.removeItem("currentTaskId");
           setCurrentRunningTaskId(null);
-          setTaskStatus(null);
         }
 
         // Check if any task just completed/errored and play sound/refresh data
@@ -219,9 +204,9 @@ export default function AdminDashboard({ onLogout }) {
         );
 
         if (
-          wasAnyTaskRunningBefore &&
-          !isAnyTaskRunningNow &&
-          !hasPlayedCompletionSoundRef.current
+          wasAnyTaskRunningBefore && // Polling was active before
+          !isAnyTaskRunningNow && // No tasks are running now
+          !hasPlayedCompletionSoundRef.current // Sound hasn't played for this completion batch
         ) {
           playSuccessSound();
           showNotification("success", "All tasks completed!", faCheckCircle);
@@ -231,22 +216,20 @@ export default function AdminDashboard({ onLogout }) {
       }
     } catch (err) {
       console.error("Error fetching all tasks:", err);
-      setTasksList([]); // Clear tasks on error
+      // If error, ensure current running task is cleared to stop continuous polling for a dead task
       if (currentRunningTaskId) {
         localStorage.removeItem("currentTaskId");
         setCurrentRunningTaskId(null);
-        setTaskStatus(null);
       }
+      setTasksList([]); // Clear tasks on error
       showNotification(
         "error",
         "Failed to fetch tasks.",
         faExclamationTriangle
       );
       playErrorSound();
-    } finally {
-      // No explicit loading state for all tasks fetch, it's handled by individual actions
     }
-  }
+  };
 
   // Effect for initial data fetching on mount
   useEffect(() => {
@@ -264,7 +247,7 @@ export default function AdminDashboard({ onLogout }) {
       if (!pollingIntervalRef.current) {
         pollingIntervalRef.current = setInterval(() => {
           fetchAllTasks(); // Poll all tasks
-        }, 3000); // Poll every 3 seconds
+        }, 1000); // Poll every 1 second for more real-time updates
         console.log("Started polling for tasks.");
       }
     } else {
@@ -275,21 +258,46 @@ export default function AdminDashboard({ onLogout }) {
         console.log("Stopped polling for tasks.");
       }
     }
-  }, [tasksList]); // Depend on tasksList to react to changes in task activity
 
+    // Cleanup on unmount
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [tasksList, currentRunningTaskId]); // Depend on tasksList to react to changes in task activity
+
+  // Function to estimate remaining time for a task
   function estimateRemainingTime(start, progress, total) {
-    if (!progress || progress === 0 || progress >= total) return null;
-    const elapsed = Date.now() - start;
-    const timePerItem = elapsed / progress;
+    if (!progress || progress === 0 || total === 0 || progress >= total) return null;
+    const elapsed = Date.now() - start; // Time elapsed in milliseconds
+    const timePerItem = elapsed / progress; // Milliseconds per unit of progress
     const remainingItems = total - progress;
     const remainingMs = Math.round(timePerItem * remainingItems);
+
+    if (isNaN(remainingMs) || !isFinite(remainingMs)) return null;
+
     const seconds = Math.floor(remainingMs / 1000) % 60;
-    const minutes = Math.floor(remainingMs / 1000 / 60);
-    return `${minutes}m ${seconds}s`;
+    const minutes = Math.floor(remainingMs / (1000 * 60)) % 60;
+    const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+
+    let timeString = '';
+    if (hours > 0) timeString += `${hours}h `;
+    if (minutes > 0 || hours > 0) timeString += `${minutes}m `; // Show minutes if hours are shown or if minutes exist
+    timeString += `${seconds}s`;
+
+    return timeString.trim();
   }
 
+  // Function to remove a task from the list (dismiss from UI)
   const removeTask = (idToRemove) => {
     setTasksList((prev) => prev.filter((t) => t.taskId !== idToRemove));
+    // If the task being removed is the currently running one, clear currentRunningTaskId
+    if (idToRemove === currentRunningTaskId) {
+      localStorage.removeItem("currentTaskId");
+      setCurrentRunningTaskId(null);
+    }
   };
 
   const handleUpload = async () => {
@@ -322,8 +330,7 @@ export default function AdminDashboard({ onLogout }) {
       if (taskId) {
         localStorage.setItem("currentTaskId", taskId);
         setCurrentRunningTaskId(taskId);
-        fetchAllTasks(); // Fetch all tasks to update UI with new task status
-        fetchData()
+        fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
       }
 
       setUploadFiles([]); // Clear selected files after successful upload
@@ -336,13 +343,15 @@ export default function AdminDashboard({ onLogout }) {
       // Ensure loading state and upload percentage are reset regardless of success or failure
       setLoading(false);
       setUploadPercentage(0);
-      // Removed fetchFiles() from here. Data refresh will be handled by fetchAllTasks upon task completion.
     }
   };
 
   const handleDeleteUnparsedFile = useCallback(
     async (filename) => {
-      if (isAnyTaskRunning) return;
+      if (isAnyTaskRunning) {
+        showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
+        return;
+      }
 
       setError("");
       setLoading(true);
@@ -353,8 +362,7 @@ export default function AdminDashboard({ onLogout }) {
         const newTaskId = response.data.taskId;
         localStorage.setItem("currentTaskId", newTaskId);
         setCurrentRunningTaskId(newTaskId);
-        fetchAllTasks(); // Immediately fetch all tasks to update UI
-        fetchData()
+        fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
       } catch (err) {
         console.error("Error deleting unparsed file:", err);
         setError(
@@ -364,12 +372,15 @@ export default function AdminDashboard({ onLogout }) {
         setLoading(false);
       }
     },
-    [isAnyTaskRunning, fetchAllTasks]
+    [isAnyTaskRunning, showNotification] // Added showNotification to dependency array
   );
 
   // Handle moving unparsed file to pending
   const handleMoveToPending = async (filename) => {
-    if (isAnyTaskRunning) return;
+    if (isAnyTaskRunning) {
+      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
+      return;
+    }
     setError("");
     try {
       const res = await axiosClient.post(
@@ -378,23 +389,24 @@ export default function AdminDashboard({ onLogout }) {
       const newTaskId = res.data.taskId;
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Immediately fetch all tasks to update UI
-      fetchData()
+      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
     } catch (err) {
       setError(err.response?.data?.error || "Failed to move file to pending.");
     }
   };
 
   const handleParse = async (filename) => {
-    if (isAnyTaskRunning) return;
+    if (isAnyTaskRunning) {
+      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
+      return;
+    }
     setError("");
     try {
       const res = await axiosClient.post(`/api/admin/parse/${filename}`);
       const newTaskId = res.data.taskId;
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Immediately fetch all tasks to update UI
-      fetchData()
+      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
     } catch (err) {
       setError(err.response?.data?.error || "Parsing failed");
     }
@@ -402,7 +414,10 @@ export default function AdminDashboard({ onLogout }) {
 
   // Handle parsing all unparsed files
   const handleParseAllUnparsed = async () => {
-    if (isAnyTaskRunning) return;
+    if (isAnyTaskRunning) {
+      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
+      return;
+    }
 
     setError("");
     try {
@@ -410,8 +425,7 @@ export default function AdminDashboard({ onLogout }) {
       const newTaskId = res.data.taskId;
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Immediately fetch all tasks to update UI
-      fetchData()
+      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
     } catch (err) {
       setError(
         err.response?.data?.error || "Failed to parse all unparsed files."
@@ -421,7 +435,10 @@ export default function AdminDashboard({ onLogout }) {
 
   // Handle moving pending file to unparsed
   const handleMoveToUnparsed = async (filename) => {
-    if (isAnyTaskRunning) return;
+    if (isAnyTaskRunning) {
+      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
+      return;
+    }
     setError("");
     try {
       const res = await axiosClient.post(
@@ -430,8 +447,7 @@ export default function AdminDashboard({ onLogout }) {
       const newTaskId = res.data.taskId;
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Immediately fetch all tasks to update UI
-      fetchData()
+      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
     } catch (err) {
       setError(err.response?.data?.error || "Failed to move file to unparsed.");
     }
@@ -439,7 +455,10 @@ export default function AdminDashboard({ onLogout }) {
 
   // Handle deleting pending file
   const handleDeletePendingFile = async (filename) => {
-    if (isAnyTaskRunning) return;
+    if (isAnyTaskRunning) {
+      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
+      return;
+    }
     setError("");
     try {
       const res = await axiosClient.delete(
@@ -448,8 +467,7 @@ export default function AdminDashboard({ onLogout }) {
       const newTaskId = res.data.taskId;
       localStorage.setItem("currentTaskId", newTaskId);
       setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Immediately fetch all tasks to update UI
-      fetchData()
+      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
     } catch (err) {
       setError(err.response?.data?.error || "Failed to delete pending file.");
     }
@@ -478,6 +496,10 @@ export default function AdminDashboard({ onLogout }) {
 
   const handleBulkDelete = async () => {
     if (!selected.length) return;
+    if (isAnyTaskRunning) {
+      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
+      return;
+    }
     setError("");
     try {
       const ids = selected.map((item) => item.id);
@@ -488,12 +510,9 @@ export default function AdminDashboard({ onLogout }) {
         const newTaskId = res.data.taskId;
         localStorage.setItem("currentTaskId", newTaskId);
         setCurrentRunningTaskId(newTaskId);
-        fetchAllTasks(); // Immediately fetch all tasks to update UI
-        fetchData()
+        fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
       } else {
-        // If no taskId is returned (synchronous operation), refresh data immediately
-        await fetchData();
-        // Removed fetchAllTasks() here, as it's not a task-initiating operation if no taskId
+        await fetchData(); // Fallback for synchronous ops
       }
     } catch (err) {
       setError(err.response?.data?.error || "Bulk delete failed");
@@ -501,9 +520,11 @@ export default function AdminDashboard({ onLogout }) {
   };
 
   const handleDeleteAll = async () => {
-    if (isAnyTaskRunning) return;
+    if (isAnyTaskRunning) {
+      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
+      return;
+    }
     // Use a custom modal for confirmation instead of window.confirm
-    // For now, retaining window.confirm as per original code if no custom modal implementation is provided.
     if (!window.confirm(`Are you sure you want to clean database.`)) {
       return;
     }
@@ -515,12 +536,9 @@ export default function AdminDashboard({ onLogout }) {
         const newTaskId = res.data.taskId;
         localStorage.setItem("currentTaskId", newTaskId);
         setCurrentRunningTaskId(newTaskId);
-        fetchAllTasks(); // Immediately fetch all tasks to update UI
-        fetchData()
+        fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
       } else {
-        // If no taskId is returned (synchronous operation), refresh data immediately
-        await fetchData();
-        // Removed fetchAllTasks() here, as it's not a task-initiating operation if no taskId
+        await fetchData(); // Fallback for synchronous ops
       }
     } catch (err) {
       setError(err.response?.data?.error || "Failed to delete all accounts");
@@ -617,7 +635,6 @@ export default function AdminDashboard({ onLogout }) {
       playErrorSound();
     } finally {
       setEditLoading(false);
-      // No fetchData or fetchAllTasks needed here, direct state update is sufficient.
     }
   };
 
@@ -727,10 +744,10 @@ export default function AdminDashboard({ onLogout }) {
     // Sort tasks to show most recent first
     const sortedTasks = [...tasks].sort((a, b) => b.startTime - a.startTime);
     // Filter to show only active or recently completed/errored tasks (e.g., last 5)
-    // You might want to adjust the filtering logic based on how many "recent" tasks you want to show
+    // Show active tasks or tasks completed/errored in last 10 minutes (600,000 ms)
     const recentTasks = sortedTasks
-      .filter((task) => !task.completed || Date.now() - task.startTime < 300000)
-      .slice(0, 5); // Show active or tasks completed/errored in last 5 min
+      .filter((task) => !task.completed || (Date.now() - task.startTime < 600000 && task.progress > 0)) // Also filter out tasks with 0 progress that might be "initializing" too long
+      .slice(0, 5); // Limit to top 5 recent tasks
 
     if (!recentTasks.length) return null;
 
@@ -755,9 +772,15 @@ export default function AdminDashboard({ onLogout }) {
                 task.status === "completed" ? "text-green-400" : "text-red-400";
             } else if (
               task.status === "processing" ||
-              task.status === "pending"
+              task.status === "parsing" ||
+              task.status === "moving" || // Added moving
+              task.status === "deleting" || // Added deleting
+              task.status === "counting lines" || // Added counting lines
+              task.status === "initializing"
             ) {
               statusColorClass = "text-blue-400";
+            } else if (task.status === "error") {
+              statusColorClass = "text-red-400";
             }
 
             return (
@@ -767,7 +790,9 @@ export default function AdminDashboard({ onLogout }) {
               >
                 <div className="flex justify-between items-start">
                   <div>
-                    <strong className="text-lg text-white">{task.type}</strong>
+                    <strong className="text-lg text-white">
+                      {task.type} {task.filename ? `(${task.filename})` : ""}
+                    </strong>
                     <p className={`text-sm ${statusColorClass}`}>
                       {isCompleted
                         ? task.status === "completed"
@@ -775,12 +800,10 @@ export default function AdminDashboard({ onLogout }) {
                           : "Failed"
                         : task.status || "In progress"}
                     </p>
-                    {task.fileMovedCount ? (
+                    {task.fileMovedCount > 0 && ( // Display fileMovedCount only if > 0
                       <p className="text-xs text-neutral-400 mt-1">
                         Files moved: {task.fileMovedCount}
                       </p>
-                    ) : (
-                      ""
                     )}
                     {task.message && (
                       <p className="text-xs text-neutral-400 mt-1">
@@ -799,6 +822,7 @@ export default function AdminDashboard({ onLogout }) {
                   )}
                 </div>
 
+                {/* Progress bar logic: only show if total > 0 and not completed with error or just initialized */}
                 {!isCompleted && task.total > 0 && (
                   <div className="mt-3 w-full bg-neutral-700 rounded-full h-2.5">
                     <div
@@ -810,27 +834,23 @@ export default function AdminDashboard({ onLogout }) {
                   </div>
                 )}
                 <div className="mt-2 flex justify-between text-sm text-neutral-400">
-                  {task.total > 0 && task.progress !== undefined ? (
+                  {task.total > 0 && task.progress !== undefined && !isCompleted ? (
                     <>
                       <span>{percent}%</span>
                       <span>
-                        {task.progress} / {task.total}
+                        {task.progress} / {task.total} lines
                       </span>
                     </>
-                  ) : task.progress !== undefined ? (
+                  ) : task.progress !== undefined && !isCompleted ? (
                     <span>{task.progress} items processed</span>
-                  ) : (
-                    <span>Progress: N/A</span>
-                  )}
+                  ) : task.total > 0 && isCompleted ? (
+                    <span>{task.progress} / {task.total} lines processed</span>
+                  ) : null} {/* If completed, show final progress if total > 0 */}
                 </div>
-                {task.startTime && task.total > 0 && task.progress > 0 && (
+                {/* ETA: only show if not completed and progress > 0 and total > 0 */}
+                {!isCompleted && task.startTime && task.progress > 0 && task.total > 0 && (
                   <p className="text-xs text-neutral-400 mt-1">
-                    ETA:
-                    {estimateRemainingTime(
-                      task.startTime,
-                      task.progress,
-                      task.total
-                    )}
+                    ETA: {estimateRemainingTime(task.startTime, task.progress, task.total)}
                   </p>
                 )}
                 {task.error && (
@@ -853,7 +873,7 @@ export default function AdminDashboard({ onLogout }) {
       {/* Notification Pop-up */}
       {notification.isVisible && (
         <div
-          className={`fixed bottom-5 right-5 z-50 p-4 rounded-lg shadow-lg flex items-center space-x-3 
+          className={`fixed bottom-5 right-5 z-50 p-4 rounded-lg shadow-lg flex items-center space-x-3
             ${notification.type === "success" ? "bg-green-600 text-white" : ""}
             ${notification.type === "error" ? "bg-red-600 text-white" : ""}
             ${notification.type === "info" ? "bg-primary text-white" : ""}
@@ -893,7 +913,8 @@ export default function AdminDashboard({ onLogout }) {
           <h2 className="text-3xl font-semibold text-white mb-6">
             Upload New File
           </h2>
-          {loading && uploadPercentage > 0 && uploadPercentage < 100 && (
+          {/* Changed uploadPercentage condition to avoid confusion with parsing progress */}
+          {loading && uploadPercentage > 0 && uploadPercentage <= 100 && (
             <div className="mb-4 w-full">
               <p>Uploading files: {uploadPercentage}%</p>
               <div className="w-full bg-neutral-200 rounded-full h-2.5">
@@ -924,7 +945,7 @@ export default function AdminDashboard({ onLogout }) {
               className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
               disabled={
                 uploadFiles.length === 0 ||
-                isAnyTaskRunning ||
+                isAnyTaskRunning || // Use global task running flag
                 showEditModal ||
                 loading
               }
@@ -984,26 +1005,7 @@ export default function AdminDashboard({ onLogout }) {
           <h2 className="text-3xl font-semibold text-white mb-6">
             Unparsed Files
           </h2>
-          {taskStatus &&
-            (taskStatus.type === "Parse File" ||
-              taskStatus.type === "Parse All Unparsed") &&
-            !taskStatus.completed && (
-              <div className="w-full bg-neutral-700 rounded-full h-2.5 mb-4">
-                <div
-                  className="bg-green-500 h-2.5 rounded-full transition-all duration-300 ease-in-out"
-                  style={{
-                    width: `${
-                      taskStatus.total > 0
-                        ? Math.min(
-                            100,
-                            (taskStatus.progress / taskStatus.total) * 100
-                          )
-                        : 0
-                    }%`,
-                  }}
-                ></div>
-              </div>
-            )}
+          {/* Removed direct taskStatus progress bar here, as TaskDetails now handles all task display */}
           <div className="mb-4">
             <button
               onClick={handleParseAllUnparsed}
@@ -1025,60 +1027,66 @@ export default function AdminDashboard({ onLogout }) {
           ) : (
             <ul className="space-y-4 w-full border border-neutral-700 rounded-lg p-4 bg-neutral-900 max-h-80 overflow-y-auto shadow-inner pr-2">
               {/* Added overflow-y-auto and pr-2 */}
-              {unparsedFiles.map((f) => (
-                <li
-                  key={f}
-                  className="flex justify-between items-center bg-neutral-800 p-4 rounded-lg shadow-sm hover:shadow-md transition duration-200 ease-in-out border border-neutral-700"
-                >
-                  <span className="font-medium text-white">{f}</span>
-                  <div className="space-x-2">
-                    <button
-                      onClick={() => handleParse(f)}
-                      disabled={isAnyTaskRunning || showEditModal}
-                      className={`bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
-                        isAnyTaskRunning || showEditModal
-                          ? "opacity-50 cursor-not-allowed"
-                          : ""
-                      }`}
-                    >
-                      {currentRunningTaskId && // Use currentRunningTaskId to check if *this* specific task is the one being actively polled
-                      taskStatus?.type === "Parse File" &&
-                      !taskStatus?.completed &&
-                      taskStatus?.file === f ? ( // Check if the file name matches
+              {unparsedFiles.map((f) => {
+                // Find if this specific file has an active parsing task
+                const currentParsingTask = tasksList.find(
+                  (task) =>
+                    !task.completed &&
+                    (task.type === "Parse File" || task.type === "Parse All Unparsed") &&
+                    task.filename === f
+                );
+                return (
+                  <li
+                    key={f}
+                    className="flex justify-between items-center bg-neutral-800 p-4 rounded-lg shadow-sm hover:shadow-md transition duration-200 ease-in-out border border-neutral-700"
+                  >
+                    <span className="font-medium text-white">{f}</span>
+                    <div className="space-x-2">
+                      <button
+                        onClick={() => handleParse(f)}
+                        disabled={isAnyTaskRunning || showEditModal}
+                        className={`bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
+                          isAnyTaskRunning || showEditModal
+                            ? "opacity-50 cursor-not-allowed"
+                            : ""
+                        }`}
+                      >
+                        {currentParsingTask ? (
+                          <FontAwesomeIcon
+                            icon={faCircleNotch}
+                            className="fa-spin mr-1"
+                          />
+                        ) : (
+                          "Parse"
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleMoveToPending(f)}
+                        disabled={isAnyTaskRunning || showEditModal}
+                        className={`bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
+                          isAnyTaskRunning || showEditModal
+                            ? "opacity-50 cursor-not-allowed"
+                            : ""
+                        }`}
+                      >
                         <FontAwesomeIcon
-                          icon={faCircleNotch}
-                          className="fa-spin mr-1"
+                          icon={faArrowRightArrowLeft}
+                          className="mr-1"
                         />
-                      ) : (
-                        "Parse"
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleMoveToPending(f)}
-                      disabled={isAnyTaskRunning || showEditModal}
-                      className={`bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
-                        isAnyTaskRunning || showEditModal
-                          ? "opacity-50 cursor-not-allowed"
-                          : ""
-                      }`}
-                    >
-                      <FontAwesomeIcon
-                        icon={faArrowRightArrowLeft}
-                        className="mr-1"
-                      />
-                      Move to Pending
-                    </button>
-                    <button
-                      onClick={() => handleDeleteUnparsedFile(f)}
-                      className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                      disabled={loading || isAnyTaskRunning}
-                      title={`Delete '${f}'`}
-                    >
-                      <FontAwesomeIcon icon={faTrash} className="mr-1" /> Delete
-                    </button>
-                  </div>
-                </li>
-              ))}
+                        Move to Pending
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUnparsedFile(f)}
+                        className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
+                        disabled={loading || isAnyTaskRunning}
+                        title={`Delete '${f}'`}
+                      >
+                        <FontAwesomeIcon icon={faTrash} className="mr-1" /> Delete
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
