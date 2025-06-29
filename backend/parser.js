@@ -41,8 +41,6 @@ exports.countLines = async function (filePath, progressCallback = () => {}) {
 
 
 
-
-
 exports.parseFile = async function (filePath, onBatch, batchSize = 1000, progressCallback = () => {}) {
   return new Promise((resolve, reject) => {
     const readStream = createReadStream(filePath, { encoding: "utf-8" });
@@ -103,7 +101,7 @@ exports.parseFile = async function (filePath, onBatch, batchSize = 1000, progres
         onBatch(currentBatch);
       }
 
-      resolve();
+      resolve(totalProcessedLines);
     });
 
     readStream.on('error', (err) => {

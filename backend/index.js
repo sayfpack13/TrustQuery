@@ -261,6 +261,7 @@ app.delete("/api/admin/pending-files/:filename", verifyJwt, async (req, res) => 
 });
 
 // Parse all .txt files in the unparsed directory
+/*
 app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
   const taskId = createTask("Parse All Unparsed Files", "initializing");
   res.json({ taskId });
@@ -324,6 +325,109 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
             }
           );
 
+          cumulativeProcessedLines += totalLinesInCurrentFile;
+          totalLinesAcrossAllFiles += totalLinesInCurrentFile;
+          filesParsedCount++;
+
+          // Update the total count of the task after each file is processed.
+          updateTask(taskId, {
+            total: totalLinesAcrossAllFiles,
+          });
+
+          await fs.rename(filePath, parsedFilePath);
+        } catch (fileError) {
+          console.error(`Task ${taskId}: Error processing file ${filename}:`, fileError);
+          updateTask(taskId, {
+            status: "error",
+            error: `Error processing ${filename}: ${fileError.message}`,
+          });
+        }
+      }
+
+      updateTask(taskId, {
+        status: "completed",
+        progress: totalLinesAcrossAllFiles,
+        completed: true,
+        message: `Successfully parsed and moved ${filesParsedCount} out of ${txtFiles.length} files. Total lines processed: ${totalLinesAcrossAllFiles}.`
+      });
+      console.log(`Task ${taskId} completed.`);
+    } catch (error) {
+      console.error(`Parse all unparsed task ${taskId} failed:`, error);
+      updateTask(taskId, {
+        status: "error",
+        error: error.message,
+        completed: true,
+      });
+    }
+  })();
+});
+
+*/
+
+
+// backend/index.js
+// ... other code
+app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
+  const taskId = createTask("Parse All Unparsed Files", "initializing");
+  res.json({ taskId });
+
+  (async () => {
+    try {
+      const files = await fs.readdir(UNPARSED_DIR);
+      const txtFiles = files.filter(file => path.extname(file).toLowerCase() === '.txt');
+
+      if (txtFiles.length === 0) {
+        updateTask(taskId, {
+          status: "completed",
+          progress: 0,
+          total: 0,
+          completed: true,
+          message: "No .txt files found in unparsed directory to parse."
+        });
+        return;
+      }
+
+      // We will now calculate the total lines across all files as we parse them.
+      let totalLinesAcrossAllFiles = 0;
+
+      updateTask(taskId, {
+        total: totalLinesAcrossAllFiles,
+        message: `Found ${txtFiles.length} files to parse. Starting...`
+      });
+
+      let cumulativeProcessedLines = 0;
+      let filesParsedCount = 0;
+
+      for (const filename of txtFiles) {
+        const filePath = path.join(UNPARSED_DIR, filename);
+        const parsedFilePath = path.join(PARSED_DIR, filename);
+
+        try {
+          let totalLinesInCurrentFile = 0;
+          await parser.parseFile(
+            filePath,
+            async (batch) => {
+              const bulkBody = batch.flatMap((doc) => [
+                { index: { _index: "accounts" } },
+                { raw_line: doc },
+              ]);
+
+              if (bulkBody.length > 0) {
+                await es.bulk({ refresh: false, body: bulkBody });
+              }
+            },
+            BATCH_SIZE,
+            (processedLinesInCurrentFile) => {
+              totalLinesInCurrentFile = processedLinesInCurrentFile;
+              const newCumulativeProgress = cumulativeProcessedLines + processedLinesInCurrentFile;
+              updateTask(taskId, {
+                status: "processing files",
+                progress: newCumulativeProgress,
+                message: `Processing file ${filename}: ${processedLinesInCurrentFile} lines processed. Overall: ${newCumulativeProgress} lines.`
+              });
+            }
+          );
+          
           cumulativeProcessedLines += totalLinesInCurrentFile;
           totalLinesAcrossAllFiles += totalLinesInCurrentFile;
           filesParsedCount++;
