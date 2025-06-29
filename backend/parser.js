@@ -42,52 +42,73 @@ exports.countLines = async function (filePath, progressCallback = () => {}) {
 
 
 
-exports.parseFile = async function (filePath, onBatch, batchSize = 1000,  progressCallback = () => {}) {
+
+exports.parseFile = async function (filePath, onBatch, batchSize = 1000, progressCallback = () => {}) {
   return new Promise((resolve, reject) => {
     const readStream = createReadStream(filePath, { encoding: "utf-8" });
-    const rl = readline.createInterface({
-      input: readStream,
-      crlfDelay: Infinity,
-      maxLineLength:  1024 * 1024,
-    });
-
+    let buffer = '';
     let currentBatch = [];
     let totalProcessedLines = 0;
 
-    rl.on('line', (line) => {
-      totalProcessedLines++;
-      const cleanLine = line.trim();
+    readStream.on('data', (chunk) => {
+      buffer += chunk;
+      let lastNewline = buffer.lastIndexOf('\n');
 
-      // Skip lines that contain spaces after trimming leading/trailing whitespace.
-      if (cleanLine.includes(' ') && cleanLine.length > 0) {
-        return; // Skip this line
-      }
+      if (lastNewline !== -1) {
+        let lines = buffer.substring(0, lastNewline).split('\n');
+        buffer = buffer.substring(lastNewline + 1);
 
-      currentBatch.push(line);
-      progressCallback(totalProcessedLines);
+        for (const line of lines) {
+          totalProcessedLines++;
+          const cleanLine = line.trim();
 
-      if (currentBatch.length >= batchSize) {
-        onBatch(currentBatch);
-        currentBatch = [];
+          // Skip lines that contain spaces after trimming leading/trailing whitespace.
+          if (cleanLine.includes(' ') && cleanLine.length > 0) {
+            continue;
+          }
+
+          // You can set a maximum length for the lines you process
+          const MAX_LINE_LENGTH = 1024 * 1024; // 1 MB
+          if (cleanLine.length > MAX_LINE_LENGTH) {
+            console.warn(`Skipping a line with length ${cleanLine.length} as it exceeds the maximum allowed length.`);
+            continue;
+          }
+
+          currentBatch.push(line);
+          progressCallback(totalProcessedLines);
+
+          if (currentBatch.length >= batchSize) {
+            onBatch(currentBatch);
+            currentBatch = [];
+          }
+        }
       }
     });
 
-    rl.on('close', () => {
+    readStream.on('end', () => {
+      // Process any remaining lines in the buffer
+      if (buffer.length > 0) {
+        const remainingLines = buffer.split('\n');
+        for (const line of remainingLines) {
+          const cleanLine = line.trim();
+          if (cleanLine.includes(' ') && cleanLine.length > 0) {
+            continue;
+          }
+          currentBatch.push(line);
+        }
+      }
+
       // Process any remaining lines in the last batch
       if (currentBatch.length > 0) {
         onBatch(currentBatch);
       }
+
       resolve();
     });
 
-    rl.on('error', (err) => {
-      // This will catch the 'ERR_BUFFER_TOO_LARGE' error when a line exceeds maxLineLength.
-      if (err.code === 'ERR_BUFFER_TOO_LARGE') {
-
-      } else {
-        // If it's a different error, reject the promise.
-        reject(err);
-      }
+    readStream.on('error', (err) => {
+      console.error('An error occurred while reading the file:', err);
+      reject(err);
     });
   });
 };
