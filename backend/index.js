@@ -53,7 +53,9 @@ app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 });
 
-const es = new Client({ node: "http://localhost:9200" });
+const esNodes = (process.env.ELASTICSEARCH_NODES || "http://localhost:9200").split(',');
+const es = new Client({ nodes: esNodes });
+
 (async () => {
   try {
     const indexExists = await es.indices.exists({ index: "accounts" });

@@ -12,48 +12,77 @@ import useSound from "./components/useSound";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCircleNotch, faPlay } from "@fortawesome/free-solid-svg-icons";
 
+const preloadResources = (resources) => {
+  const promises = resources.map((resource) => {
+    return new Promise((resolve, reject) => {
+      if (resource.endsWith('.mp3')) {
+        const audio = new Audio();
+        audio.src = resource;
+        audio.oncanplaythrough = () => resolve(resource);
+        audio.onerror = (e) => reject({ resource, error: e });
+      } else if (resource.endsWith('.gif') || resource.endsWith('.png') || resource.endsWith('.svg')) {
+        const img = new Image();
+        img.src = resource;
+        img.onload = () => resolve(resource);
+        img.onerror = (e) => reject({ resource, error: e });
+      } else {
+        // For other file types, use fetch
+        fetch(resource)
+          .then(res => {
+            if (!res.ok) throw new Error(`Failed to fetch ${resource}`);
+            return res.blob();
+          })
+          .then(() => resolve(resource))
+          .catch((error) => reject({ resource, error }));
+      }
+    });
+  });
+  return Promise.all(promises);
+};
+
+
 export default function App() {
   const [token, setToken] = useState(null);
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [overlayAnimatingOut, setOverlayAnimatingOut] = useState(false);
   const [checkingToken, setCheckingToken] = useState(true);
-  const [terminatorEffect, setTerminatorEffect] = useState(false);
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(true);
+  const [showPersistentTerminator, setShowPersistentTerminator] = useState(false);
 
   const { audioRef: startupAudioRef, playSound: playStartupSound } = useSound("/sounds/startup.mp3");
   const terminatorAudioRef = useRef(null);
 
   useEffect(() => {
-    setIsLoading(true)
-
-    const storedToken = localStorage.getItem("adminToken");
-
-    if (storedToken) {
-      setToken(storedToken);
-
-      const validateToken = async () => {
+    const tokenValidation = async () => {
+      const storedToken = localStorage.getItem("adminToken");
+      if (storedToken) {
+        setToken(storedToken);
         try {
           const res = await fetch("/api/admin/files", {
-            headers: {
-              Authorization: `Bearer ${storedToken}`,
-            },
+            headers: { Authorization: `Bearer ${storedToken}` },
           });
-
           if (!res.ok) throw new Error("Invalid token");
         } catch (err) {
           console.warn("Invalid or expired token. Logging out.");
           handleLogout();
-        } finally {
-          setCheckingToken(false);
-          setIsLoading(false)
         }
-      };
-
-      validateToken();
-    } else {
+      }
       setCheckingToken(false);
-      setIsLoading(false)
-    }
+    };
+
+    const resourcesToLoad = [
+      '/sounds/startup.mp3',
+      '/sounds/terminator.mp3',
+      '/images/terminator.gif',
+      '/logo.svg',
+    ];
+
+    Promise.all([
+      tokenValidation(),
+      preloadResources(resourcesToLoad).catch(err => console.error("Resource loading failed:", err))
+    ]).finally(() => {
+      setIsLoading(false);
+    });
 
   }, []);
 
@@ -70,24 +99,22 @@ export default function App() {
 
   const startApplicationTransition = () => {
     setOverlayAnimatingOut(true);
-    setTimeout(() => {
-      setHasUserInteracted(true);
-      setOverlayAnimatingOut(false);
-    }, 100);
+    setHasUserInteracted(true);
+    setOverlayAnimatingOut(false);
   };
 
   const handleFirstInteraction = () => {
     if (!hasUserInteracted && !overlayAnimatingOut) {
-      const terminatorShownTime = localStorage.getItem("terminatorShownTime") || 0
+      const lastTerminatorTime = localStorage.getItem('lastTerminatorTime');
+      const currentTime = new Date().getTime();
+      const twelveHoursInMillis = 12 * 60 * 60 * 1000; // 12 hours in milliseconds
 
-      if (((new Date().getTime()) - terminatorShownTime) / 1000 > 3600 * 24) {
+      // Show Terminator if it hasn't been shown in the last 12 hours
+      if (!lastTerminatorTime || currentTime - lastTerminatorTime > twelveHoursInMillis) {
+        localStorage.setItem('lastTerminatorTime', currentTime.toString());
         terminatorAudioRef.current?.play();
-        setTerminatorEffect(true);
-        localStorage.setItem("terminatorShownTime", new Date().getTime());
-        setTimeout(() => {
-          startApplicationTransition();
-          setTerminatorEffect(false);
-        }, 1000);
+        setShowPersistentTerminator(true); // Show the GIF immediately
+        startApplicationTransition();
       } else {
         playStartupSound();
         startApplicationTransition();
@@ -102,19 +129,7 @@ export default function App() {
       <audio ref={startupAudioRef} src="/sounds/startup.mp3" preload="auto" />
       <audio ref={terminatorAudioRef} src="/sounds/terminator.mp3" preload="auto" />
 
-      {terminatorEffect && (
-        <>
-          <div className="fixed inset-0 bg-red-900 animate-red-flash z-40" />
-
-          <img
-            src="/images/terminator-eye.png"
-            alt="Terminator Eye"
-            className="fixed inset-0 w-full h-full object-contain animate-glitch-zoom opacity-95 z-50"
-          />
-
-          <div className="fixed inset-0 bg-black bg-opacity-30 z-60 pointer-events-none" />
-        </>
-      )}
+      {/* The old terminatorEffect JSX is removed */}
 
 
 
@@ -183,6 +198,14 @@ export default function App() {
           </main>
           <Footer />
         </Router>
+      )}
+
+      {showPersistentTerminator && (
+        <img
+          src="/images/terminator.gif"
+          alt="Walking Terminator"
+          className="fixed bottom-0 right-0 w-[40rem] h-auto z-50 pointer-events-none animate-walk-across"
+        />
       )}
     </>
   );

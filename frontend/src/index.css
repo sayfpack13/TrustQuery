@@ -217,3 +217,16 @@ body {
   transition-timing-function: ease-in-out;
 }
 
+@keyframes walk-across {
+  from {
+    transform: translateX(20vw); /* Start at the right edge, fully visible */
+  }
+  to {
+    transform: translateX(calc(-100vw - 100%)); /* Move completely off-screen to the left */
+  }
+}
+
+.animate-walk-across {
+  animation: walk-across 10s linear forwards;
+}
+
