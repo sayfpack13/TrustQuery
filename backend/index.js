@@ -807,10 +807,11 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
 
 // GET all current tasks
 app.get("/api/admin/tasks", verifyJwt, (req, res) => {
-  // Return all tasks currently stored in the in-memory 'tasks' object
-  // You might want to filter or paginate this in a production environment
-  // depending on the number of tasks.
-  res.json(Object.values(tasks));
+  // Filter for tasks that are not completed and not in an error state.
+  const activeTasks = Object.values(tasks).filter(
+    (task) => !task.completed && task.status !== "error"
+  );
+  res.json(activeTasks);
 });
 
 
