@@ -165,7 +165,7 @@ export default function AdminDashboard({ onLogout }) {
   }, [page, pageSize]); // Dependencies for fetchData
 
   // New function to fetch ALL tasks
-  const fetchAllTasks = async () => {
+  const fetchAllTasks = useCallback(async () => {
     try {
       const response = await axiosClient.get("/api/admin/tasks");
       const fetchedTasks = response.data || [];
@@ -229,13 +229,13 @@ export default function AdminDashboard({ onLogout }) {
       );
       playErrorSound();
     }
-  };
+  }, [currentRunningTaskId, showNotification, playSuccessSound, playErrorSound, fetchData]);
 
   // Effect for initial data fetching on mount
   useEffect(() => {
     fetchData(); // Initial fetch for accounts and files
     fetchAllTasks(); // Initial fetch for tasks
-  }, []);
+  }, [fetchData, fetchAllTasks]); // Added fetchAllTasks to dependencies
 
   // Effect to manage polling based on presence of active tasks
   useEffect(() => {
@@ -247,7 +247,7 @@ export default function AdminDashboard({ onLogout }) {
       if (!pollingIntervalRef.current) {
         pollingIntervalRef.current = setInterval(() => {
           fetchAllTasks(); // Poll all tasks
-        }, 1000); // Poll every 1 second for more real-time updates
+        }, 3000); // Poll every 3 seconds to reduce re-renders
         console.log("Started polling for tasks.");
       }
     } else {
@@ -266,7 +266,7 @@ export default function AdminDashboard({ onLogout }) {
         pollingIntervalRef.current = null;
       }
     };
-  }, [tasksList, currentRunningTaskId]); // Depend on tasksList to react to changes in task activity
+  }, [tasksList, fetchAllTasks]); // Depend on tasksList and fetchAllTasks to react to changes in task activity
 
   // Function to estimate remaining time for a task
   function estimateRemainingTime(start, progress, total) {
@@ -372,7 +372,7 @@ export default function AdminDashboard({ onLogout }) {
         setLoading(false);
       }
     },
-    [isAnyTaskRunning, showNotification] // Added showNotification to dependency array
+    [isAnyTaskRunning, showNotification, fetchAllTasks] // Added fetchAllTasks to dependency array
   );
 
   // Handle moving unparsed file to pending
@@ -483,11 +483,8 @@ export default function AdminDashboard({ onLogout }) {
         "Account deleted successfully!",
         faCheckCircle
       );
-      // Directly update the accounts state for immediate UI reflection
-      setAccounts((prevAccounts) =>
-        prevAccounts.filter((account) => account.id !== id)
-      );
-      setTotal((prevTotal) => prevTotal - 1); // Decrement total count
+      // Refresh all data after a successful delete
+      fetchData();
     } catch (err) {
       setError(err.response?.data?.error || "Delete failed");
       playErrorSound();
@@ -586,10 +583,7 @@ export default function AdminDashboard({ onLogout }) {
   };
 
   const handleEditChange = (e) => {
-    setEditFormData({
-      ...editFormData,
-      [e.target.name]: e.target.value,
-    });
+    setEditFormData({ ...editFormData, [e.target.name]: e.target.value });
   };
 
   const handleSaveEdit = async () => {
@@ -604,7 +598,6 @@ export default function AdminDashboard({ onLogout }) {
       playErrorSound();
       return;
     }
-
     setEditLoading(true);
     try {
       await axiosClient.put(
@@ -617,20 +610,13 @@ export default function AdminDashboard({ onLogout }) {
         "Account updated successfully!",
         faCheckCircle
       );
-      setAccounts((prevAccounts) =>
-        prevAccounts.map((account) =>
-          account.id === currentEditingAccount.id
-            ? { ...account, ...editFormData }
-            : account
-        )
-      );
+      // Refresh all data after a successful edit
+      fetchData();
       setShowEditModal(false);
       setCurrentEditingAccount(null);
     } catch (err) {
       setError(
-        err.response?.data?.message ||
-          err.response?.data?.error ||
-          "Failed to update account."
+        err.response?.data?.message || err.response?.data?.error || "Failed to update account."
       );
       playErrorSound();
     } finally {
@@ -648,7 +634,6 @@ export default function AdminDashboard({ onLogout }) {
 
   // Pagination page input handlers
   const totalPages = Math.ceil(total / pageSize) || 1;
-
   const handlePageInputChange = (e) => {
     setPageInput(e.target.value);
   };
@@ -708,9 +693,7 @@ export default function AdminDashboard({ onLogout }) {
           key={i}
           onClick={() => setPage(i)}
           className={`px-3 py-1 border border-neutral-700 rounded-md mx-1 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95 ${
-            page === i
-              ? "bg-blue-600 text-white"
-              : "text-neutral-300 bg-neutral-800 hover:bg-neutral-700"
+            page === i ? "bg-blue-600 text-white" : "text-neutral-300 bg-neutral-800 hover:bg-neutral-700"
           }`}
         >
           {i}
@@ -736,13 +719,13 @@ export default function AdminDashboard({ onLogout }) {
         </button>
       );
     }
-
     return pages;
   };
 
   function TaskDetails({ tasks }) {
     // Sort tasks to show most recent first
     const sortedTasks = [...tasks].sort((a, b) => b.startTime - a.startTime);
+
     // Filter to show only active or recently completed/errored tasks (e.g., last 5)
     // Show active tasks or tasks completed/errored in last 10 minutes (600,000 ms)
     const recentTasks = sortedTasks
@@ -754,22 +737,15 @@ export default function AdminDashboard({ onLogout }) {
     return (
       <div className="mb-8 p-4 bg-gradient-to-br from-neutral-800 to-neutral-900 rounded-lg shadow-xl border border-neutral-700">
         <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
-          <FontAwesomeIcon icon={faListCheck} className="mr-2 text-blue-400" />
-          Active/Recent Tasks
+          <FontAwesomeIcon icon={faListCheck} className="mr-2 text-blue-400" /> Active/Recent Tasks
         </h3>
-        <ul className="space-y-4 max-h-60 overflow-y-auto pr-2">
-          {/* Added overflow-y-auto and pr-2 for scrollbar */}
+        <ul className="space-y-4 max-h-60 overflow-y-auto pr-2"> {/* Added overflow-y-auto and pr-2 for scrollbar */}
           {recentTasks.map((task) => {
             const isCompleted = task.completed;
-            const percent =
-              task.total > 0
-                ? Math.round((task.progress / task.total) * 100)
-                : 0;
-
+            const percent = task.total > 0 ? Math.round((task.progress / task.total) * 100) : 0;
             let statusColorClass = "text-neutral-400";
             if (isCompleted) {
-              statusColorClass =
-                task.status === "completed" ? "text-green-400" : "text-red-400";
+              statusColorClass = task.status === "completed" ? "text-green-400" : "text-red-400";
             } else if (
               task.status === "processing" ||
               task.status === "parsing" ||
@@ -782,83 +758,51 @@ export default function AdminDashboard({ onLogout }) {
             } else if (task.status === "error") {
               statusColorClass = "text-red-400";
             }
-
             return (
-              <li
-                key={task.taskId}
-                className="border border-neutral-700 rounded-lg p-4 relative bg-neutral-800 hover:bg-neutral-700 transition duration-200 ease-in-out shadow-lg"
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <strong className="text-lg text-white">
-                      {task.type} {task.filename ? `(${task.filename})` : ""}
-                    </strong>
-                    <p className={`text-sm ${statusColorClass}`}>
-                      {isCompleted
-                        ? task.status === "completed"
-                          ? "Completed"
-                          : "Failed"
-                        : task.status || "In progress"}
-                    </p>
-                    {task.fileMovedCount > 0 && ( // Display fileMovedCount only if > 0
-                      <p className="text-xs text-neutral-400 mt-1">
-                        Files moved: {task.fileMovedCount}
-                      </p>
-                    )}
-                    {task.message && (
-                      <p className="text-xs text-neutral-400 mt-1">
-                        {task.message}
-                      </p>
-                    )}
-                  </div>
-                  {isCompleted && (
+              <li key={task.taskId} className="border border-neutral-700 rounded-lg p-4 relative bg-neutral-800 hover:bg-neutral-700 transition duration-200 ease-in-out shadow-md">
+                <div className="flex justify-between items-center mb-2">
+                  <span className={`text-sm font-semibold ${statusColorClass}`}>
+                    <FontAwesomeIcon
+                      icon={
+                        task.status === "error"
+                          ? faExclamationTriangle
+                          : isCompleted
+                          ? faCheckCircle
+                          : faCircleNotch
+                      }
+                      className={!isCompleted && task.status !== "error" ? "fa-spin mr-1" : "mr-1"}
+                    />
+                    {task.type} {task.filename ? `(${task.filename})` : ""}
+                  </span>
+                  {task.status === "completed" || task.status === "error" ? (
                     <button
                       onClick={() => removeTask(task.taskId)}
-                      className="absolute top-2 right-2 text-neutral-400 hover:text-red-400 text-xl transition-colors duration-200"
+                      className="text-neutral-400 hover:text-white transition-colors duration-150"
                       title="Dismiss task"
                     >
-                      &times;
+                      <FontAwesomeIcon icon={faTimes} />
                     </button>
-                  )}
+                  ) : null}
                 </div>
-
-                {/* Progress bar logic: only show if total > 0 and not completed with error or just initialized */}
-                {!isCompleted && task.total > 0 && (
-                  <div className="mt-3 w-full bg-neutral-700 rounded-full h-2.5">
-                    <div
-                      className="bg-blue-500 h-2.5 rounded-full transition-all duration-300 ease-in-out"
-                      style={{
-                        width: `${Math.min(100, percent)}%`,
-                      }}
-                    ></div>
-                  </div>
-                )}
-                <div className="mt-2 flex justify-between text-sm text-neutral-400">
-                  {task.total > 0 && task.progress !== undefined && !isCompleted ? (
-                    <>
-                      <span>{percent}%</span>
-                      <span>
-                        {task.progress} / {task.total} lines
+                <div className="w-full bg-neutral-700 rounded-full h-2.5">
+                  <div
+                    className="bg-blue-600 h-2.5 rounded-full"
+                    style={{ width: `${percent}%` }}
+                  ></div>
+                </div>
+                <div className="flex justify-between text-xs mt-2 text-neutral-400">
+                  <span>
+                    {task.message}
+                    {task.total > 0 && ` (${task.progress}/${task.total})`}
+                  </span>
+                  <span>
+                    {estimateRemainingTime(task.startTime, task.progress, task.total) && (
+                      <span className="ml-2">
+                        ETA: {estimateRemainingTime(task.startTime, task.progress, task.total)}
                       </span>
-                    </>
-                  ) : task.progress !== undefined && !isCompleted ? (
-                    <span>{task.progress} items processed</span>
-                  ) : task.total > 0 && isCompleted ? (
-                    <span>{task.progress} / {task.total} lines processed</span>
-                  ) : null} {/* If completed, show final progress if total > 0 */}
+                    )}
+                  </span>
                 </div>
-                {/* ETA: only show if not completed and progress > 0 and total > 0 */}
-                {!isCompleted && task.startTime && task.progress > 0 && task.total > 0 && (
-                  <p className="text-xs text-neutral-400 mt-1">
-                    ETA: {estimateRemainingTime(task.startTime, task.progress, task.total)}
-                  </p>
-                )}
-                {task.error && (
-                  <p className="mt-2 text-red-400 text-sm">
-                    <FontAwesomeIcon icon={faExclamationTriangle} />
-                    {task.error}
-                  </p>
-                )}
               </li>
             );
           })}
@@ -868,16 +812,17 @@ export default function AdminDashboard({ onLogout }) {
   }
 
   return (
-    <div className="min-h-screen p-6 bg-neutral-950 font-inter text-neutral-100">
-      {/* Enhanced overall page style */}
-      {/* Notification Pop-up */}
+    <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans">
+      {/* Notification banner */}
       {notification.isVisible && (
         <div
-          className={`fixed bottom-5 right-5 z-50 p-4 rounded-lg shadow-lg flex items-center space-x-3
-            ${notification.type === "success" ? "bg-green-600 text-white" : ""}
-            ${notification.type === "error" ? "bg-red-600 text-white" : ""}
-            ${notification.type === "info" ? "bg-primary text-white" : ""}
-          `}
+          className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-50 p-4 rounded-lg shadow-2xl flex items-center space-x-3 transition-transform duration-300 ease-out transform ${
+            notification.isVisible ? "translate-y-0 opacity-100" : "-translate-y-20 opacity-0"
+          } ${
+            notification.type === "success" ? "bg-green-600 text-white" : ""
+          } ${notification.type === "error" ? "bg-red-600 text-white" : ""} ${
+            notification.type === "info" ? "bg-primary text-white" : ""
+          }`}
         >
           <FontAwesomeIcon
             icon={notification.icon}
@@ -893,9 +838,7 @@ export default function AdminDashboard({ onLogout }) {
         </div>
       )}
       <div className="max-w-12xl mx-auto px-4 sm:px-6 lg:px-8 py-8 bg-neutral-900 shadow-2xl rounded-xl border border-neutral-700">
-        {/* Enhanced main content wrapper */}
         <div className="flex justify-between items-center mb-10 pb-4 border-b border-neutral-700">
-          {/* Enhanced header styling */}
           <h1 className="text-5xl font-extrabold text-primary">
             Admin Dashboard
           </h1>
@@ -909,11 +852,9 @@ export default function AdminDashboard({ onLogout }) {
         {/* Task Details Component */}
         <TaskDetails tasks={tasksList} />
         <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-          {/* Consistent section styling */}
           <h2 className="text-3xl font-semibold text-white mb-6">
             Upload New File
           </h2>
-          {/* Changed uploadPercentage condition to avoid confusion with parsing progress */}
           {loading && uploadPercentage > 0 && uploadPercentage <= 100 && (
             <div className="mb-4 w-full">
               <p>Uploading files: {uploadPercentage}%</p>

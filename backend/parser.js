@@ -41,50 +41,62 @@ exports.countLines = async function (filePath, progressCallback = () => {}) {
 
 
 
-exports.parseFile = async function (filePath, onBatch, batchSize = 1000, progressCallback = () => {}) {
+exports.parseFile = async function (
+  filePath,
+  onBatch,
+  batchSize = 1000,
+  progressCallback = () => {}
+) {
   return new Promise((resolve, reject) => {
-    const readStream = createReadStream(filePath, { encoding: "utf-8" });
-    let buffer = '';
+    let buffer = ""; // Use 'let' to allow reassignment.
     let currentBatch = [];
     let totalProcessedLines = 0;
+    let readStream;
 
-    readStream.on('data', (chunk) => {
+    try {
+      readStream = createReadStream(filePath, { encoding: "utf8" });
+    } catch (error) {
+      return reject(error);
+    }
+
+    readStream.on("data", (chunk) => {
+      // Append the new chunk to the buffer.
       buffer += chunk;
-      let lastNewline = buffer.lastIndexOf('\n');
+      // Split the buffer by newlines. The last element might be an incomplete line.
+      const lines = buffer.split("\n");
+      // Keep the last part of the buffer (which may not be a complete line) for the next chunk.
+      buffer = lines.pop();
 
-      if (lastNewline !== -1) {
-        let lines = buffer.substring(0, lastNewline).split('\n');
-        buffer = buffer.substring(lastNewline + 1);
+      for (const line of lines) {
+        // Increment the total processed lines counter for each complete line.
+        totalProcessedLines++;
+        
+        const cleanLine = line.trim();
 
-        for (const line of lines) {
-          totalProcessedLines++;
-          const cleanLine = line.trim();
+        // Skip lines that contain spaces after trimming leading/trailing whitespace.
+        if (cleanLine.includes(' ') && cleanLine.length > 0) {
+          continue;
+        }
 
-          // Skip lines that contain spaces after trimming leading/trailing whitespace.
-          if (cleanLine.includes(' ') && cleanLine.length > 0) {
-            continue;
-          }
+        // You can set a maximum length for the lines you process
+        const MAX_LINE_LENGTH = 1024 * 1024; // 1 MB
+        if (cleanLine.length > MAX_LINE_LENGTH) {
+          console.warn(`Skipping a line with length ${cleanLine.length} as it exceeds the maximum allowed length.`);
+          continue;
+        }
 
-          // You can set a maximum length for the lines you process
-          const MAX_LINE_LENGTH = 1024 * 1024; // 1 MB
-          if (cleanLine.length > MAX_LINE_LENGTH) {
-            console.warn(`Skipping a line with length ${cleanLine.length} as it exceeds the maximum allowed length.`);
-            continue;
-          }
+        currentBatch.push(line);
+        progressCallback(totalProcessedLines);
 
-          currentBatch.push(line);
-          progressCallback(totalProcessedLines);
-
-          if (currentBatch.length >= batchSize) {
-            onBatch(currentBatch);
-            currentBatch = [];
-          }
+        if (currentBatch.length >= batchSize) {
+          onBatch(currentBatch);
+          currentBatch = [];
         }
       }
     });
 
-    readStream.on('end', () => {
-      // Process any remaining lines in the buffer
+    readStream.on("end", () => {
+      // Process any remaining line in the buffer after the stream ends.
       if (buffer.length > 0) {
         const remainingLines = buffer.split('\n');
         for (const line of remainingLines) {
@@ -96,7 +108,7 @@ exports.parseFile = async function (filePath, onBatch, batchSize = 1000, progres
         }
       }
 
-      // Process any remaining lines in the last batch
+      // Process any remaining lines in the last batch.
       if (currentBatch.length > 0) {
         onBatch(currentBatch);
       }
@@ -104,9 +116,8 @@ exports.parseFile = async function (filePath, onBatch, batchSize = 1000, progres
       resolve(totalProcessedLines);
     });
 
-    readStream.on('error', (err) => {
-      console.error('An error occurred while reading the file:', err);
-      reject(err);
+    readStream.on("error", (error) => {
+      reject(error);
     });
   });
 };
