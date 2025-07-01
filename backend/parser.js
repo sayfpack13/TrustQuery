@@ -71,7 +71,7 @@ exports.parseFile = async function (
         }
 
         if (line.length > MAX_LINE_LENGTH) {
-          //console.warn(`Skipping a line with length ${line.length} as it exceeds the maximum allowed length of ${MAX_LINE_LENGTH} bytes.`);
+          console.warn(`Skipping a line with length ${line.length} as it exceeds the maximum allowed length of ${MAX_LINE_LENGTH} bytes.`);
           return;
         }
 
@@ -89,7 +89,7 @@ exports.parseFile = async function (
       // Safety check to prevent heap exhaustion from a very long line without a newline.
       while (buffer.length > MAX_LINE_LENGTH && buffer.indexOf('\n') === -1) {
         // Skip the first MAX_LINE_LENGTH characters as one 'bad' line
-        //console.warn(`Skipping a line exceeding ${MAX_LINE_LENGTH / (1024*1024)}MB without a newline.`);
+        console.warn(`Skipping a line exceeding ${MAX_LINE_LENGTH / (1024*1024)}MB without a newline.`);
         buffer = buffer.slice(MAX_LINE_LENGTH);
       }
       let newlineIndex;
