@@ -18,6 +18,11 @@ const DEFAULT_CONFIG = {
   selectedIndex: "accounts",
   searchIndices: ["accounts"], // Default search indices
   elasticsearchNodes: ["http://localhost:9200"],
+  writeNode: "http://localhost:9200", // Dedicated write node
+  nodeAttributes: {
+    defaultDiskType: "ssd",
+    defaultZone: "zone1"
+  },
   batchSize: 1000,
   minVisibleChars: 2,
   maskingRatio: 0.2,
@@ -77,6 +82,13 @@ async function setConfig(key, value) {
       config[key] = value;
     }
     await saveConfig();
+    
+    // Re-initialize Elasticsearch clients if node configuration changed
+    if (typeof key === 'object' && (key.elasticsearchNodes || key.writeNode)) {
+      initializeElasticsearchClients();
+    } else if (key === 'elasticsearchNodes' || key === 'writeNode') {
+      initializeElasticsearchClients();
+    }
   } catch (error) {
     console.error("❌ Error setting config:", error);
     throw error; // Re-throw to let caller handle the error
@@ -122,20 +134,41 @@ const upload = multer({ storage: storage });
 app.use(cors());
 app.use(express.json());
 
-
-
-
 // Initialize Elasticsearch client with configuration
-const es = new Client({ nodes: getConfig('elasticsearchNodes') });
+let es;
+let esWrite;
+
+function initializeElasticsearchClients() {
+  // Main client for reading/searching - connects to all nodes
+  const nodes = getConfig('elasticsearchNodes');
+  if (nodes && nodes.length > 0) {
+    es = new Client({ nodes });
+    console.log(`🔍 Initialized main Elasticsearch client with nodes: ${nodes.join(', ')}`);
+  } else {
+    console.warn("⚠️ No Elasticsearch nodes configured");
+  }
+
+  // Write client - connects to specific write node
+  const writeNode = getConfig('writeNode');
+  if (writeNode) {
+    esWrite = new Client({ node: writeNode });
+    console.log(`✍️ Initialized write client for node: ${writeNode}`);
+  } else {
+    console.log("✍️ No specific write node configured, using main client for writes");
+    esWrite = es;
+  }
+}
 
 // Initialize server and Elasticsearch
 async function initializeServer() {
   await loadConfig();
+  initializeElasticsearchClients();
 
   // Start the server first
   app.listen(PORT, () => {
     console.log(`✅ Server running on: http://localhost:${PORT}`);
   });
+  
   try {
     console.log('🔍 Connecting to Elasticsearch...');
     await es.ping();
@@ -144,7 +177,7 @@ async function initializeServer() {
     // Initialize default index if connected
     const indexExists = await es.indices.exists({ index: "accounts" });
     if (!indexExists) {
-      await es.indices.create({
+      await esWrite.indices.create({
         index: "accounts",
         body: {
           settings: {
@@ -435,10 +468,10 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
               ]);
 
               if (bulkBody.length > 0) {
-                if (es && es.bulk) {
-                  await es.bulk({ refresh: false, body: bulkBody });
+                if (esWrite && esWrite.bulk) {
+                  await esWrite.bulk({ refresh: false, body: bulkBody });
                 } else {
-                  console.warn("Elasticsearch client not available for bulk indexing.");
+                  console.warn("Elasticsearch write client not available for bulk indexing.");
                 }
               }
             },
@@ -580,10 +613,10 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
           ]);
 
           if (bulkBody.length > 0) {
-            if (es && es.bulk) {
-              await es.bulk({ refresh: false, body: bulkBody });
+            if (esWrite && esWrite.bulk) {
+              await esWrite.bulk({ refresh: false, body: bulkBody });
             } else {
-              console.warn("Elasticsearch client not available for bulk indexing.");
+              console.warn("Elasticsearch write client not available for bulk indexing.");
             }
           }
         },
@@ -702,7 +735,7 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
       });
     }
 
-    await es.delete({
+    await esWrite.delete({
       index: getSelectedIndex(),
       id: id,
       refresh: true,
@@ -727,7 +760,7 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
       });
     }
 
-    await es.update({
+    await esWrite.update({
       index: getSelectedIndex(),
       id: id,
       body: {
@@ -765,7 +798,7 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
 
         let bulkResponse;
         try {
-          bulkResponse = await es.bulk({
+          bulkResponse = await esWrite.bulk({
             refresh: true,
             body: chunkIds.flatMap((id) => [{ delete: { _index: getSelectedIndex(), _id: id } }]),
           });
@@ -862,7 +895,7 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
       });
 
       // Perform delete by query
-      const deleteResponse = await es.deleteByQuery({
+      const deleteResponse = await esWrite.deleteByQuery({
         index: getSelectedIndex(),
         body: {
           query: { match_all: {} },
@@ -1153,7 +1186,7 @@ app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
       }
 
       // Create the index with proper mapping and shard/replica settings
-      await es.indices.create({
+      await esWrite.indices.create({
         index: formattedName,
         body: createIndexMapping(numShards, numReplicas)
       });
@@ -1371,7 +1404,7 @@ app.post("/api/admin/es/reindex", verifyJwt, async (req, res) => {
       // Create destination index if it doesn't exist
       const destExists = await es.indices.exists({ index: destIndex });
       if (!destExists) {
-        await es.indices.create({
+        await esWrite.indices.create({
           index: destIndex,
           body: createIndexMapping()
         });
@@ -1410,6 +1443,236 @@ app.post("/api/admin/es/reindex", verifyJwt, async (req, res) => {
     }
   })();
 });
+
+// ==================== NODE MANAGEMENT ENDPOINTS ====================
+
+// GET all Elasticsearch nodes with their attributes and stats
+app.get("/api/admin/es/nodes", verifyJwt, async (req, res) => {
+  try {
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.json({
+        nodes: [],
+        writeNode: getConfig('writeNode'),
+        message: "Elasticsearch not available"
+      });
+    }
+
+    // Get node info and stats
+    const [nodeInfo, nodeStats] = await Promise.all([
+      es.nodes.info({ metric: ['settings', 'process', 'jvm', 'transport'] }),
+      es.nodes.stats({ metric: ['fs', 'jvm', 'process'] })
+    ]);
+
+    const nodes = Object.keys(nodeInfo.nodes).map(nodeId => {
+      const node = nodeInfo.nodes[nodeId];
+      const stats = nodeStats.nodes[nodeId];
+      
+      return {
+        id: nodeId,
+        name: node.name,
+        host: node.host,
+        ip: node.ip,
+        roles: node.roles,
+        attributes: node.attributes || {},
+        transport_address: node.transport_address,
+        disk_type: node.attributes?.disk_type || 'unknown',
+        zone: node.attributes?.zone || 'unknown',
+        stats: {
+          disk_total: stats.fs?.total?.total_in_bytes || 0,
+          disk_free: stats.fs?.total?.free_in_bytes || 0,
+          disk_used: stats.fs?.total?.total_in_bytes - stats.fs?.total?.free_in_bytes || 0,
+          heap_used: stats.jvm?.mem?.heap_used_in_bytes || 0,
+          heap_max: stats.jvm?.mem?.heap_max_in_bytes || 0
+        }
+      };
+    });
+
+    res.json({
+      nodes,
+      writeNode: getConfig('writeNode'),
+      totalNodes: nodes.length
+    });
+  } catch (error) {
+    console.error("Error fetching Elasticsearch nodes:", error);
+    res.status(500).json({ error: "Failed to fetch nodes information" });
+  }
+});
+
+// POST update Elasticsearch nodes configuration
+app.post("/api/admin/es/nodes", verifyJwt, async (req, res) => {
+  try {
+    const { elasticsearchNodes, writeNode } = req.body;
+
+    if (!Array.isArray(elasticsearchNodes) || elasticsearchNodes.length === 0) {
+      return res.status(400).json({ error: "At least one Elasticsearch node is required" });
+    }
+
+    // Validate node URLs
+    for (const node of elasticsearchNodes) {
+      try {
+        new URL(node);
+      } catch {
+        return res.status(400).json({ error: `Invalid node URL: ${node}` });
+      }
+    }
+
+    if (writeNode) {
+      try {
+        new URL(writeNode);
+      } catch {
+        return res.status(400).json({ error: `Invalid write node URL: ${writeNode}` });
+      }
+    }
+
+    const updates = {
+      elasticsearchNodes,
+      writeNode: writeNode || elasticsearchNodes[0]
+    };
+
+    await setConfig(updates);
+    
+    // Re-initialize clients with new configuration
+    initializeElasticsearchClients();
+
+    res.json({
+      message: "Node configuration updated successfully",
+      elasticsearchNodes: getConfig('elasticsearchNodes'),
+      writeNode: getConfig('writeNode')
+    });
+  } catch (error) {
+    console.error("Error updating node configuration:", error);
+    res.status(500).json({ error: "Failed to update node configuration" });
+  }
+});
+
+// POST create index with custom node allocation
+app.post("/api/admin/es/create-index-with-routing", verifyJwt, async (req, res) => {
+  const { indexName, shards, replicas, diskType, zone, targetNode } = req.body;
+
+  if (!indexName || typeof indexName !== 'string') {
+    return res.status(400).json({ error: "Index name is required" });
+  }
+
+  const numShards = parseInt(shards) || 1;
+  const numReplicas = parseInt(replicas) || 0;
+
+  if (numShards < 1 || numShards > 1000) {
+    return res.status(400).json({ error: "Number of shards must be between 1 and 1000" });
+  }
+
+  if (numReplicas < 0 || numReplicas > 100) {
+    return res.status(400).json({ error: "Number of replicas must be between 0 and 100" });
+  }
+
+  const formattedName = formatIndexName(indexName);
+  const taskId = createTask("Create Index with Routing", "creating", formattedName);
+  res.json({ taskId });
+
+  (async () => {
+    try {
+      const exists = await es.indices.exists({ index: formattedName });
+      if (exists) {
+        updateTask(taskId, {
+          status: "error",
+          error: `Index '${formattedName}' already exists`,
+          completed: true,
+        });
+        return;
+      }
+
+      // Build allocation settings based on provided criteria
+      const allocationSettings = {};
+      
+      if (diskType) {
+        allocationSettings.disk_type = diskType;
+      }
+      
+      if (zone) {
+        allocationSettings.zone = zone;
+      }
+      
+      if (targetNode) {
+        allocationSettings._name = targetNode;
+      }
+
+      const indexBody = {
+        settings: {
+          number_of_shards: numShards,
+          number_of_replicas: numReplicas,
+          analysis: {
+            analyzer: {
+              autocomplete_analyzer: {
+                tokenizer: "autocomplete_tokenizer",
+                filter: ["lowercase"]
+              }
+            },
+            tokenizer: {
+              autocomplete_tokenizer: {
+                type: "edge_ngram",
+                min_gram: 2,
+                max_gram: 10,
+              }
+            }
+          }
+        },
+        mappings: {
+          properties: {
+            raw_line: {
+              type: "text",
+              fields: {
+                autocomplete: {
+                  type: "text",
+                  analyzer: "autocomplete_analyzer"
+                }
+              }
+            },
+          },
+        },
+      };
+
+      // Add allocation settings if any criteria specified
+      if (Object.keys(allocationSettings).length > 0) {
+        indexBody.settings.index = {
+          routing: {
+            allocation: {
+              include: allocationSettings
+            }
+          }
+        };
+      }
+
+      await esWrite.indices.create({
+        index: formattedName,
+        body: indexBody
+      });
+
+      let message = `Index '${formattedName}' created successfully with ${numShards} shard(s) and ${numReplicas} replica(s)`;
+      if (Object.keys(allocationSettings).length > 0) {
+        const criteria = Object.entries(allocationSettings).map(([key, value]) => `${key}=${value}`).join(', ');
+        message += ` on nodes matching: ${criteria}`;
+      }
+
+      updateTask(taskId, {
+        status: "completed",
+        progress: 1,
+        total: 1,
+        completed: true,
+        message
+      });
+      console.log(`Task ${taskId} completed: ${message}`);
+    } catch (error) {
+      console.error(`Create index with routing task ${taskId} failed:`, error);
+      updateTask(taskId, {
+        status: "error",
+        error: error.message,
+        completed: true,
+      });
+    }
+  })();
+});
+
+// ==================== END NODE MANAGEMENT ====================
 
 // Helper function to check if Elasticsearch is available
 async function isElasticsearchAvailable() {

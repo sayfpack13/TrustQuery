@@ -6,6 +6,11 @@
   "elasticsearchNodes": [
     "http://localhost:9200"
   ],
+  "writeNode": "http://localhost:9200",
+  "nodeAttributes": {
+    "defaultDiskType": "ssd",
+    "defaultZone": "zone1"
+  },
   "batchSize": 1000,
   "minVisibleChars": 2,
   "maskingRatio": 0.2,
