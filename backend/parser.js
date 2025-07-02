@@ -40,7 +40,6 @@ exports.countLines = async function (filePath, progressCallback = () => {}) {
 };
 
 
-
 exports.parseFile = async function (
   filePath,
   onBatch,
@@ -53,6 +52,7 @@ exports.parseFile = async function (
     let totalProcessedLines = 0;
     let readStream;
     const MAX_LINE_LENGTH = 10 * 1024 * 1024; // 10 MB
+    let isProcessingBatch = false; // Flag to manage backpressure
 
     try {
       readStream = createReadStream(filePath, { encoding: "utf8" });
@@ -60,18 +60,35 @@ exports.parseFile = async function (
       return reject(error);
     }
 
+    const processBatch = async () => {
+        if (currentBatch.length === 0 || isProcessingBatch) {
+            return;
+        }
+        isProcessingBatch = true; // Set flag to true to prevent re-entry
+
+        try {
+            await onBatch(currentBatch); // Await the batch processing
+            currentBatch = []; // Clear batch only after successful processing
+            isProcessingBatch = false; // Reset flag
+            if (readStream.isPaused()) {
+                readStream.resume(); // Resume if paused
+            }
+        } catch (error) {
+            isProcessingBatch = false; // Reset flag
+            readStream.destroy(error); // Destroy stream on error
+        }
+    };
+
     const processLine = (line) => {
         totalProcessedLines++;
-        
+
         const cleanLine = line.trim();
 
-        // Skip lines that contain spaces after trimming
         if (cleanLine.includes(' ') && cleanLine.length > 0) {
           return;
         }
 
         if (line.length > MAX_LINE_LENGTH) {
-          //console.warn(`Skipping a line with length ${line.length} as it exceeds the maximum allowed length of ${MAX_LINE_LENGTH} bytes.`);
           return;
         }
 
@@ -79,17 +96,14 @@ exports.parseFile = async function (
         progressCallback(totalProcessedLines);
 
         if (currentBatch.length >= batchSize) {
-          onBatch(currentBatch);
-          currentBatch = [];
+            readStream.pause(); // Pause stream before processing batch
+            processBatch(); // Process batch asynchronously
         }
     };
 
     readStream.on("data", (chunk) => {
       buffer += chunk;
-      // Safety check to prevent heap exhaustion from a very long line without a newline.
       while (buffer.length > MAX_LINE_LENGTH && buffer.indexOf('\n') === -1) {
-        // Skip the first MAX_LINE_LENGTH characters as one 'bad' line
-        //console.warn(`Skipping a line exceeding ${MAX_LINE_LENGTH / (1024*1024)}MB without a newline.`);
         buffer = buffer.slice(MAX_LINE_LENGTH);
       }
       let newlineIndex;
@@ -100,15 +114,13 @@ exports.parseFile = async function (
       }
     });
 
-    readStream.on("end", () => {
-      // Process any remaining data in the buffer as the last line.
+    readStream.on("end", async () => { // Make end handler async
       if (buffer.length > 0) {
         processLine(buffer);
       }
 
-      // Process any remaining lines in the last batch.
       if (currentBatch.length > 0) {
-        onBatch(currentBatch);
+        await processBatch(); // Ensure last batch is processed
       }
 
       resolve(totalProcessedLines);

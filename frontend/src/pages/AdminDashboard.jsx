@@ -81,7 +81,8 @@ export default function AdminDashboard({ onLogout }) {
     minVisibleChars: 2,
     maskingRatio: 0.2,
     usernameMaskingRatio: 0.4,
-    batchSize: 1000
+    batchSize: 1000,
+    showRawLineByDefault: false
   });
   const [hasUnsavedSystemChanges, setHasUnsavedSystemChanges] = useState(false);
 
@@ -287,7 +288,8 @@ export default function AdminDashboard({ onLogout }) {
         minVisibleChars: response.data.minVisibleChars || 2,
         maskingRatio: response.data.maskingRatio || 0.2,
         usernameMaskingRatio: response.data.usernameMaskingRatio || 0.4,
-        batchSize: response.data.batchSize || 1000
+        batchSize: response.data.batchSize || 1000,
+        showRawLineByDefault: response.data.adminSettings?.showRawLineByDefault || false
       });
       setHasUnsavedSystemChanges(false);
     } catch (err) {
@@ -333,7 +335,17 @@ export default function AdminDashboard({ onLogout }) {
 
   const saveSystemSettings = async () => {
     try {
-      await axiosClient.post("/api/admin/config", tempSystemSettings);
+      // Separate adminSettings from other settings
+      const { showRawLineByDefault, ...otherSettings } = tempSystemSettings;
+      
+      const payload = {
+        ...otherSettings,
+        adminSettings: {
+          showRawLineByDefault
+        }
+      };
+      
+      await axiosClient.post("/api/admin/config", payload);
       
       await fetchConfig(); // Refresh config to update main config state
       setHasUnsavedSystemChanges(false); // Mark as saved
@@ -349,7 +361,8 @@ export default function AdminDashboard({ onLogout }) {
         minVisibleChars: config.minVisibleChars || 2,
         maskingRatio: config.maskingRatio || 0.2,
         usernameMaskingRatio: config.usernameMaskingRatio || 0.4,
-        batchSize: config.batchSize || 1000
+        batchSize: config.batchSize || 1000,
+        showRawLineByDefault: config.adminSettings?.showRawLineByDefault || false
       });
       setHasUnsavedSystemChanges(false);
     }
@@ -1757,6 +1770,27 @@ export default function AdminDashboard({ onLogout }) {
                         />
                         <p className="text-xs text-neutral-400 mt-1">
                           Number of documents to process in each batch
+                        </p>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-neutral-300 mb-2">
+                          Show Raw Lines by Default
+                        </label>
+                        <div className="flex items-center space-x-3">
+                          <input
+                            type="checkbox"
+                            id="showRawLineByDefault"
+                            checked={tempSystemSettings.showRawLineByDefault}
+                            onChange={(e) => handleSystemSettingChange('showRawLineByDefault', e.target.checked)}
+                            className="w-4 h-4 text-primary bg-neutral-600 border-neutral-500 rounded focus:ring-primary focus:ring-2"
+                          />
+                          <label htmlFor="showRawLineByDefault" className="text-white">
+                            Allow admin to see raw lines
+                          </label>
+                        </div>
+                        <p className="text-xs text-neutral-400 mt-1">
+                          When enabled, admin can view the original unprocessed data lines in search results
                         </p>
                       </div>
                     </div>

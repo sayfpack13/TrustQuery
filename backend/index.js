@@ -22,14 +22,9 @@ const DEFAULT_CONFIG = {
   minVisibleChars: 2,
   maskingRatio: 0.2,
   usernameMaskingRatio: 0.4,
-  autoRefreshInterval: 30000, // 30 seconds
-  maxTaskHistory: 100,
   // Admin UI settings
   adminSettings: {
-    defaultPageSize: 20,
-    showRawLineByDefault: false,
-    enableSounds: true,
-    theme: "dark"
+    showRawLineByDefault: false
   }
 };
 
@@ -91,10 +86,6 @@ async function setConfig(key, value) {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Initialize configuration
-(async () => {
-  await loadConfig();
-})();
 
 const SECRET_KEY = process.env.SECRET_KEY;
 const ADMIN_USER = process.env.ADMIN_USER;
@@ -131,38 +122,28 @@ const upload = multer({ storage: storage });
 app.use(cors());
 app.use(express.json());
 
-// Add request logging middleware for debugging
-app.use((req, res, next) => {
-  console.log(`📥 ${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
-});
 
-app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
-});
 
-// Global error handlers for debugging
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
-  process.exit(1);
-});
 
 // Initialize Elasticsearch client with configuration
 const es = new Client({ nodes: getConfig('elasticsearchNodes') });
 
-(async () => {
+// Initialize server and Elasticsearch
+async function initializeServer() {
+  await loadConfig();
+
+  // Start the server first
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on: http://localhost:${PORT}`);
+  });
   try {
+    console.log('🔍 Connecting to Elasticsearch...');
+    await es.ping();
+    console.log('✅ Elasticsearch connected');
+
+    // Initialize default index if connected
     const indexExists = await es.indices.exists({ index: "accounts" });
-    if (indexExists) {
-      console.log(" 'accounts' index already exists. Skipping recreation.");
-      // The line below was previously deleting the index. It is now commented out or removed.
-      // await es.indices.delete({ index: "accounts" });
-      // console.log("Deleted existing 'accounts' index.");
-    } else {
+    if (!indexExists) {
       await es.indices.create({
         index: "accounts",
         body: {
@@ -198,12 +179,17 @@ const es = new Client({ nodes: getConfig('elasticsearchNodes') });
           },
         },
       });
-      console.log("✅ Created 'accounts' index in Elasticsearch with 'raw_line' field.");
+      console.log("✅ Default 'accounts' index created");
     }
   } catch (error) {
-    console.error("❌ Failed to initialize index:", error);
+    console.warn('⚠️  Elasticsearch not available - some features will be limited');
   }
-})();
+
+
+}
+
+// Initialize the server
+initializeServer();
 
 // In-memory task store
 const tasks = {};
@@ -413,14 +399,14 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
       }
 
       if (grandTotalLines === 0) {
-          updateTask(taskId, {
-              status: "completed",
-              progress: 0,
-              total: 0,
-              completed: true,
-              message: "No lines found in any .txt files to parse."
-          });
-          return;
+        updateTask(taskId, {
+          status: "completed",
+          progress: 0,
+          total: 0,
+          completed: true,
+          message: "No lines found in any .txt files to parse."
+        });
+        return;
       }
 
       // Set the final grand total lines for the entire parsing operation
@@ -673,6 +659,15 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
   const from = (page - 1) * size;
 
   try {
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.json({
+        results: [],
+        total: 0,
+        message: "Elasticsearch not available"
+      });
+    }
+
     const response = await es.search({
       index: getSelectedIndex(),
       from: from,
@@ -700,6 +695,13 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
 app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const { id } = req.params;
   try {
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.status(503).json({
+        error: "Elasticsearch not available - cannot delete account"
+      });
+    }
+
     await es.delete({
       index: getSelectedIndex(),
       id: id,
@@ -718,6 +720,13 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const { raw_line } = req.body; // Expect raw_line in the body
 
   try {
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.status(503).json({
+        error: "Elasticsearch not available - cannot update account"
+      });
+    }
+
     await es.update({
       index: getSelectedIndex(),
       id: id,
@@ -943,7 +952,7 @@ app.get("/api/admin/config", verifyJwt, (req, res) => {
 app.post("/api/admin/config", verifyJwt, async (req, res) => {
   try {
     const { searchIndices, minVisibleChars, maskingRatio, usernameMaskingRatio, batchSize, adminSettings } = req.body;
-    
+
     const updates = {};
     if (searchIndices !== undefined) updates.searchIndices = searchIndices;
     if (minVisibleChars !== undefined) updates.minVisibleChars = minVisibleChars;
@@ -951,10 +960,10 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
     if (usernameMaskingRatio !== undefined) updates.usernameMaskingRatio = usernameMaskingRatio;
     if (batchSize !== undefined) updates.batchSize = batchSize;
     if (adminSettings !== undefined) updates.adminSettings = { ...getConfig('adminSettings'), ...adminSettings };
-    
+
     await setConfig(updates);
-    
-    res.json({ 
+
+    res.json({
       message: "Configuration updated successfully",
       config: getConfig()
     });
@@ -968,11 +977,11 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
 app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
   try {
     const { indices } = req.body;
-    
+
     if (!Array.isArray(indices)) {
       return res.status(400).json({ error: "Indices must be an array" });
     }
-    
+
     // Verify all indices exist
     for (const index of indices) {
       const exists = await es.indices.exists({ index });
@@ -980,10 +989,10 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
         return res.status(400).json({ error: `Index '${index}' does not exist` });
       }
     }
-    
+
     await setConfig('searchIndices', indices);
-    
-    res.json({ 
+
+    res.json({
       message: "Search indices updated successfully",
       searchIndices: getConfig('searchIndices')
     });
@@ -1052,12 +1061,21 @@ function formatIndexName(name) {
 // GET all Elasticsearch indices with stats
 app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
   try {
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.json({
+        indices: [],
+        selectedIndex: getSelectedIndex(),
+        message: "Elasticsearch not available"
+      });
+    }
+
     // Get basic index information
     const indices = await es.cat.indices({ format: "json", h: "index,docs.count,store.size,status,health" });
-    
+
     // Get detailed stats for each index
     const stats = await es.indices.stats({ metric: ["store", "docs"] });
-    
+
     // Get index settings and mappings
     const settings = await es.indices.getSettings();
     const mappings = await es.indices.getMapping();
@@ -1066,7 +1084,7 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
       const indexName = index.index;
       const indexStats = stats.indices[indexName];
       const indexSettings = settings[indexName];
-      
+
       return {
         name: indexName,
         status: index.status,
@@ -1075,14 +1093,14 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
         storeSize: index['store.size'] || '0b',
         storeSizeBytes: indexStats?.total?.store?.size_in_bytes || 0,
         shards: indexStats?.total?.docs ? Object.keys(indexStats.indices || {}).length : 1,
-        createdAt: indexSettings?.settings?.index?.creation_date ? 
+        createdAt: indexSettings?.settings?.index?.creation_date ?
           new Date(parseInt(indexSettings.settings.index.creation_date)).toISOString() : null,
         uuid: indexSettings?.settings?.index?.uuid || null,
         isSelected: indexName === getSelectedIndex()
       };
     });
 
-    res.json({ 
+    res.json({
       indices: indexList.sort((a, b) => a.name.localeCompare(b.name)),
       selectedIndex: getSelectedIndex()
     });
@@ -1095,7 +1113,7 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
 // POST create new Elasticsearch index
 app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
   const { indexName, shards, replicas } = req.body;
-  
+
   if (!indexName || typeof indexName !== 'string') {
     return res.status(400).json({ error: "Index name is required" });
   }
@@ -1103,17 +1121,17 @@ app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
   // Validate shards and replicas
   const numShards = parseInt(shards) || 1;
   const numReplicas = parseInt(replicas) || 0;
-  
+
   if (numShards < 1 || numShards > 1000) {
     return res.status(400).json({ error: "Number of shards must be between 1 and 1000" });
   }
-  
+
   if (numReplicas < 0 || numReplicas > 100) {
     return res.status(400).json({ error: "Number of replicas must be between 0 and 100" });
   }
 
   const formattedName = formatIndexName(indexName);
-  
+
   if (formattedName.length === 0) {
     return res.status(400).json({ error: "Invalid index name" });
   }
@@ -1162,13 +1180,13 @@ app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
 // DELETE Elasticsearch index
 app.delete("/api/admin/es/indices/:indexName", verifyJwt, async (req, res) => {
   const { indexName } = req.params;
-  
+
   // Prevent deletion of system indices and current selected index being used
   if (indexName.startsWith('.') || indexName === getSelectedIndex()) {
-    return res.status(400).json({ 
-      error: indexName === getSelectedIndex() ? 
-        "Cannot delete the currently selected index" : 
-        "Cannot delete system indices" 
+    return res.status(400).json({
+      error: indexName === getSelectedIndex() ?
+        "Cannot delete the currently selected index" :
+        "Cannot delete system indices"
     });
   }
 
@@ -1214,7 +1232,7 @@ app.delete("/api/admin/es/indices/:indexName", verifyJwt, async (req, res) => {
 app.post("/api/admin/es/select-index", verifyJwt, async (req, res) => {
   const { indexName } = req.body;
   console.log(`🔄 Received request to change index to: ${indexName}`);
-  
+
   if (!indexName || typeof indexName !== 'string') {
     console.log(`❌ Invalid index name: ${indexName}`);
     return res.status(400).json({ error: "Index name is required" });
@@ -1232,10 +1250,10 @@ app.post("/api/admin/es/select-index", verifyJwt, async (req, res) => {
     console.log(`💾 Updating selected index to '${indexName}'...`);
     // Update the selected index with proper error handling
     await setSelectedIndex(indexName);
-    
+
     console.log(`✅ Selected index successfully changed to: ${indexName}`);
-    
-    res.json({ 
+
+    res.json({
       message: `Selected index set to '${indexName}'`,
       selectedIndex: getSelectedIndex()
     });
@@ -1248,6 +1266,17 @@ app.post("/api/admin/es/select-index", verifyJwt, async (req, res) => {
 // GET Elasticsearch cluster health and info
 app.get("/api/admin/es/health", verifyJwt, async (req, res) => {
   try {
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.json({
+        cluster: null,
+        version: null,
+        storage: null,
+        selectedIndex: getSelectedIndex(),
+        message: "Elasticsearch not available"
+      });
+    }
+
     const [health, info, stats] = await Promise.all([
       es.cluster.health(),
       es.info(),
@@ -1286,7 +1315,7 @@ app.get("/api/admin/es/health", verifyJwt, async (req, res) => {
 // GET index mapping and settings details
 app.get("/api/admin/es/indices/:indexName/details", verifyJwt, async (req, res) => {
   const { indexName } = req.params;
-  
+
   try {
     const [mapping, settings, stats] = await Promise.all([
       es.indices.getMapping({ index: indexName }),
@@ -1318,7 +1347,7 @@ app.get("/api/admin/es/indices/:indexName/details", verifyJwt, async (req, res) 
 // POST reindex data from one index to another
 app.post("/api/admin/es/reindex", verifyJwt, async (req, res) => {
   const { sourceIndex, destIndex } = req.body;
-  
+
   if (!sourceIndex || !destIndex) {
     return res.status(400).json({ error: "Source and destination indices are required" });
   }
@@ -1382,6 +1411,16 @@ app.post("/api/admin/es/reindex", verifyJwt, async (req, res) => {
   })();
 });
 
+// Helper function to check if Elasticsearch is available
+async function isElasticsearchAvailable() {
+  try {
+    await es.ping();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 // Helper function to format bytes
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
@@ -1394,6 +1433,15 @@ function formatBytes(bytes) {
 // New endpoint to get available indices for search
 app.get("/api/search/indices", async (req, res) => {
   try {
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.json({
+        indices: [],
+        selectedIndex: getSelectedIndex(),
+        message: "Elasticsearch not available"
+      });
+    }
+
     const allIndices = await es.cat.indices({ format: "json", h: "index,docs.count,store.size" });
     const availableIndices = allIndices
       .filter(idx => !idx.index.startsWith('.') && !idx.index.startsWith('kibana'))
@@ -1404,9 +1452,9 @@ app.get("/api/search/indices", async (req, res) => {
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    res.json({ 
+    res.json({
       indices: availableIndices,
-      selectedIndex: getSelectedIndex() 
+      selectedIndex: getSelectedIndex()
     });
   } catch (error) {
     console.error("Error fetching search indices:", error);
@@ -1419,19 +1467,19 @@ app.get("/api/search/indices", async (req, res) => {
 // backend/index.js
 app.get("/api/total-accounts", async (req, res) => {
   try {
-    // Use configured search indices instead of selected index for operations
-    const searchIndices = getConfig('searchIndices');
-    
-    if (!searchIndices || searchIndices.length === 0) {
-      return res.json({ totalAccounts: 0 });
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.json({
+        totalAccounts: 0,
+        message: "Elasticsearch not available"
+      });
     }
 
-    // Verify all indices exist before counting
-    for (const index of searchIndices) {
-      const exists = await es.indices.exists({ index });
-      if (!exists) {
-        console.warn(`Search index '${index}' does not exist, skipping from count`);
-      }
+    // Use configured search indices instead of selected index for operations
+    const searchIndices = getConfig('searchIndices');
+
+    if (!searchIndices || searchIndices.length === 0) {
+      return res.json({ totalAccounts: 0 });
     }
 
     // Filter to only existing indices
@@ -1449,7 +1497,7 @@ app.get("/api/total-accounts", async (req, res) => {
 
     // Count records across all configured search indices
     const response = await es.count({ index: existingIndices.join(',') });
-    res.json({ 
+    res.json({
       totalAccounts: response.count,
       searchIndices: existingIndices // Include which indices were counted
     });
@@ -1527,6 +1575,16 @@ app.get("/api/search", async (req, res) => {
 
   if (!q) return res.json({ results: [], total: 0 });
 
+  // Check if Elasticsearch is available
+  const esAvailable = await isElasticsearchAvailable();
+  if (!esAvailable) {
+    return res.status(503).json({
+      message: "Search service temporarily unavailable. Please make sure Elasticsearch is running.",
+      results: [],
+      total: 0
+    });
+  }
+
   let isAdmin = false;
   const authHeader = req.headers.authorization;
   if (authHeader) {
@@ -1565,9 +1623,9 @@ app.get("/api/search", async (req, res) => {
       for (const index of indicesToSearch) {
         const exists = await es.indices.exists({ index });
         if (!exists) {
-          return res.status(400).json({ 
+          return res.status(400).json({
             error: `Index '${index}' does not exist`,
-            availableIndices: [] 
+            availableIndices: []
           });
         }
       }
@@ -1629,8 +1687,9 @@ app.get("/api/search", async (req, res) => {
         sourceIndex: hit._index // Add source index information
       };
 
-      // Conditionally add raw_line only if admin
-      if (isAdmin) {
+      // Add raw_line based only for admin
+      const showRawLineByDefault = getConfig('adminSettings')?.showRawLineByDefault || false;
+      if (isAdmin && showRawLineByDefault) {
         account.raw_line = hit._source.raw_line;
       }
 
@@ -1673,8 +1732,8 @@ app.get("/api/search", async (req, res) => {
       return account;
     });
 
-    res.json({ 
-      results, 
+    res.json({
+      results,
       total,
       searchedIndices: searchedIndices,
       selectedIndex: getSelectedIndex() // For reference
@@ -1684,6 +1743,3 @@ app.get("/api/search", async (req, res) => {
     res.status(500).json({ message: "Error searching records." });
   }
 });
-
-// Load configuration at startup
-loadConfig();

@@ -13,9 +13,6 @@
   "autoRefreshInterval": 30000,
   "maxTaskHistory": 100,
   "adminSettings": {
-    "defaultPageSize": 20,
-    "showRawLineByDefault": false,
-    "enableSounds": true,
-    "theme": "dark"
+    "showRawLineByDefault": false
   }
 }
