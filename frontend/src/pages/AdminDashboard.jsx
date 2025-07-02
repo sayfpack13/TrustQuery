@@ -93,6 +93,8 @@ export default function AdminDashboard({ onLogout }) {
   const [esModalType, setEsModalType] = useState(""); // 'create', 'delete', 'reindex', 'details'
   const [esModalData, setEsModalData] = useState({});
   const [newIndexName, setNewIndexName] = useState("");
+  const [newIndexShards, setNewIndexShards] = useState("1");
+  const [newIndexReplicas, setNewIndexReplicas] = useState("0");
   const [reindexSource, setReindexSource] = useState("");
   const [reindexDest, setReindexDest] = useState("");
   const [indexDetails, setIndexDetails] = useState(null);
@@ -382,15 +384,30 @@ export default function AdminDashboard({ onLogout }) {
       return;
     }
 
+    const shards = parseInt(newIndexShards) || 1;
+    const replicas = parseInt(newIndexReplicas) || 0;
+
+    if (shards < 1 || shards > 1000) {
+      showNotification("error", "Number of shards must be between 1 and 1000", faExclamationTriangle);
+      return;
+    }
+
+    if (replicas < 0 || replicas > 100) {
+      showNotification("error", "Number of replicas must be between 0 and 100", faExclamationTriangle);
+      return;
+    }
+
     try {
       const response = await axiosClient.post("/api/admin/es/indices", {
-        indexName: newIndexName.trim()
+        indexName: newIndexName.trim(),
+        shards: shards,
+        replicas: replicas
       });
 
       if (response.data.taskId) {
         fetchAllTasks(); // Refresh tasks to show the new task
         closeESModal(); // Close modal and clear form
-        showNotification("info", `Index creation started for "${newIndexName.trim()}"`, faInfoCircle, true);
+        showNotification("info", `Index creation started for "${newIndexName.trim()}" with ${shards} shard(s) and ${replicas} replica(s)`, faInfoCircle, true);
       }
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to create index", faExclamationTriangle);
@@ -484,6 +501,8 @@ export default function AdminDashboard({ onLogout }) {
     setEsModalType("");
     setEsModalData({});
     setNewIndexName("");
+    setNewIndexShards("1");
+    setNewIndexReplicas("0");
     setReindexSource("");
     setReindexDest("");
     setIndexDetails(null);
@@ -2094,19 +2113,74 @@ export default function AdminDashboard({ onLogout }) {
                       Index names will be automatically formatted (lowercase, special characters replaced with underscores)
                     </p>
                   </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="new-index-shards" className="block text-sm font-medium text-neutral-300 mb-2">
+                        Number of Shards
+                      </label>
+                      <input
+                        type="number"
+                        id="new-index-shards"
+                        value={newIndexShards}
+                        onChange={(e) => setNewIndexShards(e.target.value)}
+                        min="1"
+                        max="1000"
+                        placeholder="1"
+                        className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <p className="text-sm text-neutral-400 mt-1">
+                        Range: 1-1000 (default: 1)
+                      </p>
+                    </div>
+                    
+                    <div>
+                      <label htmlFor="new-index-replicas" className="block text-sm font-medium text-neutral-300 mb-2">
+                        Number of Replicas
+                      </label>
+                      <input
+                        type="number"
+                        id="new-index-replicas"
+                        value={newIndexReplicas}
+                        onChange={(e) => setNewIndexReplicas(e.target.value)}
+                        min="0"
+                        max="100"
+                        placeholder="0"
+                        className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <p className="text-sm text-neutral-400 mt-1">
+                        Range: 0-100 (default: 0)
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-neutral-800 p-3 rounded-md">
+                    <p className="text-sm text-neutral-300">
+                      <strong>Note:</strong> Shards determine how data is distributed across nodes. Replicas provide data redundancy and can improve search performance. 
+                      For most use cases, 1 shard and 0-1 replicas are sufficient for small to medium datasets.
+                    </p>
+                  </div>
+                  
                   <div className="flex justify-end space-x-3 mt-6">
                     <button
+                      onClick={handleCreateIndex}
+                      className="bg-green-600 hover:bg-green-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
+                      disabled={
+                        !newIndexName.trim() || 
+                        isAnyTaskRunning ||
+                        parseInt(newIndexShards) < 1 || 
+                        parseInt(newIndexShards) > 1000 ||
+                        parseInt(newIndexReplicas) < 0 || 
+                        parseInt(newIndexReplicas) > 100
+                      }
+                    >
+                      Create Index
+                    </button>
+                                        <button
                       onClick={closeESModal}
                       className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
                     >
                       Cancel
-                    </button>
-                    <button
-                      onClick={handleCreateIndex}
-                      className="bg-green-600 hover:bg-green-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
-                      disabled={!newIndexName.trim() || isAnyTaskRunning}
-                    >
-                      Create Index
                     </button>
                   </div>
                 </div>
@@ -2159,19 +2233,20 @@ export default function AdminDashboard({ onLogout }) {
                     </p>
                   </div>
                   <div className="flex justify-end space-x-3 mt-6">
-                    <button
-                      onClick={closeESModal}
-                      className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
-                    >
-                      Cancel
-                    </button>
-                    <button
+                                        <button
                       onClick={handleReindex}
                       className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
                       disabled={!reindexSource || !reindexDest || reindexSource === reindexDest || isAnyTaskRunning}
                     >
                       Start Reindexing
                     </button>
+                    <button
+                      onClick={closeESModal}
+                      className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
+                    >
+                      Cancel
+                    </button>
+
                   </div>
                 </div>
               )}

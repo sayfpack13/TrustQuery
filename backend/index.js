@@ -1005,9 +1005,11 @@ async function setSelectedIndex(indexName) {
 }
 
 // Helper function to create proper index mapping
-function createIndexMapping() {
+function createIndexMapping(shards = 1, replicas = 0) {
   return {
     settings: {
+      number_of_shards: shards,
+      number_of_replicas: replicas,
       analysis: {
         analyzer: {
           autocomplete_analyzer: {
@@ -1092,10 +1094,22 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
 
 // POST create new Elasticsearch index
 app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
-  const { indexName } = req.body;
+  const { indexName, shards, replicas } = req.body;
   
   if (!indexName || typeof indexName !== 'string') {
     return res.status(400).json({ error: "Index name is required" });
+  }
+
+  // Validate shards and replicas
+  const numShards = parseInt(shards) || 1;
+  const numReplicas = parseInt(replicas) || 0;
+  
+  if (numShards < 1 || numShards > 1000) {
+    return res.status(400).json({ error: "Number of shards must be between 1 and 1000" });
+  }
+  
+  if (numReplicas < 0 || numReplicas > 100) {
+    return res.status(400).json({ error: "Number of replicas must be between 0 and 100" });
   }
 
   const formattedName = formatIndexName(indexName);
@@ -1120,10 +1134,10 @@ app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
         return;
       }
 
-      // Create the index with proper mapping
+      // Create the index with proper mapping and shard/replica settings
       await es.indices.create({
         index: formattedName,
-        body: createIndexMapping()
+        body: createIndexMapping(numShards, numReplicas)
       });
 
       updateTask(taskId, {
@@ -1131,9 +1145,9 @@ app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
         progress: 1,
         total: 1,
         completed: true,
-        message: `Index '${formattedName}' created successfully`
+        message: `Index '${formattedName}' created successfully with ${numShards} shard(s) and ${numReplicas} replica(s)`
       });
-      console.log(`Task ${taskId} completed: Index '${formattedName}' created.`);
+      console.log(`Task ${taskId} completed: Index '${formattedName}' created with ${numShards} shards and ${numReplicas} replicas.`);
     } catch (error) {
       console.error(`Create index task ${taskId} failed:`, error);
       updateTask(taskId, {
