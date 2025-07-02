@@ -10,17 +10,98 @@ const multer = require("multer");
 const { randomUUID } = require("crypto");
 const cors = require("cors");
 
+// Configuration management
+const CONFIG_FILE = path.join(__dirname, "config.json");
+
+// Default configuration
+const DEFAULT_CONFIG = {
+  selectedIndex: "accounts",
+  searchIndices: ["accounts"], // Default search indices
+  elasticsearchNodes: ["http://localhost:9200"],
+  batchSize: 1000,
+  minVisibleChars: 2,
+  maskingRatio: 0.2,
+  usernameMaskingRatio: 0.4,
+  autoRefreshInterval: 30000, // 30 seconds
+  maxTaskHistory: 100,
+  // Admin UI settings
+  adminSettings: {
+    defaultPageSize: 20,
+    showRawLineByDefault: false,
+    enableSounds: true,
+    theme: "dark"
+  }
+};
+
+// Configuration state
+let config = { ...DEFAULT_CONFIG };
+
+// Load configuration from file
+async function loadConfig() {
+  try {
+    const configData = await fs.readFile(CONFIG_FILE, 'utf8');
+    const loadedConfig = JSON.parse(configData);
+    config = { ...DEFAULT_CONFIG, ...loadedConfig };
+    console.log("✅ Configuration loaded from file");
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log("📝 No config file found, creating default configuration");
+      await saveConfig();
+    } else {
+      console.error("❌ Error loading config:", error);
+      config = { ...DEFAULT_CONFIG };
+    }
+  }
+}
+
+// Save configuration to file
+async function saveConfig() {
+  try {
+    console.log(`💾 Saving configuration to ${CONFIG_FILE}...`);
+    await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2));
+    console.log("✅ Configuration saved to file");
+  } catch (error) {
+    console.error("❌ Error saving config:", error);
+    throw error; // Re-throw to let caller handle the error
+  }
+}
+
+// Get configuration value
+function getConfig(key) {
+  return key ? config[key] : config;
+}
+
+// Set configuration value
+async function setConfig(key, value) {
+  try {
+    if (typeof key === 'object') {
+      // Update multiple values
+      config = { ...config, ...key };
+    } else {
+      // Update single value
+      config[key] = value;
+    }
+    await saveConfig();
+  } catch (error) {
+    console.error("❌ Error setting config:", error);
+    throw error; // Re-throw to let caller handle the error
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Initialize configuration
+(async () => {
+  await loadConfig();
+})();
 
 const SECRET_KEY = process.env.SECRET_KEY;
 const ADMIN_USER = process.env.ADMIN_USER;
 const ADMIN_PASS = process.env.ADMIN_PASS;
-const MIN_VISIBLE_CHARS = parseInt(process.env.MIN_VISIBLE_CHARS) || 2;
-const MASKING_RATIO = parseFloat(process.env.MASKING_RATIO) || 0.2;
-const USERNAME_MASKING_RATIO = parseFloat(process.env.USERNAME_MASKING_RATIO) || 0.4;
-const BATCH_SIZE = process.env.BATCH_SIZE;
+
+// Dynamic configuration getters (removed hardcoded constants)
+// Use getConfig() directly in code instead of these constants
 
 const DATA_DIR = path.join(__dirname, "data");
 const UNPARSED_DIR = path.join(DATA_DIR, "unparsed");
@@ -49,12 +130,29 @@ const upload = multer({ storage: storage });
 
 app.use(cors());
 app.use(express.json());
+
+// Add request logging middleware for debugging
+app.use((req, res, next) => {
+  console.log(`📥 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 });
 
-const esNodes = (process.env.ELASTICSEARCH_NODES || "http://localhost:9200").split(',');
-const es = new Client({ nodes: esNodes });
+// Global error handlers for debugging
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});
+
+// Initialize Elasticsearch client with configuration
+const es = new Client({ nodes: getConfig('elasticsearchNodes') });
 
 (async () => {
   try {
@@ -346,7 +444,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
             filePath,
             async (batch) => {
               const bulkBody = batch.flatMap((doc) => [
-                { index: { _index: "accounts" } },
+                { index: { _index: getSelectedIndex() } },
                 { raw_line: doc },
               ]);
 
@@ -358,7 +456,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
                 }
               }
             },
-            BATCH_SIZE,
+            getConfig('batchSize'),
             (processedLinesInCurrentFile) => {
               // Update the overall task's progress with the cumulative lines processed so far
               const currentCumulativeProgress = cumulativeProcessedLines + processedLinesInCurrentFile;
@@ -491,7 +589,7 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
         filePath,
         async (batch) => {
           const bulkBody = batch.flatMap((doc) => [
-            { index: { _index: "accounts" } },
+            { index: { _index: getSelectedIndex() } },
             { raw_line: doc }, // Assuming 'doc' is the raw line based on parser.js
           ]);
 
@@ -503,7 +601,7 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
             }
           }
         },
-        BATCH_SIZE,
+        getConfig('batchSize'),
         (currentProcessedLines) => { // This callback gives real-time progress
           updateTask(taskId, {
             status: "parsing",
@@ -576,7 +674,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
 
   try {
     const response = await es.search({
-      index: "accounts",
+      index: getSelectedIndex(),
       from: from,
       size: size,
       body: {
@@ -603,7 +701,7 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const { id } = req.params;
   try {
     await es.delete({
-      index: "accounts",
+      index: getSelectedIndex(),
       id: id,
       refresh: true,
     });
@@ -621,7 +719,7 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
 
   try {
     await es.update({
-      index: "accounts",
+      index: getSelectedIndex(),
       id: id,
       body: {
         doc: { raw_line }, // Update raw_line field
@@ -660,7 +758,7 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
         try {
           bulkResponse = await es.bulk({
             refresh: true,
-            body: chunkIds.flatMap((id) => [{ delete: { _index: "accounts", _id: id } }]),
+            body: chunkIds.flatMap((id) => [{ delete: { _index: getSelectedIndex(), _id: id } }]),
           });
         } catch (esError) {
           console.error(`Elasticsearch bulk request failed at chunk starting with ID ${chunkIds[0]}:`, esError);
@@ -725,7 +823,7 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
       let accountsDeleted = 0;
 
       try {
-        const response = await es.count({ index: "accounts" });
+        const response = await es.count({ index: getSelectedIndex() });
         accountsToDelete = response.count;
         console.log(`Task ${taskId}: Found ${accountsToDelete} accounts to delete.`);
       } catch (countError) {
@@ -756,7 +854,7 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
 
       // Perform delete by query
       const deleteResponse = await es.deleteByQuery({
-        index: "accounts",
+        index: getSelectedIndex(),
         body: {
           query: { match_all: {} },
         },
@@ -829,12 +927,520 @@ app.get("/api/admin/tasks/:taskId", verifyJwt, (req, res) => {
   }
 });
 
+// ==================== CONFIGURATION MANAGEMENT ENDPOINTS ====================
+
+// GET current configuration
+app.get("/api/admin/config", verifyJwt, (req, res) => {
+  try {
+    res.json(getConfig());
+  } catch (error) {
+    console.error("Error fetching configuration:", error);
+    res.status(500).json({ error: "Failed to fetch configuration" });
+  }
+});
+
+// POST update configuration
+app.post("/api/admin/config", verifyJwt, async (req, res) => {
+  try {
+    const { searchIndices, minVisibleChars, maskingRatio, usernameMaskingRatio, batchSize, adminSettings } = req.body;
+    
+    const updates = {};
+    if (searchIndices !== undefined) updates.searchIndices = searchIndices;
+    if (minVisibleChars !== undefined) updates.minVisibleChars = minVisibleChars;
+    if (maskingRatio !== undefined) updates.maskingRatio = maskingRatio;
+    if (usernameMaskingRatio !== undefined) updates.usernameMaskingRatio = usernameMaskingRatio;
+    if (batchSize !== undefined) updates.batchSize = batchSize;
+    if (adminSettings !== undefined) updates.adminSettings = { ...getConfig('adminSettings'), ...adminSettings };
+    
+    await setConfig(updates);
+    
+    res.json({ 
+      message: "Configuration updated successfully",
+      config: getConfig()
+    });
+  } catch (error) {
+    console.error("Error updating configuration:", error);
+    res.status(500).json({ error: "Failed to update configuration" });
+  }
+});
+
+// POST update search indices
+app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
+  try {
+    const { indices } = req.body;
+    
+    if (!Array.isArray(indices)) {
+      return res.status(400).json({ error: "Indices must be an array" });
+    }
+    
+    // Verify all indices exist
+    for (const index of indices) {
+      const exists = await es.indices.exists({ index });
+      if (!exists) {
+        return res.status(400).json({ error: `Index '${index}' does not exist` });
+      }
+    }
+    
+    await setConfig('searchIndices', indices);
+    
+    res.json({ 
+      message: "Search indices updated successfully",
+      searchIndices: getConfig('searchIndices')
+    });
+  } catch (error) {
+    console.error("Error updating search indices:", error);
+    res.status(500).json({ error: "Failed to update search indices" });
+  }
+});
+
+// ==================== END CONFIGURATION MANAGEMENT ====================
+
+// Storage for selected index (uses configuration)
+function getSelectedIndex() {
+  return getConfig('selectedIndex');
+}
+
+async function setSelectedIndex(indexName) {
+  await setConfig('selectedIndex', indexName);
+}
+
+// Helper function to create proper index mapping
+function createIndexMapping() {
+  return {
+    settings: {
+      analysis: {
+        analyzer: {
+          autocomplete_analyzer: {
+            tokenizer: "autocomplete_tokenizer",
+            filter: ["lowercase"]
+          }
+        },
+        tokenizer: {
+          autocomplete_tokenizer: {
+            type: "edge_ngram",
+            min_gram: 2,
+            max_gram: 10,
+          }
+        }
+      }
+    },
+    mappings: {
+      properties: {
+        raw_line: {
+          type: "text",
+          fields: {
+            autocomplete: {
+              type: "text",
+              analyzer: "autocomplete_analyzer"
+            }
+          }
+        },
+      },
+    },
+  };
+}
+
+// Helper function to safely format index name
+function formatIndexName(name) {
+  return name.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+}
+
+// ==================== ELASTICSEARCH MANAGEMENT ENDPOINTS ====================
+
+// GET all Elasticsearch indices with stats
+app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
+  try {
+    // Get basic index information
+    const indices = await es.cat.indices({ format: "json", h: "index,docs.count,store.size,status,health" });
+    
+    // Get detailed stats for each index
+    const stats = await es.indices.stats({ metric: ["store", "docs"] });
+    
+    // Get index settings and mappings
+    const settings = await es.indices.getSettings();
+    const mappings = await es.indices.getMapping();
+
+    const indexList = indices.map(index => {
+      const indexName = index.index;
+      const indexStats = stats.indices[indexName];
+      const indexSettings = settings[indexName];
+      
+      return {
+        name: indexName,
+        status: index.status,
+        health: index.health,
+        docCount: parseInt(index['docs.count']) || 0,
+        storeSize: index['store.size'] || '0b',
+        storeSizeBytes: indexStats?.total?.store?.size_in_bytes || 0,
+        shards: indexStats?.total?.docs ? Object.keys(indexStats.indices || {}).length : 1,
+        createdAt: indexSettings?.settings?.index?.creation_date ? 
+          new Date(parseInt(indexSettings.settings.index.creation_date)).toISOString() : null,
+        uuid: indexSettings?.settings?.index?.uuid || null,
+        isSelected: indexName === getSelectedIndex()
+      };
+    });
+
+    res.json({ 
+      indices: indexList.sort((a, b) => a.name.localeCompare(b.name)),
+      selectedIndex: getSelectedIndex()
+    });
+  } catch (error) {
+    console.error("Error fetching Elasticsearch indices:", error);
+    res.status(500).json({ error: "Failed to fetch indices information" });
+  }
+});
+
+// POST create new Elasticsearch index
+app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
+  const { indexName } = req.body;
+  
+  if (!indexName || typeof indexName !== 'string') {
+    return res.status(400).json({ error: "Index name is required" });
+  }
+
+  const formattedName = formatIndexName(indexName);
+  
+  if (formattedName.length === 0) {
+    return res.status(400).json({ error: "Invalid index name" });
+  }
+
+  const taskId = createTask("Create Index", "creating", formattedName);
+  res.json({ taskId });
+
+  (async () => {
+    try {
+      // Check if index already exists
+      const exists = await es.indices.exists({ index: formattedName });
+      if (exists) {
+        updateTask(taskId, {
+          status: "error",
+          error: `Index '${formattedName}' already exists`,
+          completed: true,
+        });
+        return;
+      }
+
+      // Create the index with proper mapping
+      await es.indices.create({
+        index: formattedName,
+        body: createIndexMapping()
+      });
+
+      updateTask(taskId, {
+        status: "completed",
+        progress: 1,
+        total: 1,
+        completed: true,
+        message: `Index '${formattedName}' created successfully`
+      });
+      console.log(`Task ${taskId} completed: Index '${formattedName}' created.`);
+    } catch (error) {
+      console.error(`Create index task ${taskId} failed:`, error);
+      updateTask(taskId, {
+        status: "error",
+        error: error.message,
+        completed: true,
+      });
+    }
+  })();
+});
+
+// DELETE Elasticsearch index
+app.delete("/api/admin/es/indices/:indexName", verifyJwt, async (req, res) => {
+  const { indexName } = req.params;
+  
+  // Prevent deletion of system indices and current selected index being used
+  if (indexName.startsWith('.') || indexName === getSelectedIndex()) {
+    return res.status(400).json({ 
+      error: indexName === getSelectedIndex() ? 
+        "Cannot delete the currently selected index" : 
+        "Cannot delete system indices" 
+    });
+  }
+
+  const taskId = createTask("Delete Index", "deleting", indexName);
+  res.json({ taskId });
+
+  (async () => {
+    try {
+      // Check if index exists
+      const exists = await es.indices.exists({ index: indexName });
+      if (!exists) {
+        updateTask(taskId, {
+          status: "error",
+          error: `Index '${indexName}' does not exist`,
+          completed: true,
+        });
+        return;
+      }
+
+      // Delete the index
+      await es.indices.delete({ index: indexName });
+
+      updateTask(taskId, {
+        status: "completed",
+        progress: 1,
+        total: 1,
+        completed: true,
+        message: `Index '${indexName}' deleted successfully`
+      });
+      console.log(`Task ${taskId} completed: Index '${indexName}' deleted.`);
+    } catch (error) {
+      console.error(`Delete index task ${taskId} failed:`, error);
+      updateTask(taskId, {
+        status: "error",
+        error: error.message,
+        completed: true,
+      });
+    }
+  })();
+});
+
+// POST set selected index for new data operations
+app.post("/api/admin/es/select-index", verifyJwt, async (req, res) => {
+  const { indexName } = req.body;
+  console.log(`🔄 Received request to change index to: ${indexName}`);
+  
+  if (!indexName || typeof indexName !== 'string') {
+    console.log(`❌ Invalid index name: ${indexName}`);
+    return res.status(400).json({ error: "Index name is required" });
+  }
+
+  try {
+    console.log(`🔍 Checking if index '${indexName}' exists...`);
+    // Verify the index exists
+    const exists = await es.indices.exists({ index: indexName });
+    if (!exists) {
+      console.log(`❌ Index '${indexName}' does not exist`);
+      return res.status(404).json({ error: `Index '${indexName}' does not exist` });
+    }
+
+    console.log(`💾 Updating selected index to '${indexName}'...`);
+    // Update the selected index with proper error handling
+    await setSelectedIndex(indexName);
+    
+    console.log(`✅ Selected index successfully changed to: ${indexName}`);
+    
+    res.json({ 
+      message: `Selected index set to '${indexName}'`,
+      selectedIndex: getSelectedIndex()
+    });
+  } catch (error) {
+    console.error("❌ Error setting selected index:", error);
+    res.status(500).json({ error: "Failed to set selected index: " + error.message });
+  }
+});
+
+// GET Elasticsearch cluster health and info
+app.get("/api/admin/es/health", verifyJwt, async (req, res) => {
+  try {
+    const [health, info, stats] = await Promise.all([
+      es.cluster.health(),
+      es.info(),
+      es.cluster.stats()
+    ]);
+
+    res.json({
+      cluster: {
+        name: health.cluster_name,
+        status: health.status,
+        numberOfNodes: health.number_of_nodes,
+        numberOfDataNodes: health.number_of_data_nodes,
+        activePrimaryShards: health.active_primary_shards,
+        activeShards: health.active_shards,
+        relocatingShards: health.relocating_shards,
+        initializingShards: health.initializing_shards,
+        unassignedShards: health.unassigned_shards
+      },
+      version: {
+        number: info.version.number,
+        luceneVersion: info.version.lucene_version
+      },
+      storage: {
+        totalSize: stats.indices.store.size_in_bytes,
+        totalSizeReadable: formatBytes(stats.indices.store.size_in_bytes),
+        documentCount: stats.indices.docs.count
+      },
+      selectedIndex: getSelectedIndex()
+    });
+  } catch (error) {
+    console.error("Error fetching Elasticsearch health:", error);
+    res.status(500).json({ error: "Failed to fetch cluster health" });
+  }
+});
+
+// GET index mapping and settings details
+app.get("/api/admin/es/indices/:indexName/details", verifyJwt, async (req, res) => {
+  const { indexName } = req.params;
+  
+  try {
+    const [mapping, settings, stats] = await Promise.all([
+      es.indices.getMapping({ index: indexName }),
+      es.indices.getSettings({ index: indexName }),
+      es.indices.stats({ index: indexName })
+    ]);
+
+    const indexMapping = mapping[indexName];
+    const indexSettings = settings[indexName];
+    const indexStats = stats.indices[indexName];
+
+    res.json({
+      name: indexName,
+      mapping: indexMapping.mappings,
+      settings: indexSettings.settings,
+      stats: {
+        docs: indexStats.total.docs,
+        store: indexStats.total.store,
+        indexing: indexStats.total.indexing,
+        search: indexStats.total.search
+      }
+    });
+  } catch (error) {
+    console.error(`Error fetching details for index ${indexName}:`, error);
+    res.status(500).json({ error: "Failed to fetch index details" });
+  }
+});
+
+// POST reindex data from one index to another
+app.post("/api/admin/es/reindex", verifyJwt, async (req, res) => {
+  const { sourceIndex, destIndex } = req.body;
+  
+  if (!sourceIndex || !destIndex) {
+    return res.status(400).json({ error: "Source and destination indices are required" });
+  }
+
+  const taskId = createTask("Reindex Data", "initializing");
+  res.json({ taskId });
+
+  (async () => {
+    try {
+      // Check if source exists
+      const sourceExists = await es.indices.exists({ index: sourceIndex });
+      if (!sourceExists) {
+        updateTask(taskId, {
+          status: "error",
+          error: `Source index '${sourceIndex}' does not exist`,
+          completed: true,
+        });
+        return;
+      }
+
+      // Create destination index if it doesn't exist
+      const destExists = await es.indices.exists({ index: destIndex });
+      if (!destExists) {
+        await es.indices.create({
+          index: destIndex,
+          body: createIndexMapping()
+        });
+      }
+
+      updateTask(taskId, {
+        status: "reindexing",
+        message: `Reindexing from '${sourceIndex}' to '${destIndex}'...`
+      });
+
+      // Perform reindex operation
+      const response = await es.reindex({
+        body: {
+          source: { index: sourceIndex },
+          dest: { index: destIndex }
+        },
+        wait_for_completion: true,
+        refresh: true
+      });
+
+      updateTask(taskId, {
+        status: "completed",
+        progress: response.total || 1,
+        total: response.total || 1,
+        completed: true,
+        message: `Reindexed ${response.total || 0} documents from '${sourceIndex}' to '${destIndex}'`
+      });
+      console.log(`Task ${taskId} completed: Reindexed ${response.total || 0} documents.`);
+    } catch (error) {
+      console.error(`Reindex task ${taskId} failed:`, error);
+      updateTask(taskId, {
+        status: "error",
+        error: error.message,
+        completed: true,
+      });
+    }
+  })();
+});
+
+// Helper function to format bytes
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// New endpoint to get available indices for search
+app.get("/api/search/indices", async (req, res) => {
+  try {
+    const allIndices = await es.cat.indices({ format: "json", h: "index,docs.count,store.size" });
+    const availableIndices = allIndices
+      .filter(idx => !idx.index.startsWith('.') && !idx.index.startsWith('kibana'))
+      .map(idx => ({
+        name: idx.index,
+        docCount: parseInt(idx['docs.count']) || 0,
+        storeSize: idx['store.size'] || '0b'
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    res.json({ 
+      indices: availableIndices,
+      selectedIndex: getSelectedIndex() 
+    });
+  } catch (error) {
+    console.error("Error fetching search indices:", error);
+    res.status(500).json({ error: "Failed to fetch available indices" });
+  }
+});
+
+// ==================== END ELASTICSEARCH MANAGEMENT ====================
+
 // backend/index.js
 app.get("/api/total-accounts", async (req, res) => {
   try {
-    const response = await es.count({ index: "accounts" });
-    res.json({ totalAccounts: response.count });
+    // Use configured search indices instead of selected index for operations
+    const searchIndices = getConfig('searchIndices');
+    
+    if (!searchIndices || searchIndices.length === 0) {
+      return res.json({ totalAccounts: 0 });
+    }
+
+    // Verify all indices exist before counting
+    for (const index of searchIndices) {
+      const exists = await es.indices.exists({ index });
+      if (!exists) {
+        console.warn(`Search index '${index}' does not exist, skipping from count`);
+      }
+    }
+
+    // Filter to only existing indices
+    const existingIndices = [];
+    for (const index of searchIndices) {
+      const exists = await es.indices.exists({ index });
+      if (exists) {
+        existingIndices.push(index);
+      }
+    }
+
+    if (existingIndices.length === 0) {
+      return res.json({ totalAccounts: 0 });
+    }
+
+    // Count records across all configured search indices
+    const response = await es.count({ index: existingIndices.join(',') });
+    res.json({ 
+      totalAccounts: response.count,
+      searchIndices: existingIndices // Include which indices were counted
+    });
   } catch (error) {
+    console.error("Error fetching total accounts:", error);
     res.status(500).json({ message: "Error fetching total accounts." });
   }
 });
@@ -897,12 +1503,13 @@ function parseLineForDisplay(line) {
 
 
 
-// Public /search endpoint
+// Public /search endpoint - Enhanced with multi-index support
 app.get("/api/search", async (req, res) => {
   const q = req.query.q;
   const page = parseInt(req.query.page) || 1;
   const size = parseInt(req.query.size) || 20;
   const from = (page - 1) * size;
+  const searchIndices = req.query.indices; // New parameter for multiple indices
 
   if (!q) return res.json({ results: [], total: 0 });
 
@@ -923,44 +1530,89 @@ app.get("/api/search", async (req, res) => {
   }
 
   try {
+    // Determine which indices to search
+    let indexToSearch;
+    if (searchIndices) {
+      // Parse indices parameter (can be comma-separated string or array)
+      let indicesToSearch;
+      if (typeof searchIndices === 'string') {
+        indicesToSearch = searchIndices.split(',').map(idx => idx.trim()).filter(idx => idx.length > 0);
+      } else if (Array.isArray(searchIndices)) {
+        indicesToSearch = searchIndices.filter(idx => typeof idx === 'string' && idx.trim().length > 0);
+      } else {
+        indicesToSearch = getConfig('searchIndices'); // Use configured search indices
+      }
+
+      if (indicesToSearch.length === 0) {
+        indicesToSearch = getConfig('searchIndices'); // Fallback to configured search indices
+      }
+
+      // Verify all requested indices exist
+      for (const index of indicesToSearch) {
+        const exists = await es.indices.exists({ index });
+        if (!exists) {
+          return res.status(400).json({ 
+            error: `Index '${index}' does not exist`,
+            availableIndices: [] 
+          });
+        }
+      }
+
+      indexToSearch = indicesToSearch.join(',');
+    } else {
+      // Default to configured search indices if no indices specified
+      indexToSearch = getConfig('searchIndices').join(',');
+    }
+
     const response = await es.search({
-      index: "accounts",
+      index: indexToSearch,
       from: from,
       size: size,
-      query: {
-        bool: {
-          should: [
-            {
-              // Search using the autocomplete field for raw_line
-              match: {
-                "raw_line.autocomplete": {
-                  query: q.toLowerCase(),
-                  operator: "and"
+      body: {
+        query: {
+          bool: {
+            should: [
+              {
+                // Search using the autocomplete field for raw_line
+                match: {
+                  "raw_line.autocomplete": {
+                    query: q.toLowerCase(),
+                    operator: "and"
+                  }
+                }
+              },
+              {
+                // Broader search on the raw_line text field
+                match_phrase_prefix: {
+                  raw_line: q.toLowerCase()
                 }
               }
-            },
-            {
-              // Broader search on the raw_line text field
-              match_phrase_prefix: {
-                raw_line: q.toLowerCase()
-              }
-            }
-          ],
-          minimum_should_match: 1
-        }
+            ],
+            minimum_should_match: 1
+          }
+        },
+        // Add source index to results for multi-index search
+        _source: ["raw_line"],
+        // Sort by relevance score, then by index name for consistency
+        sort: [
+          "_score",
+          { "_index": { "order": "asc" } }
+        ]
       }
     });
 
     const hits = response.hits.hits;
     const total = response.hits.total.value;
+    const searchedIndices = indexToSearch.split(',');
 
     const results = hits.map((hit) => {
-      const parsedAccount = parseLineForDisplay(hit._source.raw_line); // Parse the raw line
+      const parsedAccount = parseLineForDisplay(hit._source.raw_line);
       let account = {
         id: hit._id,
         url: parsedAccount.url,
         username: parsedAccount.username,
-        password: parsedAccount.password
+        password: parsedAccount.password,
+        sourceIndex: hit._index // Add source index information
       };
 
       // Conditionally add raw_line only if admin
@@ -976,7 +1628,7 @@ app.get("/api/search", async (req, res) => {
             account.password = "*".repeat(passwordLength);
           } else {
             // Show 20% of characters at the start and end, with a minimum of 2
-            const visibleChars = Math.max(MIN_VISIBLE_CHARS, Math.floor(passwordLength * MASKING_RATIO));
+            const visibleChars = Math.max(getConfig('minVisibleChars'), Math.floor(passwordLength * getConfig('maskingRatio')));
             const maskedMiddle = "*".repeat(passwordLength - 2 * visibleChars);
             account.password =
               account.password.substring(0, visibleChars) +
@@ -993,7 +1645,7 @@ app.get("/api/search", async (req, res) => {
             account.username = "*".repeat(usernameLength); // Mask completely with asterisks
           } else {
             // Show 20% of characters at the start and end, with a minimum of 2
-            const visibleChars = Math.max(MIN_VISIBLE_CHARS, Math.floor(usernameLength * USERNAME_MASKING_RATIO));
+            const visibleChars = Math.max(getConfig('minVisibleChars'), Math.floor(usernameLength * getConfig('usernameMaskingRatio')));
             const maskedMiddle = "*".repeat(usernameLength - 2 * visibleChars);
             account.username =
               account.username.substring(0, visibleChars) +
@@ -1007,8 +1659,17 @@ app.get("/api/search", async (req, res) => {
       return account;
     });
 
-    res.json({ results, total });
+    res.json({ 
+      results, 
+      total,
+      searchedIndices: searchedIndices,
+      selectedIndex: getSelectedIndex() // For reference
+    });
   } catch (error) {
+    console.error("Search error:", error);
     res.status(500).json({ message: "Error searching records." });
   }
 });
+
+// Load configuration at startup
+loadConfig();

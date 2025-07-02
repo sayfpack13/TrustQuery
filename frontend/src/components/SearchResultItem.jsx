@@ -47,6 +47,16 @@ export default function SearchResultItem({ item, style }) {
         </div>
       ) : (
         <>
+          {/* Show source index if available and from multi-index search */}
+          {item.sourceIndex && (
+            <>
+              <div className="text-sm font-semibold text-muted uppercase mb-2">Source Index</div>
+              <div className="text-sm bg-neutral-700 text-white px-2 py-1 rounded mb-4 inline-block">
+                {item.sourceIndex}
+              </div>
+            </>
+          )}
+          
           <div className="text-sm font-semibold text-muted uppercase mb-2">URL</div>
           <div className="font-mono text-xl text-primary hover:text-accent break-words mb-4">
             {item.url}

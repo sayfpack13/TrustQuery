@@ -1,0 +1,21 @@
+{
+  "selectedIndex": "accounts2",
+  "searchIndices": [
+    "accounts2"
+  ],
+  "elasticsearchNodes": [
+    "http://localhost:9200"
+  ],
+  "batchSize": 1000,
+  "minVisibleChars": 2,
+  "maskingRatio": 0.2,
+  "usernameMaskingRatio": 0.4,
+  "autoRefreshInterval": 30000,
+  "maxTaskHistory": 100,
+  "adminSettings": {
+    "defaultPageSize": 20,
+    "showRawLineByDefault": false,
+    "enableSounds": true,
+    "theme": "dark"
+  }
+}

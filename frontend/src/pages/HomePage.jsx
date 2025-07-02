@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faCircleNotch } from "@fortawesome/free-solid-svg-icons";
+import { faCircleNotch, faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
 import SearchResultItem from "../components/SearchResultItem";
 import useSound from "../components/useSound";
 import Globe from "react-globe.gl";
@@ -19,9 +19,12 @@ export default function HomePage() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
-  const [totalResults, setTotalResults] = useState(0); // State for total collected data
+  const [totalResults, setTotalResults] = useState(0);  // State for total collected data
+  const [totalCollectedData, setTotalCollectedData] = useState(0);
+  const [searchedIndicesForTotal, setSearchedIndicesForTotal] = useState([]);
+  const [searchMessage, setSearchMessage] = useState("");
 
-  const [totalCollectedData, setTotalCollectedData] = useState(0); // Sound hooks
+  // Sound hooks
 
   const { audioRef: errorAudioRef, playSound: playErrorSound } =
     useSound("/sounds/error.mp3");
@@ -110,8 +113,11 @@ export default function HomePage() {
         }
         const data = await response.json();
         setTotalCollectedData(data.totalAccounts);
+        setSearchedIndicesForTotal(data.searchIndices || []);
       } catch (error) {
         console.error("Error fetching total collected data:", error);
+        setTotalCollectedData(0);
+        setSearchedIndicesForTotal([]);
       }
     };
 
@@ -123,6 +129,7 @@ export default function HomePage() {
     setHasSearchedAndFound(false);
     setShowAlertAnimation(false);
     setLoading(true);
+    setSearchMessage("");
     try {
       const token = localStorage.getItem("adminToken");
       const headers = {
@@ -132,18 +139,26 @@ export default function HomePage() {
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const res = await fetch(
-        `/api/search?q=${encodeURIComponent(
-          queryToFetch
-        )}&page=${pageToFetch}&size=${itemsPerPage}`,
-        {
-          headers: headers,
-        }
-      );
+      // Build the search URL
+      let searchUrl = `/api/search?q=${encodeURIComponent(queryToFetch)}&page=${pageToFetch}&size=${itemsPerPage}`;
+
+      const res = await fetch(searchUrl, {
+        headers: headers,
+      });
       const data = await res.json();
 
       setResults(data.results || []);
       setTotalResults(data.total || 0);
+
+      // Set search message based on results
+      if (data.searchedIndices && data.searchedIndices.length > 0) {
+        const searchedCount = data.searchedIndices.length;
+        if (searchedCount === 1) {
+          setSearchMessage(`Searched in index: ${data.searchedIndices[0]}`);
+        } else {
+          setSearchMessage(`Searched across ${searchedCount} indices`);
+        }
+      }
 
       if (data.results?.length === 0 && data.total === 0) {
         setStatus("No results found.");
@@ -169,11 +184,11 @@ export default function HomePage() {
       setStatus("Search failed. Please try again later.");
       setResults([]);
       setTotalResults(0);
+      setSearchMessage("");
     } finally {
       setLoading(false);
     }
-  }; // FIX: New useEffect to trigger search when searchTerm or currentPage changes
-
+  };  // FIX: New useEffect to trigger search when searchTerm or currentPage changes
   useEffect(() => {
     if (searchTerm) {
       fetchResults(searchTerm, currentPage);
@@ -354,10 +369,18 @@ export default function HomePage() {
           By Sayf
         </p>
         {totalCollectedData > 0 && (
-          <p className="text-center text-info text-md mb-4 animate-pulse">
-            Total records: {totalCollectedData.toLocaleString()}
-          </p>
+          <div className="text-center text-info text-md mb-4 animate-pulse">
+            <p>
+              Total records: {totalCollectedData.toLocaleString()}
+            </p>
+            {searchedIndicesForTotal.length > 1 && (
+              <p className="text-xs text-neutral-400 mt-1">
+                Across {searchedIndicesForTotal.length} indices: {searchedIndicesForTotal.join(', ')}
+              </p>
+            )}
+          </div>
         )}
+
         <div
           className={`flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4 max-w-2xl mx-auto bg-background p-4 rounded-full shadow-xl border border-border focus-within:ring-2 focus-within:ring-primary focus-within:ring-opacity-75 transition-all duration-300 ease-in-out ${
             searchBarLoaded ? "animate-pop-in" : "opacity-0"
@@ -408,6 +431,11 @@ export default function HomePage() {
             <p className="text-3xl font-extrabold text-accent">
               Found <span className="text-4xl font-black">{totalResults}</span> results
             </p>
+            {searchMessage && (
+              <p className="text-sm text-neutral-400 mt-2">
+                {searchMessage}
+              </p>
+            )}
           </div>
         )}
         {!loading && results.length > 0 && (
