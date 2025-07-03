@@ -1,7 +1,7 @@
 {
-  "selectedIndex": "accounts2",
+  "selectedIndex": "accounts",
   "searchIndices": [
-    "accounts2"
+    "accounts"
   ],
   "elasticsearchNodes": [
     "http://localhost:9200"
@@ -15,9 +15,17 @@
   "minVisibleChars": 2,
   "maskingRatio": 0.2,
   "usernameMaskingRatio": 0.4,
-  "autoRefreshInterval": 30000,
-  "maxTaskHistory": 100,
   "adminSettings": {
     "showRawLineByDefault": false
-  }
+  },
+  "elasticsearchConfig": {
+    "configFilePath": "C:\\elasticsearch\\config\\elasticsearch.yml",
+    "dataPath": "C:\\elasticsearch\\data",
+    "logsPath": "C:\\elasticsearch\\logs",
+    "jvmOptionsPath": "C:\\elasticsearch\\config\\jvm.options",
+    "autoBackup": true,
+    "restartCommand": "net restart elasticsearch"
+  },
+  "autoRefreshInterval": 30000,
+  "maxTaskHistory": 100
 }

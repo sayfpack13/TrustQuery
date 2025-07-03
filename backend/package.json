@@ -1,19 +1,25 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon index.js"
+    "start": "nodemon server.js",
+    "dev": "nodemon server.js",
+    "prod": "node server.js"
   },
   "nodemonConfig": {
-    "ignore": ["config.json", "data/*"]
+    "ignore": [
+      "config.json",
+      "data/*"
+    ]
   },
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "TrustQuery Backend API",
   "dependencies": {
     "@elastic/elasticsearch": "^9.0.2",
+    "axios": "^1.10.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^17.0.0",

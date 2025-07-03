@@ -68,7 +68,7 @@ export default function AdminDashboard({ onLogout }) {
   const [pageInput, setPageInput] = useState("1");
 
   // === Tab Navigation State ===
-  const [activeTab, setActiveTab] = useState("files"); // 'files', 'elasticsearch', 'accounts', 'configuration'
+  const [activeTab, setActiveTab] = useState("files"); // 'files', 'elasticsearch', 'accounts', 'configuration', 'cluster'
 
   // === Configuration Management State ===
   const [config, setConfig] = useState(null);
@@ -100,6 +100,27 @@ export default function AdminDashboard({ onLogout }) {
   const [reindexDest, setReindexDest] = useState("");
   const [indexDetails, setIndexDetails] = useState(null);
   const [esLoading, setEsLoading] = useState(false);
+
+  // === Cluster/Node/Disk Management State ===
+  const [clusterInfo, setClusterInfo] = useState(null);
+  const [nodes, setNodes] = useState([]);
+  const [nodeStats, setNodeStats] = useState({});
+  const [nodeDisks, setNodeDisks] = useState({});
+  const [diskPreferences, setDiskPreferences] = useState({});
+  const [clusterLoading, setClusterLoading] = useState(false);
+  const [newNodeUrl, setNewNodeUrl] = useState("");
+  const [selectedNodeForDisks, setSelectedNodeForDisks] = useState("");
+  const [newClusterName, setNewClusterName] = useState("");
+
+  // === Elasticsearch Configuration Management State ===
+  const [esConfigValidation, setEsConfigValidation] = useState(null);
+  const [esConfigPaths, setEsConfigPaths] = useState({});
+  const [esConfigFile, setEsConfigFile] = useState(null);
+  const [esConfigLoading, setEsConfigLoading] = useState(false);
+  const [showEsConfigModal, setShowEsConfigModal] = useState(false);
+  const [esConfigModalType, setEsConfigModalType] = useState(""); // 'paths', 'settings', 'file'
+  const [tempEsSettings, setTempEsSettings] = useState({});
+  const [tempEsPaths, setTempEsPaths] = useState({});
 
   // Notification State
   const [notification, setNotification] = useState({
@@ -146,7 +167,7 @@ export default function AdminDashboard({ onLogout }) {
       playErrorSound();
       showNotification("error", error, faExclamationTriangle);
     }
-  }, [error, playErrorSound, showNotification]);
+  }, [error]);
 
   // Function to hide notification
   const hideNotification = () => {
@@ -521,13 +542,247 @@ export default function AdminDashboard({ onLogout }) {
     setIndexDetails(null);
   };
 
+  // === Cluster/Node/Disk Management Functions ===
+  const fetchClusterInfo = useCallback(async () => {
+    setClusterLoading(true);
+    try {
+      const response = await axiosClient.get('/api/admin/cluster');
+      setClusterInfo(response.data);
+      setNodes(Object.values(response.data.nodes));
+      setNodeDisks(response.data.nodeDisks);
+      setNewClusterName(response.data.clusterName);
+    } catch (error) {
+      console.error('Error fetching cluster info:', error);
+      showNotification('error', 'Failed to fetch cluster information', faExclamationTriangle);
+    } finally {
+      setClusterLoading(false);
+    }
+  }, [showNotification]);
+
+  const fetchNodeStats = useCallback(async () => {
+    try {
+      const response = await axiosClient.get('/api/admin/nodes');
+      setNodeStats(response.data.stats);
+    } catch (error) {
+      console.error('Error fetching node stats:', error);
+    }
+  }, []);
+
+  const fetchDiskPreferences = useCallback(async () => {
+    try {
+      const preferences = {};
+      for (const node of nodes) {
+        const response = await axiosClient.get(`/api/admin/disks/preferred/${node.id}`);
+        preferences[node.id] = response.data.preferred;
+      }
+      setDiskPreferences(preferences);
+    } catch (error) {
+      console.error('Error fetching disk preferences:', error);
+    }
+  }, [nodes]);
+
+  const handleSetClusterName = async () => {
+    if (!newClusterName.trim()) return;
+    
+    try {
+      await axiosClient.post('/api/admin/cluster/name', { clusterName: newClusterName });
+      showNotification('success', 'Cluster name updated successfully', faCheckCircle);
+      fetchClusterInfo();
+    } catch (error) {
+      console.error('Error setting cluster name:', error);
+      showNotification('error', 'Failed to update cluster name', faExclamationTriangle);
+    }
+  };
+
+  const handleAddNode = async () => {
+    if (!newNodeUrl.trim()) return;
+    
+    try {
+      await axiosClient.post('/api/admin/nodes', { nodeUrl: newNodeUrl });
+      showNotification('success', 'Node added successfully', faCheckCircle);
+      setNewNodeUrl("");
+      fetchClusterInfo();
+    } catch (error) {
+      console.error('Error adding node:', error);
+      showNotification('error', 'Failed to add node', faExclamationTriangle);
+    }
+  };
+
+  const handleRemoveNode = async (nodeUrl) => {
+    if (!window.confirm(`Are you sure you want to remove node ${nodeUrl}?`)) return;
+    
+    try {
+      await axiosClient.delete('/api/admin/nodes', { data: { nodeUrl } });
+      showNotification('success', 'Node removed successfully', faCheckCircle);
+      fetchClusterInfo();
+    } catch (error) {
+      console.error('Error removing node:', error);
+      showNotification('error', 'Failed to remove node', faExclamationTriangle);
+    }
+  };
+
+  const handleSetWriteNode = async (nodeUrl) => {
+    try {
+      await axiosClient.post('/api/admin/nodes/write', { nodeUrl });
+      showNotification('success', 'Write node updated successfully', faCheckCircle);
+      fetchClusterInfo();
+    } catch (error) {
+      console.error('Error setting write node:', error);
+      showNotification('error', 'Failed to set write node', faExclamationTriangle);
+    }
+  };
+
+  const handleSetPreferredDisk = async (nodeId, diskPath) => {
+    try {
+      await axiosClient.post('/api/admin/disks/preferred', { nodeId, diskPath });
+      showNotification('success', 'Preferred disk path set successfully', faCheckCircle);
+      fetchDiskPreferences();
+    } catch (error) {
+      console.error('Error setting preferred disk:', error);
+      showNotification('error', 'Failed to set preferred disk path', faExclamationTriangle);
+    }
+  };
+
+  const fetchNodeDisks = async (nodeId) => {
+    try {
+      const response = await axiosClient.get(`/api/admin/disks/${nodeId}`);
+      return response.data.disks;
+    } catch (error) {
+      console.error('Error fetching node disks:', error);
+      return [];
+    }
+  };
+
+  // === Elasticsearch Configuration Management Functions ===
+  const fetchEsConfigValidation = useCallback(async () => {
+    setEsConfigLoading(true);
+    try {
+      const response = await axiosClient.get('/api/admin/es/config/validate');
+      setEsConfigValidation(response.data);
+    } catch (error) {
+      console.error('Error validating ES config:', error);
+      showNotification('error', 'Failed to validate Elasticsearch configuration', faExclamationTriangle);
+    } finally {
+      setEsConfigLoading(false);
+    }
+  }, [showNotification]);
+
+  const fetchEsConfigPaths = useCallback(async () => {
+    try {
+      const response = await axiosClient.get('/api/admin/es/config/paths');
+      setEsConfigPaths(response.data);
+      setTempEsPaths(response.data);
+    } catch (error) {
+      console.error('Error fetching ES config paths:', error);
+      showNotification('error', 'Failed to fetch configuration paths', faExclamationTriangle);
+    }
+  }, [showNotification]);
+
+  const fetchEsConfigFile = useCallback(async () => {
+    try {
+      const response = await axiosClient.get('/api/admin/es/config/file');
+      setEsConfigFile(response.data);
+      setTempEsSettings(response.data.parsedConfig || {});
+    } catch (error) {
+      console.error('Error fetching ES config file:', error);
+      showNotification('error', 'Failed to read configuration file', faExclamationTriangle);
+    }
+  }, [showNotification]);
+
+  const updateEsConfigPaths = async () => {
+    try {
+      const response = await axiosClient.post('/api/admin/es/config/paths', tempEsPaths);
+      setEsConfigPaths(response.data.elasticsearchConfig);
+      showNotification('success', 'Configuration paths updated successfully', faCheckCircle);
+      setShowEsConfigModal(false);
+      // Re-validate with new paths
+      fetchEsConfigValidation();
+    } catch (error) {
+      console.error('Error updating ES config paths:', error);
+      showNotification('error', error.response?.data?.error || 'Failed to update configuration paths', faExclamationTriangle);
+    }
+  };
+
+  const updateEsConfigSettings = async (restart = false) => {
+    try {
+      const response = await axiosClient.post('/api/admin/es/config/settings', {
+        settings: tempEsSettings,
+        restart
+      });
+      
+      if (response.data.taskId) {
+        setCurrentRunningTaskId(response.data.taskId);
+        localStorage.setItem("currentTaskId", response.data.taskId);
+        showNotification('info', 'Updating configuration settings...', faCircleNotch);
+      }
+      
+      setShowEsConfigModal(false);
+      // Refresh config file after update
+      setTimeout(() => fetchEsConfigFile(), 2000);
+    } catch (error) {
+      console.error('Error updating ES config settings:', error);
+      showNotification('error', error.response?.data?.error || 'Failed to update configuration settings', faExclamationTriangle);
+    }
+  };
+
+  const restartElasticsearchService = async () => {
+    try {
+      const response = await axiosClient.post('/api/admin/es/config/restart');
+      
+      if (response.data.taskId) {
+        setCurrentRunningTaskId(response.data.taskId);
+        localStorage.setItem("currentTaskId", response.data.taskId);
+        showNotification('info', 'Restarting Elasticsearch service...', faCircleNotch);
+      }
+    } catch (error) {
+      console.error('Error restarting ES service:', error);
+      showNotification('error', error.response?.data?.error || 'Failed to restart Elasticsearch service', faExclamationTriangle);
+    }
+  };
+
+  const openEsConfigModal = (type) => {
+    setEsConfigModalType(type);
+    if (type === 'paths') {
+      fetchEsConfigPaths();
+    } else if (type === 'file' || type === 'settings') {
+      fetchEsConfigFile();
+    }
+    setShowEsConfigModal(true);
+  };
+
+  const closeEsConfigModal = () => {
+    setShowEsConfigModal(false);
+    setEsConfigModalType("");
+    setTempEsSettings({});
+    setTempEsPaths({});
+  };
+
+  // Notification and error handling for task actions
+  const handleTaskAction = async (action, payload, successMessage, errorMessage) => {
+    setError("");
+    try {
+      const response = await axiosClient.post(`/api/admin/tasks/${action}`, payload);
+      const newTaskId = response.data.taskId;
+      localStorage.setItem("currentTaskId", newTaskId);
+      setCurrentRunningTaskId(newTaskId);
+      showNotification("info", successMessage, faCircleNotch, true);
+      fetchAllTasks(); // Refresh tasks
+    } catch (err) {
+      setError(err.response?.data?.error || errorMessage);
+      playErrorSound();
+    }
+  };
+
   // Effect for initial data fetching on mount
   useEffect(() => {
     fetchData(); // Initial fetch for accounts and files
     fetchAllTasks(); // Initial fetch for tasks
     fetchESData(); // Initial fetch for Elasticsearch data
     fetchConfig(); // Initial fetch for configuration
-  }, [fetchData, fetchAllTasks, fetchESData, fetchConfig]); // Added fetchConfig to dependencies
+    fetchClusterInfo(); // Initial fetch for cluster info
+    fetchDiskPreferences(); // Initial fetch for disk preferences
+    fetchEsConfigValidation(); // Initial fetch for ES config validation
+  }, []); // Added fetchConfig, fetchClusterInfo, fetchDiskPreferences, and fetchEsConfigValidation to dependencies
 
   // Effect to manage polling based on presence of active tasks
   useEffect(() => {
@@ -558,7 +813,7 @@ export default function AdminDashboard({ onLogout }) {
         pollingIntervalRef.current = null;
       }
     };
-  }, [tasksList, fetchAllTasks]); // Depend on tasksList and fetchAllTasks to react to changes in task activity
+  }, [tasksList]); // Depend on tasksList and fetchAllTasks to react to changes in task activity
 
   // Function to estimate remaining time for a task
   function estimateRemainingTime(start, progress, total) {
@@ -1150,6 +1405,15 @@ export default function AdminDashboard({ onLogout }) {
     );
   }
 
+  // Helper function to format bytes
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
   return (
     <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans">
       {/* Notification banner */}
@@ -1211,6 +1475,16 @@ export default function AdminDashboard({ onLogout }) {
               }`}
             >
               Elasticsearch Management
+            </button>
+            <button
+              onClick={() => setActiveTab("cluster")}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+                activeTab === "cluster"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
+              }`}
+            >
+              Cluster Management
             </button>
             <button
               onClick={() => setActiveTab("configuration")}
@@ -1456,14 +1730,14 @@ export default function AdminDashboard({ onLogout }) {
             <div className="flex space-x-3">
               <button
                 onClick={() => openESModal("create")}
-                className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
+                className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={isAnyTaskRunning || esLoading}
               >
                 Create Index
               </button>
               <button
                 onClick={() => openESModal("reindex")}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
+                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={isAnyTaskRunning || esLoading}
               >
                 Reindex Data
@@ -1557,6 +1831,7 @@ export default function AdminDashboard({ onLogout }) {
                     <tr
                       key={index.name}
                       className={`border-b border-neutral-600 hover:bg-neutral-600 transition-colors ${
+                       
                         index.isSelected ? 'bg-primary bg-opacity-20' : ''
                       }`}
                     >
@@ -1620,8 +1895,407 @@ export default function AdminDashboard({ onLogout }) {
                 )}
               </tbody>
             </table>
-          </div>
-        </section>
+          </div>            </section>
+
+            {/* Elasticsearch Configuration Management Section */}
+            <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-3xl font-semibold text-white">
+                  Configuration Management
+                </h2>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => openEsConfigModal("paths")}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
+                    disabled={esConfigLoading}
+                  >
+                    Configure Paths
+                  </button>
+                  <button
+                    onClick={() => openEsConfigModal("settings")}
+                    className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75"
+                    disabled={esConfigLoading || !esConfigValidation?.configExists}
+                  >
+                    Edit Settings
+                  </button>
+                  <button
+                    onClick={() => openEsConfigModal("file")}
+                    className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75"
+                    disabled={esConfigLoading || !esConfigValidation?.configExists}
+                  >
+                    View Config File
+                  </button>
+                  <button
+                    onClick={restartElasticsearchService}
+                    className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-75"
+                    disabled={isAnyTaskRunning || esConfigLoading}
+                  >
+                    Restart Service
+                  </button>
+                  <button
+                    onClick={fetchEsConfigValidation}
+                    className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
+                    disabled={esConfigLoading}
+                  >
+                    <FontAwesomeIcon 
+                      icon={faCircleNotch} 
+                      className={`mr-2 ${esConfigLoading ? 'fa-spin' : ''}`} 
+                    />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              {/* Configuration Status */}
+              {esConfigValidation && (
+                <div className="mb-6 p-4 bg-neutral-700 rounded-lg">
+                  <h3 className="text-xl font-semibold text-white mb-3">Configuration Status</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="p-3 bg-neutral-600 rounded">
+                      <div className="flex items-center justify-between">
+                        <span className="text-neutral-300">Config File</span>
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          esConfigValidation.configExists && esConfigValidation.configWritable
+                            ? 'bg-green-600 text-white' 
+                            : 'bg-red-600 text-white'
+                        }`}>
+                          {esConfigValidation.configExists && esConfigValidation.configWritable ? 'OK' : 'ERROR'}
+                        </span>
+                      </div>
+                      <div className="text-sm text-neutral-400 mt-1">
+                        {esConfigValidation.configExists ? 'Accessible' : 'Not found'}
+                        {esConfigValidation.configWritable ? ' & Writable' : ' (Read-only)'}
+                      </div>
+                    </div>
+                    
+                    <div className="p-3 bg-neutral-600 rounded">
+                      <div className="flex items-center justify-between">
+                        <span className="text-neutral-300">Data Path</span>
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          esConfigValidation.dataPathExists ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+                        }`}>
+                          {esConfigValidation.dataPathExists ? 'OK' : 'ERROR'}
+                        </span>
+                      </div>
+                      <div className="text-sm text-neutral-400 mt-1">
+                        {esConfigValidation.dataPathExists ? 'Accessible' : 'Not accessible'}
+                      </div>
+                    </div>
+                    
+                    <div className="p-3 bg-neutral-600 rounded">
+                      <div className="flex items-center justify-between">
+                        <span className="text-neutral-300">Logs Path</span>
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          esConfigValidation.logsPathExists ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+                        }`}>
+                          {esConfigValidation.logsPathExists ? 'OK' : 'ERROR'}
+                        </span>
+                      </div>
+                      <div className="text-sm text-neutral-400 mt-1">
+                        {esConfigValidation.logsPathExists ? 'Accessible' : 'Not accessible'}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Current Configuration Summary */}
+                  {esConfigValidation.parsedConfig && (
+                    <div className="mt-4 p-3 bg-neutral-600 rounded">
+                      <h4 className="text-lg font-semibold text-white mb-2">Current Settings</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <span className="text-neutral-300">Cluster Name:</span>
+                          <span className="ml-2 text-white">
+                            {esConfigValidation.parsedConfig['cluster.name'] || 'Not set'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-neutral-300">HTTP Host:</span>
+                          <span className="ml-2 text-white">
+                            {esConfigValidation.parsedConfig['http.host'] || 'Default'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-neutral-300">Security Enabled:</span>
+                          <span className="ml-2 text-white">
+                            {esConfigValidation.parsedConfig['xpack.security.enabled'] || 'Default'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-neutral-300">Master Nodes:</span>
+                          <span className="ml-2 text-white">
+                            {esConfigValidation.parsedConfig['cluster.initial_master_nodes'] || 'Default'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Issues */}
+                  {esConfigValidation.issues.length > 0 && (
+                    <div className="mt-4 p-3 bg-red-900 border border-red-700 rounded">
+                      <h4 className="text-lg font-semibold text-red-200 mb-2">Issues Found</h4>
+                      <ul className="text-sm text-red-300 space-y-1">
+                        {esConfigValidation.issues.map((issue, index) => (
+                          <li key={index} className="flex items-start">
+                            <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2 mt-0.5 text-red-400" />
+                            {issue}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          </>
+        )}
+
+        {/* Cluster Management Tab */}
+        {activeTab === "cluster" && (
+          <>
+            <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-3xl font-semibold text-white">
+                  Cluster Management
+                </h2>
+                <button
+                  onClick={fetchClusterInfo}
+                  className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
+                  disabled={clusterLoading}
+                >
+                  <FontAwesomeIcon 
+                    icon={faCircleNotch} 
+                    className={`mr-2 ${clusterLoading ? 'fa-spin' : ''}`} 
+                  />
+                  Refresh
+                </button>
+              </div>
+
+              {clusterLoading ? (
+                <div className="text-center py-8 text-neutral-400">
+                  <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+                  Loading cluster information...
+                </div>
+              ) : clusterInfo ? (
+                <div className="space-y-8">
+                  {/* Cluster Name Section */}
+                  <div className="p-6 bg-neutral-700 rounded-lg">
+                    <h3 className="text-xl font-semibold text-white mb-4">Cluster Name</h3>
+                    <div className="flex items-center space-x-4">
+                      <input
+                        type="text"
+                        value={newClusterName}
+                        onChange={(e) => setNewClusterName(e.target.value)}
+                        placeholder="Enter cluster name"
+                        className="flex-1 px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                      <button
+                        onClick={handleSetClusterName}
+                        disabled={!newClusterName.trim() || newClusterName === clusterInfo.clusterName}
+                        className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Update Name
+                      </button>
+                    </div>
+                    <p className="text-sm text-neutral-400 mt-2">
+                      Current: <span className="text-white font-medium">{clusterInfo.clusterName}</span>
+                    </p>
+                  </div>
+
+                  {/* Node Configuration Section */}
+                  <div className="p-6 bg-neutral-700 rounded-lg">
+                    <h3 className="text-xl font-semibold text-white mb-4">Node Configuration</h3>
+                    
+                    {/* Add Node */}
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-neutral-300 mb-2">
+                        Add New Node
+                      </label>
+                      <div className="flex items-center space-x-4">
+                        <input
+                          type="url"
+                          value={newNodeUrl}
+                          onChange={(e) => setNewNodeUrl(e.target.value)}
+                          placeholder="http://localhost:9200"
+                          className="flex-1 px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <button
+                          onClick={handleAddNode}
+                          disabled={!newNodeUrl.trim()}
+                          className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Add Node
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Current Nodes */}
+                    <div>
+                      <h4 className="text-lg font-medium text-white mb-3">Configured Nodes</h4>
+                      <div className="space-y-2">
+                        {clusterInfo.elasticsearchNodes?.map((nodeUrl, index) => (
+                          <div key={index} className="flex items-center justify-between p-2 bg-neutral-600 rounded">
+                            <span className="text-white">{nodeUrl}</span>
+                            {clusterInfo.writeNode === nodeUrl && (
+                              <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded">
+                                WRITE
+                              </span>
+                            )}
+                          </div>
+                        )) || (
+                          <p className="text-neutral-400 text-sm">No nodes configured</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Active Nodes Status */}
+                  {nodes.length > 0 && (
+                    <div className="p-6 bg-neutral-700 rounded-lg">
+                      <h3 className="text-xl font-semibold text-white mb-4">Active Nodes Status</h3>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-neutral-100 bg-neutral-600 rounded-lg">
+                          <thead className="bg-neutral-500">
+                            <tr>
+                              <th className="text-left py-3 px-4 font-semibold">Node Name</th>
+                              <th className="text-left py-3 px-4 font-semibold">Host</th>
+                              <th className="text-left py-3 px-4 font-semibold">Roles</th>
+                              <th className="text-left py-3 px-4 font-semibold">Disk Usage</th>
+                              <th className="text-left py-3 px-4 font-semibold">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {nodes.map((node) => {
+                              const nodeDisksData = nodeDisks[node.id] || [];
+                              const totalDisk = nodeDisksData.reduce((acc, disk) => acc + disk.total, 0);
+                              const usedDisk = nodeDisksData.reduce((acc, disk) => acc + disk.used, 0);
+                              const diskUsagePercent = totalDisk > 0 ? ((usedDisk / totalDisk) * 100).toFixed(1) : 0;
+                              
+                              return (
+                                <tr key={node.id} className="border-b border-neutral-500 hover:bg-neutral-500 transition-colors">
+                                  <td className="py-3 px-4">
+                                    <div>
+                                      <span className="font-medium">{node.name}</span>
+                                      <div className="text-sm text-neutral-400">{node.id}</div>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4 text-neutral-300">
+                                    {node.host}:{node.transport_address?.split(':')[1] || 'N/A'}
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <div className="flex flex-wrap gap-1">
+                                      {node.roles?.map((role, idx) => (
+                                        <span key={idx} className="px-2 py-1 bg-primary text-white text-xs rounded-full">
+                                          {role}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4 text-neutral-300">
+                                    <div>
+                                      <span className={`font-medium ${diskUsagePercent > 90 ? 'text-red-400' : diskUsagePercent > 70 ? 'text-yellow-400' : 'text-green-400'}`}>
+                                        {diskUsagePercent}%
+                                      </span>
+                                      <div className="text-sm text-neutral-400">
+                                        {formatBytes(usedDisk)} / {formatBytes(totalDisk)}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <button
+                                      onClick={() => setSelectedNodeForDisks(selectedNodeForDisks === node.id ? "" : node.id)}
+                                      className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
+                                    >
+                                      {selectedNodeForDisks === node.id ? 'Hide' : 'View'} Disks
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Disk Management for Selected Node */}
+                  {selectedNodeForDisks && nodeDisks[selectedNodeForDisks] && (
+                    <div className="p-6 bg-neutral-700 rounded-lg">
+                      <h3 className="text-xl font-semibold text-white mb-4">
+                        Disk Paths for Node: {nodes.find(n => n.id === selectedNodeForDisks)?.name}
+                      </h3>
+                      <div className="space-y-4">
+                        {nodeDisks[selectedNodeForDisks].map((disk, index) => {
+                          const usagePercent = ((disk.used / disk.total) * 100).toFixed(1);
+                          const isPreferred = diskPreferences[selectedNodeForDisks] === disk.path;
+                          
+                          return (
+                            <div key={index} className="p-4 bg-neutral-600 rounded-lg">
+                              <div className="flex justify-between items-start mb-2">
+                                <div>
+                                  <h4 className="font-medium text-white">{disk.path}</h4>
+                                  {isPreferred && (
+                                    <span className="inline-block mt-1 px-2 py-1 bg-blue-600 text-white text-xs rounded-full">
+                                      PREFERRED PATH
+                                    </span>
+                                  )}
+                                </div>
+                                {!isPreferred && (
+                                  <button
+                                    onClick={() => handleSetPreferredDisk(selectedNodeForDisks, disk.path)}
+                                    className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
+                                  >
+                                    Set as Preferred
+                                  </button>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-3 gap-4 text-sm">
+                                <div>
+                                  <span className="text-neutral-400">Total:</span>
+                                  <span className="ml-2 text-white">{formatBytes(disk.total)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-neutral-400">Used:</span>
+                                  <span className="ml-2 text-white">{formatBytes(disk.used)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-neutral-400">Available:</span>
+                                  <span className="ml-2 text-white">{formatBytes(disk.available)}</span>
+                                </div>
+                              </div>
+                              <div className="mt-3">
+                                <div className="flex justify-between text-sm mb-1">
+                                  <span className="text-neutral-400">Usage</span>
+                                  <span className={`${usagePercent > 90 ? 'text-red-400' : usagePercent > 70 ? 'text-yellow-400' : 'text-green-400'}`}>
+                                    {usagePercent}%
+                                  </span>
+                                </div>
+                                <div className="w-full bg-neutral-800 rounded-full h-2">
+                                  <div
+                                    className={`h-2 rounded-full ${usagePercent > 90 ? 'bg-red-600' : usagePercent > 70 ? 'bg-yellow-600' : 'bg-green-600'}`}
+                                    style={{ width: `${usagePercent}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-neutral-400">
+                  <p>Failed to load cluster information</p>
+                  <button
+                    onClick={fetchClusterInfo}
+                    className="mt-4 bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+            </section>
           </>
         )}
 
@@ -1711,29 +2385,29 @@ export default function AdminDashboard({ onLogout }) {
                           min="1"
                           max="10"
                           value={tempSystemSettings.minVisibleChars}
-                          onChange={(e) => handleSystemSettingChange('minVisibleChars', parseInt(e.target.value))}
+                          onChange={(e) => handleSystemSettingChange('minVisibleChars', parseInt(e.target.value) || 2)}
                           className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                         <p className="text-xs text-neutral-400 mt-1">
-                          Minimum characters to show when masking passwords
+                          Number of characters to show when masking data
                         </p>
                       </div>
                       
                       <div>
                         <label className="block text-sm font-medium text-neutral-300 mb-2">
-                          Password Masking Ratio
+                          Masking Ratio
                         </label>
                         <input
                           type="number"
-                          min="0.1"
-                          max="0.9"
+                          min="0"
+                          max="1"
                           step="0.1"
                           value={tempSystemSettings.maskingRatio}
-                          onChange={(e) => handleSystemSettingChange('maskingRatio', parseFloat(e.target.value))}
+                          onChange={(e) => handleSystemSettingChange('maskingRatio', parseFloat(e.target.value) || 0.2)}
                           className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                         <p className="text-xs text-neutral-400 mt-1">
-                          Percentage of password to show (0.1 = 10%, 0.9 = 90%)
+                          Ratio of characters to mask (0.0 - 1.0)
                         </p>
                       </div>
                       
@@ -1743,15 +2417,15 @@ export default function AdminDashboard({ onLogout }) {
                         </label>
                         <input
                           type="number"
-                          min="0.1"
-                          max="0.9"
+                          min="0"
+                          max="1"
                           step="0.1"
                           value={tempSystemSettings.usernameMaskingRatio}
-                          onChange={(e) => handleSystemSettingChange('usernameMaskingRatio', parseFloat(e.target.value))}
+                          onChange={(e) => handleSystemSettingChange('usernameMaskingRatio', parseFloat(e.target.value) || 0.4)}
                           className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                         <p className="text-xs text-neutral-400 mt-1">
-                          Percentage of username to show
+                          Special masking ratio for usernames (0.0 - 1.0)
                         </p>
                       </div>
                       
@@ -1762,58 +2436,104 @@ export default function AdminDashboard({ onLogout }) {
                         <input
                           type="number"
                           min="100"
-                          max="5000"
+                          max="10000"
                           step="100"
                           value={tempSystemSettings.batchSize}
-                          onChange={(e) => handleSystemSettingChange('batchSize', parseInt(e.target.value))}
+                          onChange={(e) => handleSystemSettingChange('batchSize', parseInt(e.target.value) || 1000)}
                           className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                         <p className="text-xs text-neutral-400 mt-1">
-                          Number of documents to process in each batch
-                        </p>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-300 mb-2">
-                          Show Raw Lines by Default
-                        </label>
-                        <div className="flex items-center space-x-3">
-                          <input
-                            type="checkbox"
-                            id="showRawLineByDefault"
-                            checked={tempSystemSettings.showRawLineByDefault}
-                            onChange={(e) => handleSystemSettingChange('showRawLineByDefault', e.target.checked)}
-                            className="w-4 h-4 text-primary bg-neutral-600 border-neutral-500 rounded focus:ring-primary focus:ring-2"
-                          />
-                          <label htmlFor="showRawLineByDefault" className="text-white">
-                            Allow admin to see raw lines
-                          </label>
-                        </div>
-                        <p className="text-xs text-neutral-400 mt-1">
-                          When enabled, admin can view the original unprocessed data lines in search results
+                          Number of records to process in each batch
                         </p>
                       </div>
                     </div>
-
-                    {/* Save/Reset Buttons */}
+                    
+                    {/* Admin UI Settings */}
+                    <div className="mb-6">
+                      <h4 className="text-lg font-medium text-white mb-3">Admin UI Settings</h4>
+                      <label className="flex items-center p-3 bg-neutral-600 rounded-lg cursor-pointer hover:bg-neutral-500 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={tempSystemSettings.showRawLineByDefault}
+                          onChange={(e) => handleSystemSettingChange('showRawLineByDefault', e.target.checked)}
+                          className="mr-3 w-4 h-4 text-primary bg-neutral-700 border-neutral-600 rounded focus:ring-primary focus:ring-2"
+                        />
+                        <div>
+                          <span className="text-white font-medium">Show Raw Line by Default</span>
+                          <div className="text-sm text-neutral-400">
+                            Display the raw data line by default in account management
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                    
+                    {/* Action Buttons */}
                     <div className="flex space-x-4">
                       <button
                         onClick={saveSystemSettings}
                         disabled={!hasUnsavedSystemChanges}
-                        className="bg-primary hover:bg-button-hover-bg text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                        className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <FontAwesomeIcon icon={faSave} />
-                        <span>Save Settings</span>
+                        <FontAwesomeIcon icon={faSave} className="mr-2" />
+                        Save Changes
                       </button>
                       
                       <button
                         onClick={resetSystemSettings}
                         disabled={!hasUnsavedSystemChanges}
-                        className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-neutral-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                        className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <FontAwesomeIcon icon={faTimes} />
-                        <span>Reset</span>
+                        <FontAwesomeIcon icon={faTimes} className="mr-2" />
+                        Reset Changes
                       </button>
+                    </div>
+                  </div>
+                  
+                  {/* Elasticsearch Configuration */}
+                  <div className="p-6 bg-neutral-700 rounded-lg">
+                    <h3 className="text-xl font-semibold text-white mb-4">
+                      Elasticsearch Configuration
+                    </h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-neutral-300 mb-2">
+                          Elasticsearch Nodes
+                        </label>
+                        <div className="space-y-2">
+                          {config.elasticsearchNodes?.map((node, index) => (
+                            <div key={index} className="flex items-center justify-between p-2 bg-neutral-600 rounded">
+                              <span className="text-white text-sm">{node}</span>
+                              {config.writeNode === node && (
+                                <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded">
+                                  WRITE
+                                </span>
+                              )}
+                            </div>
+                          )) || (
+                            <p className="text-neutral-400 text-sm">No nodes configured</p>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-neutral-300 mb-2">
+                          Selected Index
+                        </label>
+                        <div className="p-3 bg-neutral-600 rounded-lg">
+                          <span className="text-white font-medium">{config.selectedIndex}</span>
+                          <div className="text-sm text-neutral-400 mt-1">
+                            Current index for new data operations
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-blue-600 bg-opacity-20 border border-blue-600 rounded-lg p-4">
+                      <p className="text-blue-200 text-sm">
+                        <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
+                        Note: Elasticsearch node and cluster management is available in the "Cluster Management" tab.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2089,7 +2809,7 @@ export default function AdminDashboard({ onLogout }) {
               <div className="mt-8 flex justify-end space-x-3">
                 <button
                   onClick={handleSaveEdit}
-                  className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
+                  className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50"
                   disabled={editLoading}
                 >
                   {editLoading ? (
@@ -2102,7 +2822,7 @@ export default function AdminDashboard({ onLogout }) {
                 </button>
                 <button
                   onClick={handleCancelEdit}
-                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-neutral-400 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
+                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out"
                   disabled={editLoading}
                 >
                   Cancel
@@ -2366,16 +3086,257 @@ export default function AdminDashboard({ onLogout }) {
             </div>
           </div>
         )}
+
+        {/* Elasticsearch Configuration Modal */}
+        {showEsConfigModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div className="bg-neutral-800 p-8 rounded-xl shadow-2xl w-full max-w-4xl border border-neutral-700 relative max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-2xl font-bold text-white">
+                  {esConfigModalType === "paths" && "Configure Elasticsearch Paths"}
+                  {esConfigModalType === "settings" && "Edit Elasticsearch Settings"}
+                  {esConfigModalType === "file" && "View Configuration File"}
+                </h3>
+                <button
+                  onClick={closeEsConfigModal}
+                  className="text-neutral-400 hover:text-red-400 text-3xl transition-colors"
+                >
+                  &times;
+                </button>
+              </div>
+
+              {/* Paths Configuration */}
+              {esConfigModalType === "paths" && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      Config File Path
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsPaths.configFilePath || ""}
+                      onChange={(e) => setTempEsPaths({...tempEsPaths, configFilePath: e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="C:\elasticsearch\config\elasticsearch.yml"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      Data Path
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsPaths.dataPath || ""}
+                      onChange={(e) => setTempEsPaths({...tempEsPaths, dataPath: e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="C:\elasticsearch\data"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      Logs Path
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsPaths.logsPath || ""}
+                      onChange={(e) => setTempEsPaths({...tempEsPaths, logsPath: e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="C:\elasticsearch\logs"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      JVM Options Path
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsPaths.jvmOptionsPath || ""}
+                      onChange={(e) => setTempEsPaths({...tempEsPaths, jvmOptionsPath: e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="C:\elasticsearch\config\jvm.options"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      Restart Command
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsPaths.restartCommand || ""}
+                      onChange={(e) => setTempEsPaths({...tempEsPaths, restartCommand: e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="net restart elasticsearch"
+                    />
+                  </div>
+                  
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="autoBackup"
+                      checked={tempEsPaths.autoBackup || false}
+                      onChange={(e) => setTempEsPaths({...tempEsPaths, autoBackup: e.target.checked})}
+                      className="mr-2"
+                    />
+                    <label htmlFor="autoBackup" className="text-sm text-neutral-300">
+                      Automatically backup configuration before changes
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Settings Configuration */}
+              {esConfigModalType === "settings" && esConfigFile && (
+                <div className="space-y-4">
+                  <div className="mb-4">
+                    <p className="text-sm text-neutral-400 mb-4">
+                      Edit Elasticsearch configuration settings. Changes require a service restart to take effect.
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      Cluster Name
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsSettings['cluster.name'] || ""}
+                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'cluster.name': e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="my-elasticsearch-cluster"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      HTTP Host
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsSettings['http.host'] || ""}
+                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'http.host': e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="0.0.0.0"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      HTTP Port
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsSettings['http.port'] || ""}
+                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'http.port': e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="9200"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      Initial Master Nodes
+                    </label>
+                    <input
+                      type="text"
+                      value={tempEsSettings['cluster.initial_master_nodes'] || ""}
+                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'cluster.initial_master_nodes': e.target.value})}
+                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder='["node-1"]'
+                    />
+                  </div>
+                  
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="securityEnabled"
+                      checked={tempEsSettings['xpack.security.enabled'] === 'true'}
+                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'xpack.security.enabled': e.target.checked ? 'true' : 'false'})}
+                      className="mr-2"
+                    />
+                    <label htmlFor="securityEnabled" className="text-sm text-neutral-300">
+                      Enable X-Pack Security
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* File View */}
+              {esConfigModalType === "file" && esConfigFile && (
+                <div className="space-y-4">
+                  <div className="mb-4">
+                    <p className="text-sm text-neutral-400">
+                      Configuration file: {esConfigFile.configPath}
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      Raw Configuration Content
+                    </label>
+                    <textarea
+                      value={esConfigFile.rawContent || ""}
+                      readOnly
+                      className="w-full h-64 px-4 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-white font-mono text-sm focus:outline-none"
+                      style={{ fontFamily: 'monospace' }}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                      Parsed Settings
+                    </label>
+                    <div className="bg-neutral-900 border border-neutral-600 rounded-lg p-4 max-h-48 overflow-y-auto">
+                      <pre className="text-sm text-neutral-300 font-mono">
+                        {JSON.stringify(esConfigFile.parsedConfig, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Actions */}
+              <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-neutral-700">
+                {esConfigModalType === "paths" && (
+                  <button
+                    onClick={updateEsConfigPaths}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
+                  >
+                    Save Paths
+                  </button>
+                )}
+                
+                {esConfigModalType === "settings" && (
+                  <>
+                    <button
+                      onClick={() => updateEsConfigSettings(false)}
+                      className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75"
+                    >
+                      Save Settings
+                    </button>
+                    <button
+                      onClick={() => updateEsConfigSettings(true)}
+                      className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-75"
+                    >
+                      Save & Restart
+                    </button>
+                  </>
+                )}
+                
+                <button
+                  onClick={closeEsConfigModal}
+                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-neutral-500 focus:ring-opacity-75"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
-}
-
-// Helper function to format bytes (moved inside component for access)
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
