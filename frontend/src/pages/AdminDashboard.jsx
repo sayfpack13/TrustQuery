@@ -59,6 +59,7 @@ export default function AdminDashboard({ onLogout }) {
   const [showClusterWizard, setShowClusterWizard] = useState(false);
   const [showAddNodeModal, setShowAddNodeModal] = useState(false);
   const [showLocalNodeManager, setShowLocalNodeManager] = useState(false);
+  const [nodeToEdit, setNodeToEdit] = useState(null);
 
   // Fetch tasks on mount
   useEffect(() => {
@@ -126,6 +127,20 @@ export default function AdminDashboard({ onLogout }) {
       showNotification("error", err.response?.data?.error || "Failed to reindex");
     }
   };
+
+  const handleEditNode = (node) => {
+    setNodeToEdit(node);
+    setShowLocalNodeManager(true);
+  };
+
+  useEffect(() => {
+    // Only fetch cluster stats if there is at least one running node
+    if (clusterManagement.localNodes.some(node => node.isRunning)) {
+      elasticsearchManagement.fetchESData();
+      const interval = setInterval(elasticsearchManagement.fetchESData, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [clusterManagement.localNodes, elasticsearchManagement.fetchESData]);
 
   return (
     <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans">
@@ -267,6 +282,8 @@ export default function AdminDashboard({ onLogout }) {
             // Other
             isAnyTaskRunning={isAnyTaskRunning}
             formatBytes={formatBytes}
+            onEditNode={handleEditNode}
+            nodeActionLoading={clusterManagement.nodeActionLoading || []}
           />
         )}
 
@@ -294,9 +311,13 @@ export default function AdminDashboard({ onLogout }) {
       {showLocalNodeManager && (
         <LocalNodeManager
           isOpen={showLocalNodeManager}
-          onClose={() => setShowLocalNodeManager(false)}
+          onClose={() => {
+            setShowLocalNodeManager(false);
+            setNodeToEdit(null); // Reset on close
+          }}
           clusterManagement={clusterManagement}
-          mode="create"
+          nodeToEdit={nodeToEdit}
+          mode={nodeToEdit ? 'edit' : 'create'}
         />
       )}
 

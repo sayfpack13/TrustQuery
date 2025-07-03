@@ -4,6 +4,7 @@
     "accounts"
   ],
   "elasticsearchNodes": [
+    "http://localhost:9200",
     "http://localhost:9200"
   ],
   "writeNode": "http://localhost:9200",
@@ -13,11 +14,20 @@
   },
   "nodeMetadata": {
     "http://localhost:9200": {
-      "name": "node-1",
-      "configPath": "C:\\elasticsearch\\config\\node-1\\elasticsearch.yml",
-      "servicePath": "C:\\elasticsearch\\config\\node-1\\start-node.bat",
-      "dataPath": "C:\\elasticsearch\\node-1\\data",
-      "logsPath": "C:\\elasticsearch\\node-1\\logs"
+      "name": "nn",
+      "configPath": "C:\\elasticsearch\\config\\nn\\elasticsearch.yml",
+      "servicePath": "C:\\elasticsearch\\config\\nn\\start-node.bat",
+      "dataPath": "C:\\elasticsearch\\nn\\data",
+      "logsPath": "C:\\elasticsearch\\nn\\logs",
+      "cluster": "test",
+      "host": "localhost",
+      "port": "9200",
+      "transportPort": "9300",
+      "roles": {
+        "master": true,
+        "data": true,
+        "ingest": true
+      }
     }
   },
   "diskPreferences": {},

@@ -46,6 +46,8 @@ export default function ClusterManagement({
   // Other
   isAnyTaskRunning,
   formatBytes,
+  onEditNode,
+  nodeActionLoading,
 }) {
   return (
     <>
@@ -238,6 +240,7 @@ export default function ClusterManagement({
                         const totalDisk = nodeDisksData.reduce((acc, disk) => acc + disk.total, 0);
                         const usedDisk = nodeDisksData.reduce((acc, disk) => acc + disk.used, 0);
                         const diskUsagePercent = totalDisk > 0 ? ((usedDisk / totalDisk) * 100).toFixed(1) : 0;
+                        const isNodeLoading = nodeActionLoading.includes(localNode.name);
                         
                         return (
                           <tr key={localNode.name} className="border-b border-neutral-500 hover:bg-neutral-500 transition-colors">
@@ -315,30 +318,32 @@ export default function ClusterManagement({
                                 {localNode.isRunning ? (
                                   <button
                                     onClick={() => handleStopLocalNode(localNode.name)}
+                                    disabled={isNodeLoading}
                                     className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
                                     title="Stop node"
                                   >
-                                    <FontAwesomeIcon icon={faStop} className="mr-1" />
-                                    Stop
+                                    <FontAwesomeIcon icon={isNodeLoading ? faCircleNotch : faStop} className={isNodeLoading ? 'fa-spin' : ''} />
+                                    {isNodeLoading ? 'Stopping...' : 'Stop'}
                                   </button>
                                 ) : (
                                   <button
                                     onClick={() => handleStartLocalNode(localNode.name)}
+                                    disabled={isNodeLoading}
                                     className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
                                     title="Start node"
                                   >
-                                    <FontAwesomeIcon icon={faPlay} className="mr-1" />
-                                    Start
+                                    <FontAwesomeIcon icon={isNodeLoading ? faCircleNotch : faPlay} className={isNodeLoading ? 'fa-spin' : ''} />
+                                    {isNodeLoading ? 'Starting...' : 'Start'}
                                   </button>
                                 )}
                                 
                                 <button
-                                  onClick={() => setShowLocalNodeManager(true)}
-                                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                                  title="Edit node configuration"
+                                  onClick={() => onEditNode(localNode)}
+                                  disabled={isNodeLoading}
+                                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-md text-sm transition duration-150"
+                                  title="Edit Node Configuration"
                                 >
-                                  <FontAwesomeIcon icon={faCog} className="mr-1" />
-                                  Edit
+                                  <FontAwesomeIcon icon={faCog} />
                                 </button>
                                 
                                 {localNode.isRunning && (
@@ -354,11 +359,11 @@ export default function ClusterManagement({
                                 
                                 <button
                                   onClick={() => handleDeleteLocalNode(localNode.name)}
+                                  disabled={isNodeLoading}
                                   className="bg-gray-600 hover:bg-gray-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
                                   title="Delete node configuration"
                                 >
-                                  <FontAwesomeIcon icon={faTrash} className="mr-1" />
-                                  Delete
+                                  <FontAwesomeIcon icon={faTrash} />
                                 </button>
                               </div>
                             </td>

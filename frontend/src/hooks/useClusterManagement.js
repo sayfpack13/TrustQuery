@@ -245,7 +245,10 @@ export const useClusterManagement = (showNotification) => {
     }
   };
 
+  const [nodeActionLoading, setNodeActionLoading] = useState([]);
+
   const handleStartLocalNode = async (nodeName) => {
+    setNodeActionLoading(prev => [...prev, nodeName]);
     try {
       await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/start`);
       showNotificationRef.current('success', `Node "${nodeName}" started successfully`, faCheckCircle);
@@ -254,10 +257,13 @@ export const useClusterManagement = (showNotification) => {
     } catch (error) {
       console.error('Error starting node:', error);
       showNotificationRef.current('error', `Failed to start node "${nodeName}"`, faExclamationTriangle);
+    } finally {
+      setNodeActionLoading(prev => prev.filter(name => name !== nodeName));
     }
   };
 
   const handleStopLocalNode = async (nodeName) => {
+    setNodeActionLoading(prev => [...prev, nodeName]);
     try {
       await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/stop`);
       showNotificationRef.current('success', `Node "${nodeName}" stopped successfully`, faCheckCircle);
@@ -266,6 +272,8 @@ export const useClusterManagement = (showNotification) => {
     } catch (error) {
       console.error('Error stopping node:', error);
       showNotificationRef.current('error', `Failed to stop node "${nodeName}"`, faExclamationTriangle);
+    } finally {
+      setNodeActionLoading(prev => prev.filter(name => name !== nodeName));
     }
   };
 
@@ -369,6 +377,9 @@ export const useClusterManagement = (showNotification) => {
     handleRemoveNode,
     handleSetWriteNode,
     handleSetPreferredDisk,
+    
+    // New state
+    nodeActionLoading,
   }), [
     // Primary state
     localNodes,
@@ -419,5 +430,8 @@ export const useClusterManagement = (showNotification) => {
     handleRemoveNode,
     handleSetWriteNode,
     handleSetPreferredDisk,
+    
+    // New state
+    nodeActionLoading,
   ]);
 };

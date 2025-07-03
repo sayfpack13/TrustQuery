@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faServer, 
@@ -8,13 +8,6 @@ import {
   faDatabase,
   faNetworkWired,
   faInfoCircle,
-  faCircleNotch,
-  faCheckCircle,
-  faExclamationTriangle,
-  faEdit,
-  faPlay,
-  faStop,
-  faTrash,
   faCog
 } from '@fortawesome/free-solid-svg-icons';
 
@@ -22,9 +15,12 @@ const LocalNodeManager = ({
   isOpen, 
   onClose, 
   clusterManagement,
-  mode = 'create' // 'create' or 'edit'
+  mode = 'create', // 'create' or 'edit'
+  nodeToEdit
 }) => {
-  if (!isOpen) return null;
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [newClusterName, setNewClusterName] = useState('');
+  const [showNewCluster, setShowNewCluster] = useState(false);
 
   const {
     newNodeName,
@@ -48,9 +44,25 @@ const LocalNodeManager = ({
     createCluster
   } = clusterManagement;
 
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [newClusterName, setNewClusterName] = useState('');
-  const [showNewCluster, setShowNewCluster] = useState(false);
+  useEffect(() => {
+    if (mode === 'edit' && nodeToEdit) {
+      setNewNodeName(nodeToEdit.name || '');
+      setNewNodeHost(nodeToEdit.host || 'localhost');
+      setNewNodePort(nodeToEdit.port || '9200');
+      setNewNodeTransportPort(nodeToEdit.transportPort || '9300');
+      setNewNodeCluster(nodeToEdit.cluster || 'trustquery-cluster');
+      setNewNodeDataPath(nodeToEdit.dataPath || `C:\\elasticsearch\\${nodeToEdit.name}\\data`);
+      setNewNodeLogsPath(nodeToEdit.logsPath || `C:\\elasticsearch\\${nodeToEdit.name}\\logs`);
+      // Assuming roles are part of the node object, otherwise they need to be fetched
+      setNewNodeRoles(nodeToEdit.roles || {
+        master: true,
+        data: true,
+        ingest: true,
+      });
+    }
+  }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles]);
+
+  if (!isOpen) return null;
 
   const handleRoleChange = (role) => {
     setNewNodeRoles(prev => ({
@@ -62,6 +74,7 @@ const LocalNodeManager = ({
   const handleCreateCluster = async () => {
     if (newClusterName.trim()) {
       await createCluster(newClusterName);
+      setNewNodeCluster(newClusterName);
       setNewClusterName('');
       setShowNewCluster(false);
     }

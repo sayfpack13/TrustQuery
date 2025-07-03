@@ -3,6 +3,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { execSync, spawn } = require('child_process');
 const { getConfig, setConfig } = require('../config');
+const yaml = require('yaml');
 
 class ElasticsearchClusterManager {
   constructor() {
@@ -94,6 +95,7 @@ node.roles: [${this.formatNodeRoles(nodeConfig.roles)}]
 # Discovery settings
 discovery.seed_hosts: ${JSON.stringify(nodeConfig.seedHosts || ['localhost:9300'])}
 cluster.initial_master_nodes: ${JSON.stringify(nodeConfig.initialMasterNodes || [nodeConfig.name])}
+discovery.type: single-node
 
 # Memory settings
 bootstrap.memory_lock: false
@@ -102,6 +104,9 @@ bootstrap.memory_lock: false
 xpack.security.enabled: false
 xpack.security.transport.ssl.enabled: false
 xpack.security.http.ssl.enabled: false
+
+# Disable deprecated analytics to clean up logs
+xpack.analytics.enabled: false
 
 # Monitoring
 xpack.monitoring.collection.enabled: true
@@ -308,8 +313,6 @@ set ES_JAVA_OPTS=-Xms1g -Xmx1g
 
 REM Start Elasticsearch
 "%ES_HOME%\\bin\\elasticsearch.bat"
-
-pause
 `;
   }
 
@@ -318,25 +321,61 @@ pause
    */
   async startNode(nodeName) {
     try {
-      const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
-      const servicePath = path.join(nodeConfigDir, 'start-node.bat');
-      
-      // Check if service script exists
-      await fs.access(servicePath);
-      
-      // Start the node using spawn to avoid blocking
-      const child = spawn('cmd', ['/c', servicePath], {
-        detached: true,
-        stdio: 'ignore'
-      });
-      
-      child.unref();
-      
-      console.log(`🚀 Started Elasticsearch node: ${nodeName}`);
-      return { success: true, pid: child.pid };
+        const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
+        const servicePath = path.join(nodeConfigDir, 'start-node.bat');
+        await fs.access(servicePath);
+
+        // Create a log file for startup output
+        const logDir = path.join(this.baseElasticsearchPath, 'data', nodeName, 'logs');
+        await fs.mkdir(logDir, { recursive: true });
+        const startupLogPath = path.join(logDir, 'startup.log');
+        const output = await fs.open(startupLogPath, 'a');
+
+        // This simpler spawn is more reliable on Windows
+        const child = spawn(servicePath, [], {
+            detached: true,
+            stdio: ['ignore', output, output], // Redirect stdout and stderr to the log file
+            shell: true,
+            windowsHide: true,
+        });
+        child.unref();
+
+        console.log(`🚀 Start command issued for ${nodeName}. Tailing startup log at: ${startupLogPath}`);
+
+        // Small delay to allow the process to initialize
+        await new Promise(resolve => setTimeout(resolve, 5000)); 
+
+        // Find the real PID by polling the port
+        const nodeConfig = await this.getNodeConfig(nodeName);
+        const port = nodeConfig.http.port;
+        if (!port) {
+            throw new Error(`Could not determine port for node ${nodeName}.`);
+        }
+
+        const pid = await this.findPidByPort(port);
+        if (pid) {
+            const pidFilePath = path.join(nodeConfigDir, 'pid.json');
+            await fs.writeFile(pidFilePath, JSON.stringify({ pid }), 'utf8');
+            console.log(`✅ Started Elasticsearch node: ${nodeName} with PID: ${pid} on port ${port}`);
+            // Close the file handle
+            await output.close();
+            return { success: true, pid };
+        } else {
+            // Close the file handle before reading
+            await output.close();
+            // If the process isn't found, read the startup log to provide more context
+            const startupLog = await fs.readFile(startupLogPath, 'utf8').catch(() => "Could not read startup.log.");
+
+            // Also, try to read the actual Elasticsearch log file for more detailed errors.
+            const esLogPath = path.join(this.baseElasticsearchPath, 'data', nodeName, 'logs', 'elasticsearch.log');
+            const esLog = await fs.readFile(esLogPath, 'utf8').catch(() => "Could not read elasticsearch.log.");
+
+            throw new Error(`Failed to confirm node start for ${nodeName}. Could not find process on port ${port}.\n\nStartup Log:\n${startupLog}\n\nElasticsearch Log:\n${esLog}`);
+        }
+
     } catch (error) {
-      console.error(`❌ Failed to start node ${nodeName}:`, error);
-      throw error;
+        console.error(`❌ Failed to start node ${nodeName}:`, error);
+        throw error;
     }
   }
 
@@ -345,15 +384,34 @@ pause
    */
   async stopNode(nodeName) {
     try {
-      // Kill process by port (Windows specific)
-      const nodeConfig = await this.getNodeConfig(nodeName);
-      if (nodeConfig && nodeConfig.port) {
-        execSync(`netstat -ano | findstr :${nodeConfig.port} | for /f "tokens=5" %i in ('more') do taskkill /PID %i /F`, 
-          { stdio: 'ignore' });
+      const pidFilePath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'pid.json');
+      try {
+        const pidData = await fs.readFile(pidFilePath, 'utf8');
+        const { pid } = JSON.parse(pidData);
+
+        if (pid) {
+          console.log(`🔌 Attempting to stop node ${nodeName} with PID: ${pid}`);
+          // Forcefully kill the process on Windows
+          spawn('taskkill', ['/F', '/PID', pid], {
+            detached: true,
+            stdio: 'ignore'
+          }).unref();
+        }
+        
+        // Clean up the PID file
+        await fs.unlink(pidFilePath);
+        console.log(`🛑 Stopped Elasticsearch node: ${nodeName}`);
+        return { success: true };
+
+      } catch (error) {
+        if (error.code === 'ENOENT') {
+          console.warn(`PID file not found for node ${nodeName}. It might already be stopped.`);
+          // If the PID file doesn't exist, we can assume the node is not running.
+          return { success: true };
+        }
+        console.error(`❌ Error stopping node ${nodeName}:`, error);
+        throw error;
       }
-      
-      console.log(`🛑 Stopped Elasticsearch node: ${nodeName}`);
-      return { success: true };
     } catch (error) {
       console.error(`❌ Failed to stop node ${nodeName}:`, error);
       throw error;
@@ -364,27 +422,44 @@ pause
    * Get node configuration
    */
   async getNodeConfig(nodeName) {
+    const configPath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'elasticsearch.yml');
     try {
-      const configPath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'elasticsearch.yml');
       const configContent = await fs.readFile(configPath, 'utf8');
-      
-      // Parse basic configuration
-      const config = {};
-      const lines = configContent.split('\n');
-      
-      for (const line of lines) {
-        if (line.trim() && !line.startsWith('#')) {
-          const [key, value] = line.split(':').map(s => s.trim());
-          if (key && value) {
-            config[key] = value;
-          }
+      const flatConfig = yaml.parse(configContent);
+
+      // Transform flat config (e.g., 'node.name') into a nested object
+      const nestedConfig = {
+        cluster: {
+          name: flatConfig['cluster.name'] || 'default-cluster'
+        },
+        node: {
+          name: flatConfig['node.name'] || nodeName
+        },
+        network: {
+          host: flatConfig['network.host'] || 'localhost'
+        },
+        http: {
+          port: flatConfig['http.port'] || '9200'
+        },
+        transport: {
+          port: flatConfig['transport.port'] || '9300'
         }
-      }
-      
-      return config;
+      };
+      return nestedConfig;
+
     } catch (error) {
-      console.error(`❌ Failed to get node config for ${nodeName}:`, error);
-      return null;
+      if (error.code === 'ENOENT') {
+        console.warn(`Configuration file not found for ${nodeName}. Returning default.`);
+        // Return a default nested structure
+        return {
+          cluster: { name: 'default-cluster' },
+          node: { name: nodeName },
+          network: { host: 'localhost' },
+          http: { port: '9200' },
+          transport: { port: '9300' }
+        };
+      }
+      throw error;
     }
   }
 
@@ -392,63 +467,62 @@ pause
    * List all configured nodes
    */
   async listNodes() {
+    const configDir = path.join(this.baseElasticsearchPath, 'config');
+    const nodes = [];
+
     try {
-      const config = getConfig();
-      const nodeMetadata = config.nodeMetadata || {};
-      const elasticsearchNodes = config.elasticsearchNodes || [];
-      
-      const nodes = [];
-      
-      // First, add nodes from nodeMetadata (these are fully configured nodes)
-      for (const [nodeUrl, metadata] of Object.entries(nodeMetadata)) {
-        const urlParts = new URL(nodeUrl);
-        const port = urlParts.port || '9200';
-        const host = urlParts.hostname || 'localhost';
-        
-        nodes.push({
-          name: metadata.name,
-          nodeUrl,
-          host,
-          port,
-          transportPort: metadata.transportPort || (parseInt(port) + 100).toString(),
-          cluster: metadata.cluster || 'trustquery-cluster',
-          configPath: metadata.configPath,
-          servicePath: metadata.servicePath,
-          dataPath: metadata.dataPath,
-          logsPath: metadata.logsPath,
-          roles: metadata.roles || { master: true, data: true, ingest: true },
-          'node.name': metadata.name,
-          'http.port': port,
-          'network.host': host
-        });
-      }
-      
-      // Then, add any nodes from elasticsearchNodes that aren't in nodeMetadata (basic nodes)
-      for (const nodeUrl of elasticsearchNodes) {
-        if (!nodeMetadata[nodeUrl]) {
-          const urlParts = new URL(nodeUrl);
-          const port = urlParts.port || '9200';
-          const host = urlParts.hostname || 'localhost';
-          
-          nodes.push({
-            name: `node-${port}`, // Generate a name based on port
-            nodeUrl,
-            host,
-            port,
-            transportPort: (parseInt(port) + 100).toString(),
-            cluster: 'trustquery-cluster', // Default cluster for basic nodes
-            'node.name': `node-${port}`,
-            'http.port': port,
-            'network.host': host
-          });
+        const nodeDirs = await fs.readdir(configDir, { withFileTypes: true });
+
+        for (const dirent of nodeDirs) {
+            if (dirent.isDirectory()) {
+                const nodeDirName = dirent.name;
+                const config = await this.getNodeConfig(nodeDirName);
+
+                // The true name comes from the config file itself.
+                const definitiveNodeName = config.node.name;
+                
+                const metadata = this.getNodeMetadata(definitiveNodeName);
+
+                nodes.push({
+                    name: definitiveNodeName,
+                    cluster: config.cluster.name,
+                    host: config.network.host,
+                    port: config.http.port,
+                    transportPort: config.transport.port,
+                    roles: config.node.roles || { master: true, data: true, ingest: true },
+                    isRunning: await this.isNodeRunning(definitiveNodeName),
+                    dataPath: metadata.dataPath,
+                    logsPath: metadata.logsPath,
+                });
+            }
         }
-      }
-      
-      return nodes;
+        return nodes;
     } catch (error) {
-      console.error('❌ Failed to list nodes:', error);
-      return [];
+        if (error.code === 'ENOENT') {
+            console.warn(`Config directory not found at ${configDir}, returning no nodes.`);
+            return [];
+        }
+        console.error('❌ Failed to list nodes:', error);
+        return [];
     }
+  }
+
+  /**
+   * Helper to get metadata from config.json (which is now less important but useful for paths)
+   */
+  getNodeMetadata(nodeName) {
+    const config = getConfig();
+    const nodeMetadata = config.nodeMetadata || {};
+    for (const [, metadata] of Object.entries(nodeMetadata)) {
+        if (metadata.name === nodeName) {
+            return metadata;
+        }
+    }
+    // Return default paths if not in metadata
+    return {
+        dataPath: path.join(this.baseElasticsearchPath, nodeName, 'data'),
+        logsPath: path.join(this.baseElasticsearchPath, nodeName, 'logs'),
+    };
   }
 
   /**
@@ -572,39 +646,58 @@ pause
    * Check if node is running
    */
   async isNodeRunning(nodeName) {
+    const pidFilePath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'pid.json');
     try {
-      // First try to get the port from nodeMetadata
-      const config = getConfig();
-      const nodeMetadata = config.nodeMetadata || {};
-      
-      let port = null;
-      
-      // Look for the node in nodeMetadata
-      for (const [nodeUrl, metadata] of Object.entries(nodeMetadata)) {
-        if (metadata.name === nodeName) {
-          const urlParts = new URL(nodeUrl);
-          port = urlParts.port || '9200';
-          break;
-        }
-      }
-      
-      // If not found in nodeMetadata, try to get node config from filesystem
-      if (!port) {
-        const nodeConfig = await this.getNodeConfig(nodeName);
-        if (nodeConfig && nodeConfig['http.port']) {
-          port = nodeConfig['http.port'];
-        }
-      }
-      
-      if (!port) {
-        return false;
-      }
-      
-      const result = execSync(`netstat -an | findstr :${port}`, { encoding: 'utf8' });
-      return result.includes('LISTENING');
+        const pidData = await fs.readFile(pidFilePath, 'utf8');
+        const { pid } = JSON.parse(pidData);
+
+        if (!pid) return false;
+
+        // Check if process with PID is running (Windows specific)
+        const command = `tasklist /FI "PID eq ${pid}"`;
+        const result = execSync(command, { encoding: 'utf8' });
+
+        // tasklist will include the PID in the output if it's found
+        return result.includes(pid);
     } catch (error) {
-      return false;
+        // If file doesn't exist or any other error, assume not running
+        return false;
     }
+  }
+
+  async findPidByPort(port) {
+    const command = `netstat -ano -p TCP`; // Be more specific to reduce output
+    const pollInterval = 500;
+    const timeout = 20000; // 20 seconds
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeout) {
+        try {
+            const output = execSync(command, { encoding: 'utf8', stdio: 'pipe' });
+            const lines = output.trim().split(/\\r?\\n/);
+
+            for (const line of lines) {
+                const parts = line.trim().split(/\\s+/);
+                if (parts.length < 5) continue;
+
+                // On Windows, the columns are Proto, Local Address, Foreign Address, State, PID
+                const localAddress = parts[1];
+                const state = parts[3];
+                const pid = parts[4];
+
+                if (state === 'LISTENING' && localAddress.endsWith(':' + port)) {
+                    if (pid && pid !== '0') {
+                        return pid; // Found it
+                    }
+                }
+            }
+        } catch (e) {
+            // execSync will throw if the command fails, which we can ignore while polling.
+        }
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    return null; // Timeout reached
   }
 }
 

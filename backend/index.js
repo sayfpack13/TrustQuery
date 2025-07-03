@@ -227,8 +227,15 @@ async function initializeServer() {
 
 }
 
-// Initialize the server
-initializeServer();
+// Start the server after initialization is complete
+initializeServer().then(() => {
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on: http://localhost:${PORT}`);
+  });
+}).catch(error => {
+    console.error("❌ Failed to initialize server:", error);
+    process.exit(1);
+});
 
 // In-memory task store
 const tasks = {};
