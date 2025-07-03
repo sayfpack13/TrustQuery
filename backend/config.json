@@ -11,6 +11,16 @@
     "defaultDiskType": "ssd",
     "defaultZone": "zone1"
   },
+  "nodeMetadata": {
+    "http://localhost:9200": {
+      "name": "node-1",
+      "configPath": "C:\\elasticsearch\\config\\node-1\\elasticsearch.yml",
+      "servicePath": "C:\\elasticsearch\\config\\node-1\\start-node.bat",
+      "dataPath": "C:\\elasticsearch\\node-1\\data",
+      "logsPath": "C:\\elasticsearch\\node-1\\logs"
+    }
+  },
+  "diskPreferences": {},
   "batchSize": 1000,
   "minVisibleChars": 2,
   "maskingRatio": 0.2,

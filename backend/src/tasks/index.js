@@ -1,4 +1,4 @@
-// Task management system
+// Task management
 const { randomUUID } = require("crypto");
 
 // In-memory task store
@@ -17,7 +17,7 @@ function createTask(type, initialStatus = "pending", filename = null) {
     completed: false,
     startTime: Date.now(),
     fileMovedCount: 0,
-    filename: filename, // Store filename for single file parsing tasks
+    filename: filename,
   };
   return taskId;
 }
@@ -29,46 +29,41 @@ function updateTask(taskId, updates) {
   }
 }
 
-// Get all tasks
-function getAllTasks() {
-  return tasks;
-}
-
-// Get task by ID
-function getTask(taskId) {
-  return tasks[taskId];
-}
-
-// Get active tasks (not completed and not in error state)
+// Get all active tasks
 function getActiveTasks() {
   return Object.values(tasks).filter(
     (task) => !task.completed && task.status !== "error"
   );
 }
 
-// Clean up old completed tasks (optional)
-function cleanupOldTasks(maxAge = 24 * 60 * 60 * 1000) { // 24 hours in milliseconds
+// Get specific task
+function getTask(taskId) {
+  return tasks[taskId];
+}
+
+// Get all tasks
+function getAllTasks() {
+  return { ...tasks };
+}
+
+// Clean up old tasks
+function cleanupOldTasks() {
   const now = Date.now();
-  const tasksToDelete = [];
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
   
-  for (const [taskId, task] of Object.entries(tasks)) {
+  Object.keys(tasks).forEach(taskId => {
+    const task = tasks[taskId];
     if (task.completed && (now - task.startTime) > maxAge) {
-      tasksToDelete.push(taskId);
+      delete tasks[taskId];
     }
-  }
-  
-  tasksToDelete.forEach(taskId => delete tasks[taskId]);
-  
-  if (tasksToDelete.length > 0) {
-    console.log(`🧹 Cleaned up ${tasksToDelete.length} old tasks`);
-  }
+  });
 }
 
 module.exports = {
   createTask,
   updateTask,
-  getAllTasks,
-  getTask,
   getActiveTasks,
+  getTask,
+  getAllTasks,
   cleanupOldTasks
 };

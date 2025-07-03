@@ -14,6 +14,8 @@ const DEFAULT_CONFIG = {
     defaultDiskType: "ssd",
     defaultZone: "zone1"
   },
+  nodeMetadata: {}, // Store detailed node configuration
+  diskPreferences: {}, // Node disk preferences
   batchSize: 1000,
   minVisibleChars: 2,
   maskingRatio: 0.2,
@@ -29,10 +31,7 @@ const DEFAULT_CONFIG = {
     logsPath: "C:\\elasticsearch\\logs",
     jvmOptionsPath: "C:\\elasticsearch\\config\\jvm.options",
     autoBackup: true,
-    restartCommand: "net restart elasticsearch", // Windows service restart command
-    // Linux alternatives (commented):
-    // configFilePath: "/etc/elasticsearch/elasticsearch.yml",
-    // restartCommand: "sudo systemctl restart elasticsearch"
+    restartCommand: "net restart elasticsearch"
   },
   autoRefreshInterval: 30000,
   maxTaskHistory: 100
@@ -45,8 +44,7 @@ let config = { ...DEFAULT_CONFIG };
 async function loadConfig() {
   try {
     const configData = await fs.readFile(CONFIG_FILE, 'utf8');
-    const loadedConfig = JSON.parse(configData);
-    config = { ...DEFAULT_CONFIG, ...loadedConfig };
+    config = { ...DEFAULT_CONFIG, ...JSON.parse(configData) };
     console.log("✅ Configuration loaded from file");
   } catch (error) {
     if (error.code === 'ENOENT') {
@@ -67,43 +65,67 @@ async function saveConfig() {
     console.log("✅ Configuration saved to file");
   } catch (error) {
     console.error("❌ Error saving config:", error);
-    throw error; // Re-throw to let caller handle the error
+    throw error;
   }
 }
 
 // Get configuration value
 function getConfig(key) {
-  if (!key) return config;
-  
-  // Handle nested keys like 'elasticsearchConfig.configFilePath'
-  if (key.includes('.')) {
+  if (key) {
+    // Support dot notation for nested keys
     const keys = key.split('.');
     let value = config;
     for (const k of keys) {
-      value = value[k];
-      if (value === undefined) break;
+      if (value && typeof value === 'object' && k in value) {
+        value = value[k];
+      } else {
+        return undefined;
+      }
     }
     return value;
   }
-  
-  return config[key];
+  return { ...config };
 }
 
 // Set configuration value
 async function setConfig(key, value) {
-  try {
-    if (typeof key === 'object') {
-      // Update multiple values
-      config = { ...config, ...key };
+  if (typeof key === 'object' && key !== null) {
+    // Multiple updates
+    const updates = key;
+    for (const [k, v] of Object.entries(updates)) {
+      if (k.includes('.')) {
+        // Support dot notation for nested keys
+        const keys = k.split('.');
+        let current = config;
+        for (let i = 0; i < keys.length - 1; i++) {
+          if (!(keys[i] in current) || typeof current[keys[i]] !== 'object') {
+            current[keys[i]] = {};
+          }
+          current = current[keys[i]];
+        }
+        current[keys[keys.length - 1]] = v;
+      } else {
+        config[k] = v;
+      }
+    }
+  } else {
+    // Single update
+    if (key.includes('.')) {
+      // Support dot notation for nested keys
+      const keys = key.split('.');
+      let current = config;
+      for (let i = 0; i < keys.length - 1; i++) {
+        if (!(keys[i] in current) || typeof current[keys[i]] !== 'object') {
+          current[keys[i]] = {};
+        }
+        current = current[keys[i]];
+      }
+      current[keys[keys.length - 1]] = value;
     } else {
-      // Update single value
       config[key] = value;
     }
-    await saveConfig();
-  } catch (error) {
-    console.error("❌ Error setting config:", error);
-    throw error; // Re-throw to let caller handle the error
   }
+  await saveConfig();
 }
 
 module.exports = {

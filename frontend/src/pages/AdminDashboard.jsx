@@ -4,92 +4,47 @@ import axiosClient from "../api/axiosClient";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faCircleNotch,
-  faCheckCircle,
   faExclamationTriangle,
-  faEye,
-  faEyeSlash,
-  faEdit,
-  faSave,
-  faTimes,
-  faInfoCircle,
-  faTrash,
-  faArrowRightArrowLeft,
-  faPlay, // Added for Parse All
-  faListCheck, // Added for tasks list
 } from "@fortawesome/free-solid-svg-icons";
-import useSound from "../components/useSound";
+import ClusterSetupWizard from "../components/ClusterSetupWizard";
+import LocalNodeManager from "../components/LocalNodeManager";
+import { useClusterManagement } from "../hooks/useClusterManagement";
+import { useElasticsearchManagement } from "../hooks/useElasticsearchManagement";
+
+// Import new components
+import { useAdminDashboard } from "./AdminDashboard/hooks/useAdminDashboard";
+import FilesManagement from "./AdminDashboard/components/FilesManagement";
+import ClusterManagement from "./AdminDashboard/components/ClusterManagement";
+import ConfigurationManagement from "./AdminDashboard/components/ConfigurationManagement";
+import AccountManagement from "./AdminDashboard/components/AccountManagement";
+import TaskDetails from "./AdminDashboard/components/TaskDetails";
 
 export default function AdminDashboard({ onLogout }) {
-  // === State Variables ===
-  const [uploadPercentage, setUploadPercentage] = useState(0);
-  const [uploadFiles, setUploadFiles] = useState([]);
-  const [unparsedFiles, setUnparsedFiles] = useState([]);
-  const [parsedFiles, setParsedFiles] = useState([]);
-  const [pendingFiles, setPendingFiles] = useState([]);
-  const [accounts, setAccounts] = useState([]);
-  const [selected, setSelected] = useState([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const pageSize = 20;
+  // Use shared dashboard hooks
+  const {
+    notification,
+    error,
+    tasksList,
+    currentRunningTaskId,
+    isAnyTaskRunning,
+    showNotification,
+    hideNotification,
+    fetchAllTasks,
+    handleTaskAction,
+    estimateRemainingTime,
+    removeTask,
+    setCurrentRunningTaskId,
+    setTasksList,
+  } = useAdminDashboard();
 
-  // Password visibility state for the main table (per-row, overridden by global toggle)
-  const [hiddenPasswords, setHiddenPasswords] = useState({});
-  // Global password visibility state for the main table
-  const [showAllPasswords, setShowAllPasswords] = useState(false);
-  // Password visibility state for the edit modal
-  const [editModalPasswordHidden, setEditModalPasswordHidden] = useState(false);
-
-  // Task progress tracking
-  const [currentRunningTaskId, setCurrentRunningTaskId] = useState(
-    () => localStorage.getItem("currentTaskId") || null
-  );
-  // `taskStatus` is no longer a separate state, but a derived property from `tasksList` if needed.
-  const [tasksList, setTasksList] = useState([]); // List of all tracked tasks (for TaskDetails component)
-  const [lastNotifiedTaskId, setLastNotifiedTaskId] = useState(null); // Track last notified task to prevent notification spam
-
-  // For disabling buttons that trigger tasks - now based on any task running in the list
-  const isAnyTaskRunning = tasksList.some(
-    (task) => !task.completed && task.status !== "error"
-  );
-
-  // State for the currently edited account and modal visibility
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [currentEditingAccount, setCurrentEditingAccount] = useState(null); // Stores the full account object being edited
-  const [editFormData, setEditFormData] = useState({
-    url: "",
-    username: "",
-    password: "",
-  });
-  const [editLoading, setEditLoading] = useState(false); // New loading state for individual account edits
-
-  // State for page input in pagination
-  const [pageInput, setPageInput] = useState("1");
+  // Custom hooks for cluster and Elasticsearch management
+  const clusterManagement = useClusterManagement(showNotification);
+  const elasticsearchManagement = useElasticsearchManagement(showNotification);
 
   // === Tab Navigation State ===
-  const [activeTab, setActiveTab] = useState("files"); // 'files', 'elasticsearch', 'accounts', 'configuration', 'cluster'
-
-  // === Configuration Management State ===
-  const [config, setConfig] = useState(null);
-  const [configLoading, setConfigLoading] = useState(false);
-  const [availableSearchIndices, setAvailableSearchIndices] = useState([]);
-  const [selectedSearchIndices, setSelectedSearchIndices] = useState([]);
-  
-  // === Temporary System Settings State (for manual save) ===
-  const [tempSystemSettings, setTempSystemSettings] = useState({
-    minVisibleChars: 2,
-    maskingRatio: 0.2,
-    usernameMaskingRatio: 0.4,
-    batchSize: 1000,
-    showRawLineByDefault: false
-  });
-  const [hasUnsavedSystemChanges, setHasUnsavedSystemChanges] = useState(false);
+  const [activeTab, setActiveTab] = useState("cluster"); // 'files', 'cluster', 'accounts', 'configuration'
 
   // === Elasticsearch Management State ===
-  const [esIndices, setEsIndices] = useState([]);
-  const [selectedIndex, setSelectedIndex] = useState("accounts");
-  const [esHealth, setEsHealth] = useState(null);
   const [showESModal, setShowESModal] = useState(false);
   const [esModalType, setEsModalType] = useState(""); // 'create', 'delete', 'reindex', 'details'
   const [esModalData, setEsModalData] = useState({});
@@ -99,435 +54,47 @@ export default function AdminDashboard({ onLogout }) {
   const [reindexSource, setReindexSource] = useState("");
   const [reindexDest, setReindexDest] = useState("");
   const [indexDetails, setIndexDetails] = useState(null);
-  const [esLoading, setEsLoading] = useState(false);
 
-  // === Cluster/Node/Disk Management State ===
-  const [clusterInfo, setClusterInfo] = useState(null);
-  const [nodes, setNodes] = useState([]);
-  const [nodeStats, setNodeStats] = useState({});
-  const [nodeDisks, setNodeDisks] = useState({});
-  const [diskPreferences, setDiskPreferences] = useState({});
-  const [clusterLoading, setClusterLoading] = useState(false);
-  const [newNodeUrl, setNewNodeUrl] = useState("");
-  const [selectedNodeForDisks, setSelectedNodeForDisks] = useState("");
-  const [newClusterName, setNewClusterName] = useState("");
+  // === Advanced Node Configuration State ===
+  const [showClusterWizard, setShowClusterWizard] = useState(false);
+  const [showAddNodeModal, setShowAddNodeModal] = useState(false);
+  const [showLocalNodeManager, setShowLocalNodeManager] = useState(false);
 
-  // === Elasticsearch Configuration Management State ===
-  const [esConfigValidation, setEsConfigValidation] = useState(null);
-  const [esConfigPaths, setEsConfigPaths] = useState({});
-  const [esConfigFile, setEsConfigFile] = useState(null);
-  const [esConfigLoading, setEsConfigLoading] = useState(false);
-  const [showEsConfigModal, setShowEsConfigModal] = useState(false);
-  const [esConfigModalType, setEsConfigModalType] = useState(""); // 'paths', 'settings', 'file'
-  const [tempEsSettings, setTempEsSettings] = useState({});
-  const [tempEsPaths, setTempEsPaths] = useState({});
-
-  // Notification State
-  const [notification, setNotification] = useState({
-    isVisible: false,
-    type: "", // 'success', 'error', 'info'
-    message: "",
-    icon: null,
-    isLoading: false,
-  });
-
-  // Sound hooks
-  const { playSound: playSuccessSound } = useSound("/sounds/success.mp3");
-  const { playSound: playErrorSound } = useSound("/sounds/error.mp3");
-
-  // Ref for polling interval ID
-  const pollingIntervalRef = useRef(null);
-  // Ref to track if success sound has been played for the current batch of task completions
-  const hasPlayedCompletionSoundRef = useRef(false);
-
-  // Function to show a notification message
-  const showNotification = useCallback(
-    (type, message, icon, isLoading = false) => {
-      setNotification({
-        isVisible: true,
-        type,
-        message,
-        icon,
-        isLoading,
-      });
-
-      // Auto-hide success/info notifications after delay, but not for loading ones
-      if (type === "success" || !isLoading) {
-        setTimeout(() => {
-          setNotification((prev) => ({ ...prev, isVisible: false }));
-        }, 8000); // Hide after 8 seconds
-      }
-    },
-    []
-  );
-
-  // Effect to play sound when error state changes (for general errors, not task errors)
+  // Fetch tasks on mount
   useEffect(() => {
-    if (error) {
-      playErrorSound();
-      showNotification("error", error, faExclamationTriangle);
+    fetchAllTasks();
+  }, [fetchAllTasks]);
+
+  // Fetch cluster and node data when component mounts
+  useEffect(() => {
+    // Only fetch local nodes - this will also try to get cluster info if available
+    clusterManagement.fetchLocalNodes();
+  }, []); // Empty dependency array to prevent loops
+
+  // Fetch additional data when cluster tab is active
+  useEffect(() => {
+    if (activeTab === "cluster") {
+      // Refresh local nodes (which includes cluster info if available)
+      clusterManagement.fetchLocalNodes();
+      clusterManagement.fetchNodeStats();
+      clusterManagement.fetchDiskPreferences();
     }
-  }, [error]);
+  }, [activeTab]); // Only depend on activeTab to prevent loops
 
-  // Function to hide notification
-  const hideNotification = () => {
-    setNotification({
-      isVisible: false,
-      type: "",
-      message: "",
-      icon: null,
-      isLoading: false,
-    });
-    setError(""); // Also clear the internal error state when notification is dismissed
-  };
+  // Helper function to format bytes
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
 
-  // fetchData now handles fetching all lists and accounts
-  const fetchData = useCallback(async () => {
-    setError("");
-    try {
-      setLoading(true);
-      const [unparsedRes, parsedRes, pendingRes, accountsRes] = await Promise.all([
-        axiosClient.get("/api/admin/files"),
-        axiosClient.get("/api/admin/parsed-files"),
-        axiosClient.get("/api/admin/pending-files"),
-        axiosClient.get("/api/admin/accounts", {
-          params: { page, size: pageSize },
-        }),
-      ]);
-
-      setUnparsedFiles(unparsedRes.data.files || []);
-      setParsedFiles(parsedRes.data.files || []);
-      setPendingFiles(pendingRes.data.files || []);
-
-      const fetchedAccounts = accountsRes.data.results || [];
-      setAccounts(fetchedAccounts);
-      setTotal(accountsRes.data.total || 0);
-
-      // Initialize hiddenPasswords state to hide all passwords by default
-      const initialHiddenState = {};
-      fetchedAccounts.forEach((account) => {
-        initialHiddenState[account.id] = true; // Initially hide all passwords
-      });
-      setHiddenPasswords(initialHiddenState);
-
-      setSelected([]);
-      setShowEditModal(false);
-      setCurrentEditingAccount(null);
-    } catch (err) {
-      setError(err.response?.data?.error || "Failed to fetch admin data");
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize]); // Dependencies for fetchData
-
-  // New function to fetch ALL tasks
-  const fetchAllTasks = useCallback(async () => {
-    try {
-      const response = await axiosClient.get("/api/admin/tasks");
-      const fetchedTasks = response.data || [];
-
-      // Update tasksList with the fetched tasks
-      setTasksList(fetchedTasks);
-
-      // Determine if there's any active task (any task that is not completed and not in error state)
-      const anyActiveTask = fetchedTasks.find(
-        (t) => !t.completed && t.status !== "error"
-      );
-
-      if (anyActiveTask) {
-        localStorage.setItem("currentTaskId", anyActiveTask.taskId); // Keep localStorage updated
-        setCurrentRunningTaskId(anyActiveTask.taskId); // Set the current running task ID for notifications
-        
-        // Only show notification if this is a new task (different from last notified)
-        if (lastNotifiedTaskId !== anyActiveTask.taskId) {
-          showNotification(
-            "info",
-            `${anyActiveTask.type}${anyActiveTask.filename ? ` (${anyActiveTask.filename})` : ''} - ${
-              anyActiveTask.message || "Processing..."
-            }`,
-            faCircleNotch,
-            true
-          );
-          setLastNotifiedTaskId(anyActiveTask.taskId);
-        }
-        hasPlayedCompletionSoundRef.current = false; // Reset sound flag if tasks are active
-      } else {
-        // If no active tasks, clear currentRunningTaskId if it was set
-        if (currentRunningTaskId) {
-          localStorage.removeItem("currentTaskId");
-          setCurrentRunningTaskId(null);
-          setLastNotifiedTaskId(null); // Clear last notified task when no active tasks
-        }
-
-        // Check if any task just completed/errored and play sound/refresh data
-        const wasAnyTaskRunningBefore = pollingIntervalRef.current !== null; // Simple check if polling was active
-        const isAnyTaskRunningNow = fetchedTasks.some(
-          (task) => !task.completed && task.status !== "error"
-        );
-
-        if (
-          wasAnyTaskRunningBefore && // Polling was active before
-          !isAnyTaskRunningNow && // No tasks are running now
-          !hasPlayedCompletionSoundRef.current // Sound hasn't played for this completion batch
-        ) {
-          playSuccessSound();
-          showNotification("success", "All tasks completed!", faCheckCircle);
-          fetchData(); // Refresh accounts and file data
-          fetchESData(); // Refresh Elasticsearch data (indices, health, etc.)
-          fetchConfig(); // Refresh configuration in case it was updated
-          hasPlayedCompletionSoundRef.current = true; // Prevent multiple sound plays
-        }
-      }
-    } catch (err) {
-      console.error("Error fetching all tasks:", err);
-      // If error, ensure current running task is cleared to stop continuous polling for a dead task
-      if (currentRunningTaskId) {
-        localStorage.removeItem("currentTaskId");
-        setCurrentRunningTaskId(null);
-        setLastNotifiedTaskId(null); // Clear last notified task on error
-      }
-      setTasksList([]); // Clear tasks on error
-      showNotification(
-        "error",
-        "Failed to fetch tasks.",
-        faExclamationTriangle
-      );
-      playErrorSound();
-    }
-  }, [currentRunningTaskId, showNotification, playSuccessSound, playErrorSound, fetchData]);
-
-  // === Configuration Management Functions ===
-  const fetchConfig = useCallback(async () => {
-    try {
-      setConfigLoading(true);
-      const response = await axiosClient.get("/api/admin/config");
-      setConfig(response.data);
-      setSelectedSearchIndices(response.data.searchIndices || []);
-      
-      // Initialize temp system settings with current config values
-      setTempSystemSettings({
-        minVisibleChars: response.data.minVisibleChars || 2,
-        maskingRatio: response.data.maskingRatio || 0.2,
-        usernameMaskingRatio: response.data.usernameMaskingRatio || 0.4,
-        batchSize: response.data.batchSize || 1000,
-        showRawLineByDefault: response.data.adminSettings?.showRawLineByDefault || false
-      });
-      setHasUnsavedSystemChanges(false);
-    } catch (err) {
-      console.error("Failed to fetch configuration:", err);
-      showNotification("error", "Failed to fetch configuration", faExclamationTriangle);
-    } finally {
-      setConfigLoading(false);
-    }
-  }, [showNotification]);
-
-  const updateSearchIndices = async () => {
-    try {
-      await axiosClient.post("/api/admin/config/search-indices", {
-        indices: selectedSearchIndices
-      });
-      
-      await fetchConfig(); // Refresh config
-      showNotification("success", "Search indices updated successfully", faCheckCircle);
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to update search indices", faExclamationTriangle);
-    }
-  };
-
-  const updateConfiguration = async (updates) => {
-    try {
-      await axiosClient.post("/api/admin/config", updates);
-      
-      await fetchConfig(); // Refresh config
-      showNotification("success", "Configuration updated successfully", faCheckCircle);
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to update configuration", faExclamationTriangle);
-    }
-  };
-
-  // === System Settings Functions (Manual Save) ===
-  const handleSystemSettingChange = (field, value) => {
-    setTempSystemSettings(prev => ({
-      ...prev,
-      [field]: value
-    }));
-    setHasUnsavedSystemChanges(true);
-  };
-
-  const saveSystemSettings = async () => {
-    try {
-      // Separate adminSettings from other settings
-      const { showRawLineByDefault, ...otherSettings } = tempSystemSettings;
-      
-      const payload = {
-        ...otherSettings,
-        adminSettings: {
-          showRawLineByDefault
-        }
-      };
-      
-      await axiosClient.post("/api/admin/config", payload);
-      
-      await fetchConfig(); // Refresh config to update main config state
-      setHasUnsavedSystemChanges(false); // Mark as saved
-      showNotification("success", "System settings saved successfully", faCheckCircle);
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to save system settings", faExclamationTriangle);
-    }
-  };
-
-  const resetSystemSettings = () => {
-    if (config) {
-      setTempSystemSettings({
-        minVisibleChars: config.minVisibleChars || 2,
-        maskingRatio: config.maskingRatio || 0.2,
-        usernameMaskingRatio: config.usernameMaskingRatio || 0.4,
-        batchSize: config.batchSize || 1000,
-        showRawLineByDefault: config.adminSettings?.showRawLineByDefault || false
-      });
-      setHasUnsavedSystemChanges(false);
-    }
-  };
-
-  // === Elasticsearch Management Functions ===
-  const fetchESData = useCallback(async () => {
-    try {
-      setEsLoading(true);
-      const [indicesRes, healthRes] = await Promise.all([
-        axiosClient.get("/api/admin/es/indices"),
-        axiosClient.get("/api/admin/es/health")
-      ]);
-
-      setEsIndices(indicesRes.data.indices || []);
-      setSelectedIndex(indicesRes.data.selectedIndex || "accounts");
-      setEsHealth(healthRes.data);
-      
-      // Update available search indices for configuration
-      setAvailableSearchIndices(indicesRes.data.indices || []);
-    } catch (err) {
-      console.error("Failed to fetch ES data:", err);
-      showNotification("error", "Failed to fetch Elasticsearch data", faExclamationTriangle);
-    } finally {
-      setEsLoading(false);
-    }
-  }, [showNotification]);
-
-  const handleCreateIndex = async () => {
-    if (!newIndexName.trim()) {
-      showNotification("error", "Index name is required", faExclamationTriangle);
-      return;
-    }
-
-    const shards = parseInt(newIndexShards) || 1;
-    const replicas = parseInt(newIndexReplicas) || 0;
-
-    if (shards < 1 || shards > 1000) {
-      showNotification("error", "Number of shards must be between 1 and 1000", faExclamationTriangle);
-      return;
-    }
-
-    if (replicas < 0 || replicas > 100) {
-      showNotification("error", "Number of replicas must be between 0 and 100", faExclamationTriangle);
-      return;
-    }
-
-    try {
-      const response = await axiosClient.post("/api/admin/es/indices", {
-        indexName: newIndexName.trim(),
-        shards: shards,
-        replicas: replicas
-      });
-
-      if (response.data.taskId) {
-        fetchAllTasks(); // Refresh tasks to show the new task
-        closeESModal(); // Close modal and clear form
-        showNotification("info", `Index creation started for "${newIndexName.trim()}" with ${shards} shard(s) and ${replicas} replica(s)`, faInfoCircle, true);
-      }
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to create index", faExclamationTriangle);
-    }
-  };
-
-  const handleDeleteIndex = async (indexName) => {
-    if (indexName === selectedIndex) {
-      showNotification("error", "Cannot delete the currently selected index", faExclamationTriangle);
-      return;
-    }
-
-    if (!window.confirm(`Are you sure you want to delete index "${indexName}"? This action cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      const response = await axiosClient.delete(`/api/admin/es/indices/${indexName}`);
-
-      if (response.data.taskId) {
-        fetchAllTasks(); // Refresh tasks
-        closeESModal(); // Close any open ES modal
-        showNotification("info", `Index deletion started for "${indexName}"`, faInfoCircle, true);
-      }
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to delete index", faExclamationTriangle);
-    }
-  };
-
-  const handleSelectIndex = async (indexName) => {
-    try {
-      await axiosClient.post("/api/admin/es/select-index", {
-        indexName: indexName
-      });
-
-      setSelectedIndex(indexName);
-      fetchESData(); // Refresh to update selected index
-      fetchData(); // Refresh data from new index
-      showNotification("success", `Selected index changed to '${indexName}'`, faCheckCircle);
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to select index", faExclamationTriangle);
-    }
-  };
-
-  const handleReindex = async () => {
-    if (!reindexSource || !reindexDest) {
-      showNotification("error", "Source and destination indices are required", faExclamationTriangle);
-      return;
-    }
-
-    try {
-      const response = await axiosClient.post("/api/admin/es/reindex", {
-        sourceIndex: reindexSource,
-        destIndex: reindexDest
-      });
-
-      if (response.data.taskId) {
-        fetchAllTasks(); // Refresh tasks
-        closeESModal(); // Close modal and clear form
-        showNotification("info", `Reindexing started from "${reindexSource}" to "${reindexDest}"`, faInfoCircle, true);
-      }
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to start reindexing", faExclamationTriangle);
-    }
-  };
-
-  const fetchIndexDetails = async (indexName) => {
-    try {
-      setEsLoading(true);
-      const response = await axiosClient.get(`/api/admin/es/indices/${indexName}/details`);
-      setIndexDetails(response.data);
-    } catch (err) {
-      showNotification("error", "Failed to fetch index details", faExclamationTriangle);
-    } finally {
-      setEsLoading(false);
-    }
-  };
-
+  // ES Modal functions
   const openESModal = (type, data = {}) => {
     setEsModalType(type);
     setEsModalData(data);
     setShowESModal(true);
-
-    if (type === "details" && data.indexName) {
-      fetchIndexDetails(data.indexName);
-    }
   };
 
   const closeESModal = () => {
@@ -542,877 +109,23 @@ export default function AdminDashboard({ onLogout }) {
     setIndexDetails(null);
   };
 
-  // === Cluster/Node/Disk Management Functions ===
-  const fetchClusterInfo = useCallback(async () => {
-    setClusterLoading(true);
+  const handleCreateIndex = async () => {
     try {
-      const response = await axiosClient.get('/api/admin/cluster');
-      setClusterInfo(response.data);
-      setNodes(Object.values(response.data.nodes));
-      setNodeDisks(response.data.nodeDisks);
-      setNewClusterName(response.data.clusterName);
-    } catch (error) {
-      console.error('Error fetching cluster info:', error);
-      showNotification('error', 'Failed to fetch cluster information', faExclamationTriangle);
-    } finally {
-      setClusterLoading(false);
-    }
-  }, [showNotification]);
-
-  const fetchNodeStats = useCallback(async () => {
-    try {
-      const response = await axiosClient.get('/api/admin/nodes');
-      setNodeStats(response.data.stats);
-    } catch (error) {
-      console.error('Error fetching node stats:', error);
-    }
-  }, []);
-
-  const fetchDiskPreferences = useCallback(async () => {
-    try {
-      const preferences = {};
-      for (const node of nodes) {
-        const response = await axiosClient.get(`/api/admin/disks/preferred/${node.id}`);
-        preferences[node.id] = response.data.preferred;
-      }
-      setDiskPreferences(preferences);
-    } catch (error) {
-      console.error('Error fetching disk preferences:', error);
-    }
-  }, [nodes]);
-
-  const handleSetClusterName = async () => {
-    if (!newClusterName.trim()) return;
-    
-    try {
-      await axiosClient.post('/api/admin/cluster/name', { clusterName: newClusterName });
-      showNotification('success', 'Cluster name updated successfully', faCheckCircle);
-      fetchClusterInfo();
-    } catch (error) {
-      console.error('Error setting cluster name:', error);
-      showNotification('error', 'Failed to update cluster name', faExclamationTriangle);
-    }
-  };
-
-  const handleAddNode = async () => {
-    if (!newNodeUrl.trim()) return;
-    
-    try {
-      await axiosClient.post('/api/admin/nodes', { nodeUrl: newNodeUrl });
-      showNotification('success', 'Node added successfully', faCheckCircle);
-      setNewNodeUrl("");
-      fetchClusterInfo();
-    } catch (error) {
-      console.error('Error adding node:', error);
-      showNotification('error', 'Failed to add node', faExclamationTriangle);
-    }
-  };
-
-  const handleRemoveNode = async (nodeUrl) => {
-    if (!window.confirm(`Are you sure you want to remove node ${nodeUrl}?`)) return;
-    
-    try {
-      await axiosClient.delete('/api/admin/nodes', { data: { nodeUrl } });
-      showNotification('success', 'Node removed successfully', faCheckCircle);
-      fetchClusterInfo();
-    } catch (error) {
-      console.error('Error removing node:', error);
-      showNotification('error', 'Failed to remove node', faExclamationTriangle);
-    }
-  };
-
-  const handleSetWriteNode = async (nodeUrl) => {
-    try {
-      await axiosClient.post('/api/admin/nodes/write', { nodeUrl });
-      showNotification('success', 'Write node updated successfully', faCheckCircle);
-      fetchClusterInfo();
-    } catch (error) {
-      console.error('Error setting write node:', error);
-      showNotification('error', 'Failed to set write node', faExclamationTriangle);
-    }
-  };
-
-  const handleSetPreferredDisk = async (nodeId, diskPath) => {
-    try {
-      await axiosClient.post('/api/admin/disks/preferred', { nodeId, diskPath });
-      showNotification('success', 'Preferred disk path set successfully', faCheckCircle);
-      fetchDiskPreferences();
-    } catch (error) {
-      console.error('Error setting preferred disk:', error);
-      showNotification('error', 'Failed to set preferred disk path', faExclamationTriangle);
-    }
-  };
-
-  const fetchNodeDisks = async (nodeId) => {
-    try {
-      const response = await axiosClient.get(`/api/admin/disks/${nodeId}`);
-      return response.data.disks;
-    } catch (error) {
-      console.error('Error fetching node disks:', error);
-      return [];
-    }
-  };
-
-  // === Elasticsearch Configuration Management Functions ===
-  const fetchEsConfigValidation = useCallback(async () => {
-    setEsConfigLoading(true);
-    try {
-      const response = await axiosClient.get('/api/admin/es/config/validate');
-      setEsConfigValidation(response.data);
-    } catch (error) {
-      console.error('Error validating ES config:', error);
-      showNotification('error', 'Failed to validate Elasticsearch configuration', faExclamationTriangle);
-    } finally {
-      setEsConfigLoading(false);
-    }
-  }, [showNotification]);
-
-  const fetchEsConfigPaths = useCallback(async () => {
-    try {
-      const response = await axiosClient.get('/api/admin/es/config/paths');
-      setEsConfigPaths(response.data);
-      setTempEsPaths(response.data);
-    } catch (error) {
-      console.error('Error fetching ES config paths:', error);
-      showNotification('error', 'Failed to fetch configuration paths', faExclamationTriangle);
-    }
-  }, [showNotification]);
-
-  const fetchEsConfigFile = useCallback(async () => {
-    try {
-      const response = await axiosClient.get('/api/admin/es/config/file');
-      setEsConfigFile(response.data);
-      setTempEsSettings(response.data.parsedConfig || {});
-    } catch (error) {
-      console.error('Error fetching ES config file:', error);
-      showNotification('error', 'Failed to read configuration file', faExclamationTriangle);
-    }
-  }, [showNotification]);
-
-  const updateEsConfigPaths = async () => {
-    try {
-      const response = await axiosClient.post('/api/admin/es/config/paths', tempEsPaths);
-      setEsConfigPaths(response.data.elasticsearchConfig);
-      showNotification('success', 'Configuration paths updated successfully', faCheckCircle);
-      setShowEsConfigModal(false);
-      // Re-validate with new paths
-      fetchEsConfigValidation();
-    } catch (error) {
-      console.error('Error updating ES config paths:', error);
-      showNotification('error', error.response?.data?.error || 'Failed to update configuration paths', faExclamationTriangle);
-    }
-  };
-
-  const updateEsConfigSettings = async (restart = false) => {
-    try {
-      const response = await axiosClient.post('/api/admin/es/config/settings', {
-        settings: tempEsSettings,
-        restart
-      });
-      
-      if (response.data.taskId) {
-        setCurrentRunningTaskId(response.data.taskId);
-        localStorage.setItem("currentTaskId", response.data.taskId);
-        showNotification('info', 'Updating configuration settings...', faCircleNotch);
-      }
-      
-      setShowEsConfigModal(false);
-      // Refresh config file after update
-      setTimeout(() => fetchEsConfigFile(), 2000);
-    } catch (error) {
-      console.error('Error updating ES config settings:', error);
-      showNotification('error', error.response?.data?.error || 'Failed to update configuration settings', faExclamationTriangle);
-    }
-  };
-
-  const restartElasticsearchService = async () => {
-    try {
-      const response = await axiosClient.post('/api/admin/es/config/restart');
-      
-      if (response.data.taskId) {
-        setCurrentRunningTaskId(response.data.taskId);
-        localStorage.setItem("currentTaskId", response.data.taskId);
-        showNotification('info', 'Restarting Elasticsearch service...', faCircleNotch);
-      }
-    } catch (error) {
-      console.error('Error restarting ES service:', error);
-      showNotification('error', error.response?.data?.error || 'Failed to restart Elasticsearch service', faExclamationTriangle);
-    }
-  };
-
-  const openEsConfigModal = (type) => {
-    setEsConfigModalType(type);
-    if (type === 'paths') {
-      fetchEsConfigPaths();
-    } else if (type === 'file' || type === 'settings') {
-      fetchEsConfigFile();
-    }
-    setShowEsConfigModal(true);
-  };
-
-  const closeEsConfigModal = () => {
-    setShowEsConfigModal(false);
-    setEsConfigModalType("");
-    setTempEsSettings({});
-    setTempEsPaths({});
-  };
-
-  // Notification and error handling for task actions
-  const handleTaskAction = async (action, payload, successMessage, errorMessage) => {
-    setError("");
-    try {
-      const response = await axiosClient.post(`/api/admin/tasks/${action}`, payload);
-      const newTaskId = response.data.taskId;
-      localStorage.setItem("currentTaskId", newTaskId);
-      setCurrentRunningTaskId(newTaskId);
-      showNotification("info", successMessage, faCircleNotch, true);
-      fetchAllTasks(); // Refresh tasks
+      await elasticsearchManagement.handleCreateIndex(newIndexName, parseInt(newIndexShards), parseInt(newIndexReplicas));
+      closeESModal();
     } catch (err) {
-      setError(err.response?.data?.error || errorMessage);
-      playErrorSound();
+      showNotification("error", err.response?.data?.error || "Failed to create index");
     }
   };
 
-  // Effect for initial data fetching on mount
-  useEffect(() => {
-    fetchData(); // Initial fetch for accounts and files
-    fetchAllTasks(); // Initial fetch for tasks
-    fetchESData(); // Initial fetch for Elasticsearch data
-    fetchConfig(); // Initial fetch for configuration
-    fetchClusterInfo(); // Initial fetch for cluster info
-    fetchDiskPreferences(); // Initial fetch for disk preferences
-    fetchEsConfigValidation(); // Initial fetch for ES config validation
-  }, []); // Added fetchConfig, fetchClusterInfo, fetchDiskPreferences, and fetchEsConfigValidation to dependencies
-
-  // Effect to manage polling based on presence of active tasks
-  useEffect(() => {
-    const anyActiveTasks = tasksList.some(
-      (task) => !task.completed && task.status !== "error"
-    );
-
-    if (anyActiveTasks) {
-      if (!pollingIntervalRef.current) {
-        pollingIntervalRef.current = setInterval(() => {
-          fetchAllTasks(); // Poll all tasks
-        }, 3000); // Poll every 3 seconds to reduce re-renders
-        console.log("Started polling for tasks.");
-      }
-    } else {
-      // If no active tasks, clear any existing interval
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-        console.log("Stopped polling for tasks.");
-      }
-    }
-
-    // Cleanup on unmount
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-    };
-  }, [tasksList]); // Depend on tasksList and fetchAllTasks to react to changes in task activity
-
-  // Function to estimate remaining time for a task
-  function estimateRemainingTime(start, progress, total) {
-    if (!progress || progress === 0 || total === 0 || progress >= total) return null;
-    const elapsed = Date.now() - start; // Time elapsed in milliseconds
-    const timePerItem = elapsed / progress; // Milliseconds per unit of progress
-    const remainingItems = total - progress;
-    const remainingMs = Math.round(timePerItem * remainingItems);
-
-    if (isNaN(remainingMs) || !isFinite(remainingMs)) return null;
-
-    const seconds = Math.floor(remainingMs / 1000) % 60;
-    const minutes = Math.floor(remainingMs / (1000 * 60)) % 60;
-    const hours = Math.floor(remainingMs / (1000 * 60 * 60));
-
-    let timeString = '';
-    if (hours > 0) timeString += `${hours}h `;
-    if (minutes > 0 || hours > 0) timeString += `${minutes}m `; // Show minutes if hours are shown or if minutes exist
-    timeString += `${seconds}s`;
-
-    return timeString.trim();
-  }
-
-  // Function to remove a task from the list (dismiss from UI)
-  const removeTask = (idToRemove) => {
-    setTasksList((prev) => prev.filter((t) => t.taskId !== idToRemove));
-    // If the task being removed is the currently running one, clear currentRunningTaskId
-    if (idToRemove === currentRunningTaskId) {
-      localStorage.removeItem("currentTaskId");
-      setCurrentRunningTaskId(null);
-    }
-  };
-
-  const handleUpload = async () => {
-    if (uploadFiles.length === 0) {
-      setError("Please select at least one file to upload.");
-      return;
-    }
-    setLoading(true);
-    setUploadPercentage(0); // Reset progress at the start of upload
-    setError(""); // Clear any previous errors
-
+  const handleReindex = async () => {
     try {
-      const formData = new FormData();
-      uploadFiles.forEach((file) => {
-        formData.append("files", file);
-      });
-
-      const response = await axiosClient.post("/api/admin/upload", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-        onUploadProgress: (progressEvent) => {
-          const { loaded, total } = progressEvent;
-          const percent = Math.round((loaded * 100) / total);
-          setUploadPercentage(percent);
-        },
-      });
-
-      const { taskId } = response.data;
-      if (taskId) {
-        localStorage.setItem("currentTaskId", taskId);
-        setCurrentRunningTaskId(taskId);
-        fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-      }
-
-      setUploadFiles([]); // Clear selected files after successful upload
+      await elasticsearchManagement.handleReindexData(reindexSource, reindexDest);
+      closeESModal();
     } catch (err) {
-      console.error("Upload error:", err);
-      setError(
-        err.response?.data?.error || "Failed to upload files. Please try again."
-      );
-    } finally {
-      // Ensure loading state and upload percentage are reset regardless of success or failure
-      setLoading(false);
-      setUploadPercentage(0);
+      showNotification("error", err.response?.data?.error || "Failed to reindex");
     }
   };
-
-  const handleDeleteUnparsedFile = useCallback(
-    async (filename) => {
-      if (isAnyTaskRunning) {
-        showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-        return;
-      }
-
-      setError("");
-      setLoading(true);
-      try {
-        const response = await axiosClient.delete(
-          `/api/admin/unparsed-files/${filename}`
-        );
-        const newTaskId = response.data.taskId;
-        localStorage.setItem("currentTaskId", newTaskId);
-        setCurrentRunningTaskId(newTaskId);
-        fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-      } catch (err) {
-        console.error("Error deleting unparsed file:", err);
-        setError(
-          err.response?.data?.error || "Failed to delete unparsed file."
-        );
-      } finally {
-        setLoading(false);
-      }
-    },
-    [isAnyTaskRunning, showNotification, fetchAllTasks] // Added fetchAllTasks to dependency array
-  );
-
-  // Handle moving unparsed file to pending
-  const handleMoveToPending = async (filename) => {
-    if (isAnyTaskRunning) {
-      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-      return;
-    }
-    setError("");
-    try {
-      const res = await axiosClient.post(
-        `/api/admin/move-to-pending/${filename}`
-      );
-      const newTaskId = res.data.taskId;
-      localStorage.setItem("currentTaskId", newTaskId);
-      setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-    } catch (err) {
-      setError(err.response?.data?.error || "Failed to move file to pending.");
-    }
-  };
-
-  const handleParse = async (filename) => {
-    if (isAnyTaskRunning) {
-      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-      return;
-    }
-    setError("");
-    try {
-      const res = await axiosClient.post(`/api/admin/parse/${filename}`);
-      const newTaskId = res.data.taskId;
-      localStorage.setItem("currentTaskId", newTaskId);
-      setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-    } catch (err) {
-      setError(err.response?.data?.error || "Parsing failed");
-    }
-  };
-
-  // Handle parsing all unparsed files
-  const handleParseAllUnparsed = async () => {
-    if (isAnyTaskRunning) {
-      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-      return;
-    }
-
-    setError("");
-    try {
-      const res = await axiosClient.post("/api/admin/parse-all-unparsed");
-      const newTaskId = res.data.taskId;
-      localStorage.setItem("currentTaskId", newTaskId);
-      setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-    } catch (err) {
-      setError(
-        err.response?.data?.error || "Failed to parse all unparsed files."
-      );
-    }
-  };
-
-  // Handle moving pending file to unparsed
-  const handleMoveToUnparsed = async (filename) => {
-    if (isAnyTaskRunning) {
-      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-      return;
-    }
-    setError("");
-    try {
-      const res = await axiosClient.post(
-        `/api/admin/move-to-unparsed/${filename}`
-      );
-      const newTaskId = res.data.taskId;
-      localStorage.setItem("currentTaskId", newTaskId);
-      setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-    } catch (err) {
-      setError(err.response?.data?.error || "Failed to move file to unparsed.");
-    }
-  };
-
-  // Handle deleting pending file
-  const handleDeletePendingFile = async (filename) => {
-    if (isAnyTaskRunning) {
-      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-      return;
-    }
-    setError("");
-    try {
-      const res = await axiosClient.delete(
-        `/api/admin/pending-files/${filename}`
-      );
-      const newTaskId = res.data.taskId;
-      localStorage.setItem("currentTaskId", newTaskId);
-      setCurrentRunningTaskId(newTaskId);
-      fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-    } catch (err) {
-      setError(err.response?.data?.error || "Failed to delete pending file.");
-    }
-  };
-
-  const handleDeleteAccount = async (id) => {
-    setError("");
-    try {
-      await axiosClient.delete(`/api/admin/accounts/${id}`);
-      playSuccessSound();
-      showNotification(
-        "success",
-        "Account deleted successfully!",
-        faCheckCircle
-      );
-      // Refresh all data after a successful delete
-      fetchData();
-    } catch (err) {
-      setError(err.response?.data?.error || "Delete failed");
-      playErrorSound();
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (!selected.length) return;
-    if (isAnyTaskRunning) {
-      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-      return;
-    }
-    setError("");
-    try {
-      const ids = selected.map((item) => item.id);
-      const res = await axiosClient.post("/api/admin/accounts/bulk-delete", {
-        ids,
-      });
-      if (res.data.taskId) {
-        const newTaskId = res.data.taskId;
-        localStorage.setItem("currentTaskId", newTaskId);
-        setCurrentRunningTaskId(newTaskId);
-        fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-      } else {
-        await fetchData(); // Fallback for synchronous ops
-      }
-    } catch (err) {
-      setError(err.response?.data?.error || "Bulk delete failed");
-    }
-  };
-
-  const handleDeleteAll = async () => {
-    if (isAnyTaskRunning) {
-      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-      return;
-    }
-    // Use a custom modal for confirmation instead of window.confirm
-    if (!window.confirm(`Are you sure you want to clean database.`)) {
-      return;
-    }
-
-    setError("");
-    try {
-      const res = await axiosClient.post("/api/admin/accounts/clean");
-      if (res.data.taskId) {
-        const newTaskId = res.data.taskId;
-        localStorage.setItem("currentTaskId", newTaskId);
-        setCurrentRunningTaskId(newTaskId);
-        fetchAllTasks(); // Explicitly call fetchAllTasks to immediately update UI
-      } else {
-        await fetchData(); // Fallback for synchronous ops
-      }
-    } catch (err) {
-      setError(err.response?.data?.error || "Failed to delete all accounts");
-    }
-  };
-
-  const toggleSelect = (item) => {
-    setSelected((prev) =>
-      prev.includes(item) ? prev.filter((x) => x !== item) : [...prev, item]
-    );
-  };
-
-  const selectAll = () => {
-    if (selected.length === accounts.length) {
-      setSelected([]);
-    } else {
-      setSelected([...accounts]);
-    }
-  };
-
-  // Function to toggle global password visibility
-  const toggleGlobalPasswordVisibility = () => {
-    setShowAllPasswords((prev) => !prev);
-    // When toggling globally, clear individual password visibility states
-    if (!showAllPasswords) {
-      setHiddenPasswords({});
-    }
-  };
-
-  // Function to toggle password visibility in the edit modal
-  const toggleEditModalPasswordVisibility = () => {
-    setEditModalPasswordHidden((prev) => !prev);
-  };
-
-  // Function to toggle individual password visibility
-  const togglePasswordVisibility = (id) => {
-    setHiddenPasswords((prev) => ({
-      ...prev,
-      [id]: !prev[id],
-    }));
-  };
-
-  // Handle bulk delete of selected accounts
-  const handleDeleteSelected = async () => {
-    if (selected.length === 0) {
-      showNotification("info", "No accounts selected for deletion.", faInfoCircle);
-      return;
-    }
-    
-    if (isAnyTaskRunning) {
-      showNotification("info", "A task is already running. Please wait for it to complete.", faInfoCircle);
-      return;
-    }
-    
-    if (!window.confirm(`Are you sure you want to delete ${selected.length} selected account(s)?`)) {
-      return;
-    }
-    
-    setError("");
-    try {
-      const ids = selected.map((item) => item.id);
-      const res = await axiosClient.post("/api/admin/accounts/bulk-delete", {
-        ids,
-      });
-      if (res.data.taskId) {
-        const newTaskId = res.data.taskId;
-        localStorage.setItem("currentTaskId", newTaskId);
-        setCurrentRunningTaskId(newTaskId);
-        fetchAllTasks(); // Update UI
-        setSelected([]); // Clear selection after initiating delete
-      } else {
-        await fetchData(); // Fallback for synchronous ops
-        setSelected([]); // Clear selection
-      }
-    } catch (err) {
-      setError(err.response?.data?.error || "Bulk delete failed");
-      showNotification("error", err.response?.data?.error || "Bulk delete failed", faExclamationTriangle);
-    }
-  };
-
-  const handleEditClick = (account) => {
-    setCurrentEditingAccount(account);
-    setEditFormData({
-      url: account.url,
-      username: account.username,
-      password: account.password,
-    });
-    setEditModalPasswordHidden(false); // Default to hidden when opening
-    setShowEditModal(true);
-    setError("");
-    hideNotification();
-  };
-
-  const handleEditChange = (e) => {
-    setEditFormData({ ...editFormData, [e.target.name]: e.target.value });
-  };
-
-  const handleSaveEdit = async () => {
-    setError("");
-    if (!editFormData.url || !editFormData.username || !editFormData.password) {
-      setError("URL, username, and password fields cannot be empty.");
-      playErrorSound();
-      return;
-    }
-    if (!currentEditingAccount) {
-      setError("No account selected for editing.");
-      playErrorSound();
-      return;
-    }
-    setEditLoading(true);
-    try {
-      await axiosClient.put(
-        `/api/admin/accounts/${currentEditingAccount.id}`,
-        editFormData
-      );
-      playSuccessSound();
-      showNotification(
-        "success",
-        "Account updated successfully!",
-        faCheckCircle
-      );
-      // Refresh all data after a successful edit
-      fetchData();
-      setShowEditModal(false);
-      setCurrentEditingAccount(null);
-    } catch (err) {
-      setError(
-        err.response?.data?.message || err.response?.data?.error || "Failed to update account."
-      );
-      playErrorSound();
-    } finally {
-      setEditLoading(false);
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setShowEditModal(false);
-    setCurrentEditingAccount(null);
-    setEditFormData({ url: "", username: "", password: "" });
-    setError("");
-    hideNotification();
-  };
-
-  // Pagination page input handlers
-  const totalPages = Math.ceil(total / pageSize) || 1;
-  const handlePageInputChange = (e) => {
-    setPageInput(e.target.value);
-  };
-
-  const handleGoToPage = () => {
-    const newPage = parseInt(pageInput, 10);
-    if (!isNaN(newPage) && newPage >= 1 && newPage <= totalPages) {
-      setPage(newPage);
-      setError("");
-      hideNotification();
-    } else {
-      setError(`Please enter a valid page number between 1 and ${totalPages}.`);
-      playErrorSound();
-      setPageInput(String(page));
-    }
-  };
-
-  const handlePageInputKeyDown = (e) => {
-    if (e.key === "Enter") {
-      handleGoToPage();
-    }
-  };
-
-  // Render pagination buttons (matching HomePage style)
-  const renderPaginationButtons = () => {
-    const pages = [];
-    const maxPagesToShow = 5;
-    let startPage = Math.max(1, page - Math.floor(maxPagesToShow / 2));
-    let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1);
-
-    if (endPage - startPage + 1 < maxPagesToShow) {
-      startPage = Math.max(1, endPage - maxPagesToShow + 1);
-    }
-
-    if (startPage > 1) {
-      pages.push(
-        <button
-          key="first"
-          onClick={() => setPage(1)}
-          className="px-3 py-1 border border-neutral-700 rounded-md text-neutral-300 bg-neutral-800 hover:bg-neutral-700 mx-1 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95"
-        >
-          1
-        </button>
-      );
-      if (startPage > 2) {
-        pages.push(
-          <span key="dots-start" className="px-3 py-1 mx-1 text-neutral-400">
-            ...
-          </span>
-        );
-      }
-    }
-
-    for (let i = startPage; i <= endPage; i++) {
-      pages.push(
-        <button
-          key={i}
-          onClick={() => setPage(i)}
-          className={`px-3 py-1 border border-neutral-700 rounded-md mx-1 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95 ${
-            page === i ? "bg-blue-600 text-white" : "text-neutral-300 bg-neutral-800 hover:bg-neutral-700"
-          }`}
-        >
-          {i}
-        </button>
-      );
-    }
-
-    if (endPage < totalPages) {
-      if (endPage < totalPages - 1) {
-        pages.push(
-          <span key="dots-end" className="px-3 py-1 mx-1 text-neutral-400">
-            ...
-          </span>
-        );
-      }
-      pages.push(
-        <button
-          key="last"
-          onClick={() => setPage(totalPages)}
-          className="px-3 py-1 border border-neutral-700 rounded-md text-neutral-300 bg-neutral-800 hover:bg-neutral-700 mx-1 transition duration-200 ease-in-out transform hover:scale-105 active:scale-95"
-        >
-          {totalPages}
-        </button>
-      );
-    }
-    return pages;
-  };
-
-  function TaskDetails({ tasks }) {
-    // Sort tasks to show most recent first
-    const sortedTasks = [...tasks].sort((a, b) => b.startTime - a.startTime);
-
-    // Filter to show only active or recently completed/errored tasks (e.g., last 5)
-    // Show active tasks or tasks completed/errored in last 10 minutes (600,000 ms)
-    const recentTasks = sortedTasks
-      .filter((task) => !task.completed || (Date.now() - task.startTime < 600000 && task.progress > 0)) // Also filter out tasks with 0 progress that might be "initializing" too long
-      .slice(0, 5); // Limit to top 5 recent tasks
-
-    if (!recentTasks.length) return null;
-
-    return (
-      <div className="mb-8 p-4 bg-gradient-to-br from-neutral-800 to-neutral-900 rounded-lg shadow-xl border border-neutral-700">
-        <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
-          <FontAwesomeIcon icon={faListCheck} className="mr-2 text-blue-400" /> Active/Recent Tasks
-        </h3>
-        <ul className="space-y-4 max-h-60 overflow-y-auto pr-2"> {/* Added overflow-y-auto and pr-2 for scrollbar */}
-          {recentTasks.map((task) => {
-            const isCompleted = task.completed;
-            const percent = task.total > 0 ? Math.round((task.progress / task.total) * 100) : 0;
-            let statusColorClass = "text-neutral-400";
-            if (isCompleted) {
-              statusColorClass = task.status === "completed" ? "text-green-400" : "text-red-400";
-            } else if (
-              task.status === "processing" ||
-              task.status === "parsing" ||
-              task.status === "moving" || // Added moving
-              task.status === "deleting" || // Added deleting
-              task.status === "counting lines" || // Added counting lines
-              task.status === "initializing"
-            ) {
-              statusColorClass = "text-blue-400";
-            } else if (task.status === "error") {
-              statusColorClass = "text-red-400";
-            }
-            return (
-              <li key={task.taskId} className="border border-neutral-700 rounded-lg p-4 relative bg-neutral-800 hover:bg-neutral-700 transition duration-200 ease-in-out shadow-md">
-                <div className="flex justify-between items-center mb-2">
-                  <span className={`text-sm font-semibold ${statusColorClass}`}>
-                    <FontAwesomeIcon
-                      icon={
-                        task.status === "error"
-                          ? faExclamationTriangle
-                          : isCompleted
-                          ? faCheckCircle
-                          : faCircleNotch
-                      }
-                      className={!isCompleted && task.status !== "error" ? "fa-spin mr-1" : "mr-1"}
-                    />
-                    {task.type} {task.filename ? `(${task.filename})` : ""}
-                  </span>
-                  {task.status === "completed" || task.status === "error" ? (
-                    <button
-                      onClick={() => removeTask(task.taskId)}
-                      className="text-neutral-400 hover:text-white transition-colors duration-150"
-                      title="Dismiss task"
-                    >
-                      <FontAwesomeIcon icon={faTimes} />
-                    </button>
-                  ) : null}
-                </div>
-                <div className="w-full bg-neutral-700 rounded-full h-2.5">
-                  <div
-                    className="bg-blue-600 h-2.5 rounded-full"
-                    style={{ width: `${percent}%` }}
-                  ></div>
-                </div>
-                <div className="flex justify-between text-xs mt-2 text-neutral-400">
-                  <span>
-                    {task.message}
-                    {task.total > 0 && ` (${task.progress}/${task.total})`}
-                  </span>
-                  <span>
-                    {estimateRemainingTime(task.startTime, task.progress, task.total) && (
-                      <span className="ml-2">
-                        ETA: {estimateRemainingTime(task.startTime, task.progress, task.total)}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    );
-  }
-
-  // Helper function to format bytes
-  function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  }
 
   return (
     <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans">
@@ -1440,6 +153,7 @@ export default function AdminDashboard({ onLogout }) {
           </button>
         </div>
       )}
+      
       <div className="max-w-12xl mx-auto px-4 sm:px-6 lg:px-8 py-8 bg-neutral-900 shadow-2xl rounded-xl border border-neutral-700">
         <div className="flex justify-between items-center mb-10 pb-4 border-b border-neutral-700">
           <h1 className="text-5xl font-extrabold text-primary">
@@ -1467,16 +181,6 @@ export default function AdminDashboard({ onLogout }) {
               File Management
             </button>
             <button
-              onClick={() => setActiveTab("elasticsearch")}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                activeTab === "elasticsearch"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
-              }`}
-            >
-              Elasticsearch Management
-            </button>
-            <button
               onClick={() => setActiveTab("cluster")}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
                 activeTab === "cluster"
@@ -1484,7 +188,7 @@ export default function AdminDashboard({ onLogout }) {
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
               }`}
             >
-              Cluster Management
+              Node Management
             </button>
             <button
               onClick={() => setActiveTab("configuration")}
@@ -1510,1833 +214,344 @@ export default function AdminDashboard({ onLogout }) {
         </div>
 
         {/* Task Details Component */}
-        <TaskDetails tasks={tasksList} />
+        <TaskDetails 
+          tasks={tasksList} 
+          removeTask={removeTask}
+          estimateRemainingTime={estimateRemainingTime}
+        />
 
         {/* File Management Tab */}
         {activeTab === "files" && (
-          <>
-            <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-          <h2 className="text-3xl font-semibold text-white mb-6">
-            Upload New File
-          </h2>
-          {loading && uploadPercentage > 0 && uploadPercentage <= 100 && (
-            <div className="mb-4 w-full">
-              <p>Uploading files: {uploadPercentage}%</p>
-              <div className="w-full bg-neutral-200 rounded-full h-2.5">
-                <div
-                  className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-in-out"
-                  style={{ width: `${uploadPercentage}%` }}
-                ></div>
-              </div>
-            </div>
-          )}
-          <div className="flex items-center space-x-4">
-            <input
-              multiple
-              type="file"
-              accept=".txt"
-              onChange={(e) => {
-                setUploadFiles(Array.from(e.target.files));
-              }}
-              className="block w-full text-sm text-neutral-300
-                         file:mr-4 file:py-2.5 file:px-5
-                         file:rounded-full file:border-0
-                         file:text-sm file:font-semibold
-                         file:bg-primary file:text-white
-                         hover:file:bg-button-hover-bg transition duration-150 ease-in-out cursor-pointer"
-            />
-            <button
-              onClick={handleUpload}
-              className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-              disabled={
-                uploadFiles.length === 0 ||
-                isAnyTaskRunning || // Use global task running flag
-                showEditModal ||
-                loading
-              }
-            >
-              Upload
-            </button>
-          </div>
-        </section>
-        <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-          <h2 className="text-3xl font-semibold text-white mb-6">
-            Pending Files
-          </h2>
-          {loading ? (
-            <p className="text-neutral-400">Loading pending files...</p>
-          ) : pendingFiles.length === 0 ? (
-            <p className="text-neutral-400">No files are in pending status.</p>
-          ) : (
-            <ul className="space-y-4 w-full border border-neutral-700 rounded-lg p-4 bg-neutral-900 max-h-80 overflow-y-auto shadow-inner pr-2">
-              {/* Added overflow-y-auto and pr-2 */}
-              {pendingFiles.map((f) => (
-                <li
-                  key={f}
-                  className="flex justify-between items-center bg-neutral-800 p-4 rounded-lg shadow-sm hover:shadow-md transition duration-200 ease-in-out border border-neutral-700"
-                >
-                  <span className="font-medium text-white">{f}</span>
-                  <div className="space-x-2">
-                    <button
-                      onClick={() => handleMoveToUnparsed(f)}
-                      disabled={isAnyTaskRunning || showEditModal}
-                      className={`bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
-                        isAnyTaskRunning || showEditModal
-                          ? "opacity-50 cursor-not-allowed"
-                          : ""
-                      }`}
-                    >
-                      <FontAwesomeIcon
-                        icon={faArrowRightArrowLeft}
-                        className="mr-1"
-                      />
-                      Move to Unparsed
-                    </button>
-                    <button
-                      onClick={() => handleDeletePendingFile(f)}
-                      className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                      disabled={loading || isAnyTaskRunning}
-                      title={`Delete '${f}'`}
-                    >
-                      <FontAwesomeIcon icon={faTrash} className="mr-1" /> Delete
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-        <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-          <h2 className="text-3xl font-semibold text-white mb-6">
-            Unparsed Files
-          </h2>
-          {/* Removed direct taskStatus progress bar here, as TaskDetails now handles all task display */}
-          <div className="mb-4">
-            <button
-              onClick={handleParseAllUnparsed}
-              className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-              disabled={
-                unparsedFiles.length === 0 || isAnyTaskRunning || showEditModal
-              }
-            >
-              <FontAwesomeIcon icon={faPlay} className="mr-2" /> Parse All
-              Unparsed
-            </button>
-          </div>
-          {loading ? (
-            <p className="text-neutral-400">Loading files...</p>
-          ) : unparsedFiles.length === 0 ? (
-            <p className="text-neutral-400">
-              No unparsed files ready for parsing.
-            </p>
-          ) : (
-            <ul className="space-y-4 w-full border border-neutral-700 rounded-lg p-4 bg-neutral-900 max-h-80 overflow-y-auto shadow-inner pr-2">
-              {/* Added overflow-y-auto and pr-2 */}
-              {unparsedFiles.map((f) => {
-                // Find if this specific file has an active parsing task
-                const currentParsingTask = tasksList.find(
-                  (task) =>
-                    !task.completed &&
-                    (task.type === "Parse File" || task.type === "Parse All Unparsed") &&
-                    task.filename === f
-                );
-                return (
-                  <li
-                    key={f}
-                    className="flex justify-between items-center bg-neutral-800 p-4 rounded-lg shadow-sm hover:shadow-md transition duration-200 ease-in-out border border-neutral-700"
-                  >
-                    <span className="font-medium text-white">{f}</span>
-                    <div className="space-x-2">
-                      <button
-                        onClick={() => handleParse(f)}
-                        disabled={isAnyTaskRunning || showEditModal}
-                        className={`bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
-                          isAnyTaskRunning || showEditModal
-                            ? "opacity-50 cursor-not-allowed"
-                            : ""
-                        }`}
-                      >
-                        {currentParsingTask ? (
-                          <FontAwesomeIcon
-                            icon={faCircleNotch}
-                            className="fa-spin mr-1"
-                          />
-                        ) : (
-                          "Parse"
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleMoveToPending(f)}
-                        disabled={isAnyTaskRunning || showEditModal}
-                        className={`bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
-                          isAnyTaskRunning || showEditModal
-                            ? "opacity-50 cursor-not-allowed"
-                            : ""
-                        }`}
-                      >
-                        <FontAwesomeIcon
-                          icon={faArrowRightArrowLeft}
-                          className="mr-1"
-                        />
-                        Move to Pending
-                      </button>
-                      <button
-                        onClick={() => handleDeleteUnparsedFile(f)}
-                        className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                        disabled={loading || isAnyTaskRunning}
-                        title={`Delete '${f}'`}
-                      >
-                        <FontAwesomeIcon icon={faTrash} className="mr-1" /> Delete
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-        <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-          <h2 className="text-3xl font-semibold text-white mb-6">
-            Parsed Files
-          </h2>
-          {parsedFiles.length === 0 ? (
-            <p className="text-neutral-400">No files have been parsed yet.</p>
-          ) : (
-            <ul className="space-y-4 max-h-80 overflow-y-auto pr-2">
-              {/* Added overflow-y-auto and pr-2 */}
-              {parsedFiles.map((f) => (
-                <li
-                  key={f}
-                  className="flex justify-between items-center bg-neutral-800 p-4 rounded-lg shadow-sm hover:shadow-md transition duration-200 ease-in-out border border-neutral-700"
-                >
-                  <span className="font-medium text-white">{f}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-          </>
+          <FilesManagement 
+            showNotification={showNotification}
+            isAnyTaskRunning={isAnyTaskRunning}
+            showEditModal={false} // Files management doesn't have edit modal
+            setTasksList={setTasksList}
+            setCurrentRunningTaskId={setCurrentRunningTaskId}
+          />
         )}
 
-        {/* Elasticsearch Management Tab */}
-        {activeTab === "elasticsearch" && (
-          <>
-            {/* Elasticsearch Management Section */}
-            <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-3xl font-semibold text-white">
-              Elasticsearch Management
-            </h2>
-            <div className="flex space-x-3">
-              <button
-                onClick={() => openESModal("create")}
-                className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isAnyTaskRunning || esLoading}
-              >
-                Create Index
-              </button>
-              <button
-                onClick={() => openESModal("reindex")}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isAnyTaskRunning || esLoading}
-              >
-                Reindex Data
-              </button>
-              <button
-                onClick={fetchESData}
-                className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
-                disabled={esLoading}
-              >
-                <FontAwesomeIcon 
-                  icon={faCircleNotch} 
-                  className={`mr-2 ${esLoading ? 'fa-spin' : ''}`} 
-                />
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          {/* Cluster Health Info */}
-          {esHealth && (
-            <div className="mb-6 p-4 bg-neutral-700 rounded-lg">
-              <h3 className="text-xl font-semibold text-white mb-3">Cluster Health</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <span className="text-neutral-400">Status:</span>
-                  <span className={`ml-2 px-2 py-1 rounded ${
-                    esHealth.cluster.status === 'green' ? 'bg-green-600' :
-                    esHealth.cluster.status === 'yellow' ? 'bg-yellow-600' : 'bg-red-600'
-                  } text-white`}>
-                    {esHealth.cluster.status.toUpperCase()}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-neutral-400">Nodes:</span>
-                  <span className="ml-2 text-white">{esHealth.cluster.numberOfNodes}</span>
-                </div>
-                <div>
-                  <span className="text-neutral-400">Documents:</span>
-                  <span className="ml-2 text-white">{esHealth.storage.documentCount.toLocaleString()}</span>
-                </div>
-                <div>
-                  <span className="text-neutral-400">Storage:</span>
-                  <span className="ml-2 text-white">{esHealth.storage.totalSizeReadable}</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Selected Index Info */}
-          <div className="mb-6 p-4 bg-neutral-700 rounded-lg">
-            <h3 className="text-xl font-semibold text-white mb-3">Current Index for Operations</h3>
-            <div className="text-lg">
-              <span className="text-neutral-400">Selected Index:</span>
-              <span className="ml-2 px-3 py-1 bg-primary text-white rounded-lg font-semibold">
-                {selectedIndex}
-              </span>
-              <span className="ml-3 text-sm text-neutral-400">
-                (All new data and operations will use this index)
-              </span>
-            </div>
-          </div>
-
-          {/* Indices Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-neutral-100 bg-neutral-700 rounded-lg shadow-lg">
-              <thead className="bg-neutral-600 text-neutral-100">
-                <tr>
-                  <th className="text-left py-3 px-4 font-semibold">Index Name</th>
-                  <th className="text-left py-3 px-4 font-semibold">Status</th>
-                  <th className="text-left py-3 px-4 font-semibold">Documents</th>
-                  <th className="text-left py-3 px-4 font-semibold">Size</th>
-                  <th className="text-left py-3 px-4 font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {esLoading ? (
-                  <tr>
-                    <td colSpan="5" className="text-center py-8 text-neutral-400">
-                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
-                      Loading indices...
-                    </td>
-                  </tr>
-                ) : esIndices.length === 0 ? (
-                  <tr>
-                    <td colSpan="5" className="text-center py-8 text-neutral-400">
-                      No indices found
-                    </td>
-                  </tr>
-                ) : (
-                  esIndices.map((index) => (
-                    <tr
-                      key={index.name}
-                      className={`border-b border-neutral-600 hover:bg-neutral-600 transition-colors ${
-                       
-                        index.isSelected ? 'bg-primary bg-opacity-20' : ''
-                      }`}
-                    >
-                      <td className="py-3 px-4">
-                        <div className="flex items-center">
-                          <span className="font-medium">{index.name}</span>
-                          {index.isSelected && (
-                            <span className="ml-2 px-2 py-1 bg-primary text-white text-xs rounded-full">
-                              SELECTED
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2 py-1 rounded text-xs ${
-                          index.health === 'green' ? 'bg-green-600' :
-                          index.health === 'yellow' ? 'bg-yellow-600' : 'bg-red-600'
-                        } text-white`}>
-                          {index.health?.toUpperCase() || 'UNKNOWN'}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-neutral-300">
-                        {index.docCount.toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-neutral-300">
-                        {index.storeSize}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex space-x-2">
-                          {!index.isSelected && (
-                            <button
-                              onClick={() => handleSelectIndex(index.name)}
-                              className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={isAnyTaskRunning || esLoading}
-                            >
-                              Select
-                            </button>
-                          )}
-                          <button
-                            onClick={() => openESModal("details", { indexName: index.name })}
-                            className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                            disabled={esLoading}
-                          >
-                            <FontAwesomeIcon icon={faInfoCircle} className="mr-1" />
-                            Details
-                          </button>
-                          {!index.name.startsWith('.') && !index.isSelected && (
-                            <button
-                              onClick={() => handleDeleteIndex(index.name)}
-                              className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={isAnyTaskRunning || esLoading}
-                            >
-                              <FontAwesomeIcon icon={faTrash} className="mr-1" />
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>            </section>
-
-            {/* Elasticsearch Configuration Management Section */}
-            <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-3xl font-semibold text-white">
-                  Configuration Management
-                </h2>
-                <div className="flex space-x-3">
-                  <button
-                    onClick={() => openEsConfigModal("paths")}
-                    className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
-                    disabled={esConfigLoading}
-                  >
-                    Configure Paths
-                  </button>
-                  <button
-                    onClick={() => openEsConfigModal("settings")}
-                    className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75"
-                    disabled={esConfigLoading || !esConfigValidation?.configExists}
-                  >
-                    Edit Settings
-                  </button>
-                  <button
-                    onClick={() => openEsConfigModal("file")}
-                    className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75"
-                    disabled={esConfigLoading || !esConfigValidation?.configExists}
-                  >
-                    View Config File
-                  </button>
-                  <button
-                    onClick={restartElasticsearchService}
-                    className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-75"
-                    disabled={isAnyTaskRunning || esConfigLoading}
-                  >
-                    Restart Service
-                  </button>
-                  <button
-                    onClick={fetchEsConfigValidation}
-                    className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
-                    disabled={esConfigLoading}
-                  >
-                    <FontAwesomeIcon 
-                      icon={faCircleNotch} 
-                      className={`mr-2 ${esConfigLoading ? 'fa-spin' : ''}`} 
-                    />
-                    Refresh
-                  </button>
-                </div>
-              </div>
-
-              {/* Configuration Status */}
-              {esConfigValidation && (
-                <div className="mb-6 p-4 bg-neutral-700 rounded-lg">
-                  <h3 className="text-xl font-semibold text-white mb-3">Configuration Status</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="p-3 bg-neutral-600 rounded">
-                      <div className="flex items-center justify-between">
-                        <span className="text-neutral-300">Config File</span>
-                        <span className={`px-2 py-1 rounded text-xs ${
-                          esConfigValidation.configExists && esConfigValidation.configWritable
-                            ? 'bg-green-600 text-white' 
-                            : 'bg-red-600 text-white'
-                        }`}>
-                          {esConfigValidation.configExists && esConfigValidation.configWritable ? 'OK' : 'ERROR'}
-                        </span>
-                      </div>
-                      <div className="text-sm text-neutral-400 mt-1">
-                        {esConfigValidation.configExists ? 'Accessible' : 'Not found'}
-                        {esConfigValidation.configWritable ? ' & Writable' : ' (Read-only)'}
-                      </div>
-                    </div>
-                    
-                    <div className="p-3 bg-neutral-600 rounded">
-                      <div className="flex items-center justify-between">
-                        <span className="text-neutral-300">Data Path</span>
-                        <span className={`px-2 py-1 rounded text-xs ${
-                          esConfigValidation.dataPathExists ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
-                        }`}>
-                          {esConfigValidation.dataPathExists ? 'OK' : 'ERROR'}
-                        </span>
-                      </div>
-                      <div className="text-sm text-neutral-400 mt-1">
-                        {esConfigValidation.dataPathExists ? 'Accessible' : 'Not accessible'}
-                      </div>
-                    </div>
-                    
-                    <div className="p-3 bg-neutral-600 rounded">
-                      <div className="flex items-center justify-between">
-                        <span className="text-neutral-300">Logs Path</span>
-                        <span className={`px-2 py-1 rounded text-xs ${
-                          esConfigValidation.logsPathExists ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
-                        }`}>
-                          {esConfigValidation.logsPathExists ? 'OK' : 'ERROR'}
-                        </span>
-                      </div>
-                      <div className="text-sm text-neutral-400 mt-1">
-                        {esConfigValidation.logsPathExists ? 'Accessible' : 'Not accessible'}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Current Configuration Summary */}
-                  {esConfigValidation.parsedConfig && (
-                    <div className="mt-4 p-3 bg-neutral-600 rounded">
-                      <h4 className="text-lg font-semibold text-white mb-2">Current Settings</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                        <div>
-                          <span className="text-neutral-300">Cluster Name:</span>
-                          <span className="ml-2 text-white">
-                            {esConfigValidation.parsedConfig['cluster.name'] || 'Not set'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-neutral-300">HTTP Host:</span>
-                          <span className="ml-2 text-white">
-                            {esConfigValidation.parsedConfig['http.host'] || 'Default'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-neutral-300">Security Enabled:</span>
-                          <span className="ml-2 text-white">
-                            {esConfigValidation.parsedConfig['xpack.security.enabled'] || 'Default'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-neutral-300">Master Nodes:</span>
-                          <span className="ml-2 text-white">
-                            {esConfigValidation.parsedConfig['cluster.initial_master_nodes'] || 'Default'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Issues */}
-                  {esConfigValidation.issues.length > 0 && (
-                    <div className="mt-4 p-3 bg-red-900 border border-red-700 rounded">
-                      <h4 className="text-lg font-semibold text-red-200 mb-2">Issues Found</h4>
-                      <ul className="text-sm text-red-300 space-y-1">
-                        {esConfigValidation.issues.map((issue, index) => (
-                          <li key={index} className="flex items-start">
-                            <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2 mt-0.5 text-red-400" />
-                            {issue}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
-            </section>
-          </>
-        )}
-
-        {/* Cluster Management Tab */}
+        {/* Node Management Tab */}
         {activeTab === "cluster" && (
-          <>
-            <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-3xl font-semibold text-white">
-                  Cluster Management
-                </h2>
-                <button
-                  onClick={fetchClusterInfo}
-                  className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
-                  disabled={clusterLoading}
-                >
-                  <FontAwesomeIcon 
-                    icon={faCircleNotch} 
-                    className={`mr-2 ${clusterLoading ? 'fa-spin' : ''}`} 
-                  />
-                  Refresh
-                </button>
-              </div>
-
-              {clusterLoading ? (
-                <div className="text-center py-8 text-neutral-400">
-                  <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
-                  Loading cluster information...
-                </div>
-              ) : clusterInfo ? (
-                <div className="space-y-8">
-                  {/* Cluster Name Section */}
-                  <div className="p-6 bg-neutral-700 rounded-lg">
-                    <h3 className="text-xl font-semibold text-white mb-4">Cluster Name</h3>
-                    <div className="flex items-center space-x-4">
-                      <input
-                        type="text"
-                        value={newClusterName}
-                        onChange={(e) => setNewClusterName(e.target.value)}
-                        placeholder="Enter cluster name"
-                        className="flex-1 px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                      <button
-                        onClick={handleSetClusterName}
-                        disabled={!newClusterName.trim() || newClusterName === clusterInfo.clusterName}
-                        className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Update Name
-                      </button>
-                    </div>
-                    <p className="text-sm text-neutral-400 mt-2">
-                      Current: <span className="text-white font-medium">{clusterInfo.clusterName}</span>
-                    </p>
-                  </div>
-
-                  {/* Node Configuration Section */}
-                  <div className="p-6 bg-neutral-700 rounded-lg">
-                    <h3 className="text-xl font-semibold text-white mb-4">Node Configuration</h3>
-                    
-                    {/* Add Node */}
-                    <div className="mb-6">
-                      <label className="block text-sm font-medium text-neutral-300 mb-2">
-                        Add New Node
-                      </label>
-                      <div className="flex items-center space-x-4">
-                        <input
-                          type="url"
-                          value={newNodeUrl}
-                          onChange={(e) => setNewNodeUrl(e.target.value)}
-                          placeholder="http://localhost:9200"
-                          className="flex-1 px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                        <button
-                          onClick={handleAddNode}
-                          disabled={!newNodeUrl.trim()}
-                          className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Add Node
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Current Nodes */}
-                    <div>
-                      <h4 className="text-lg font-medium text-white mb-3">Configured Nodes</h4>
-                      <div className="space-y-2">
-                        {clusterInfo.elasticsearchNodes?.map((nodeUrl, index) => (
-                          <div key={index} className="flex items-center justify-between p-2 bg-neutral-600 rounded">
-                            <span className="text-white">{nodeUrl}</span>
-                            {clusterInfo.writeNode === nodeUrl && (
-                              <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded">
-                                WRITE
-                              </span>
-                            )}
-                          </div>
-                        )) || (
-                          <p className="text-neutral-400 text-sm">No nodes configured</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Active Nodes Status */}
-                  {nodes.length > 0 && (
-                    <div className="p-6 bg-neutral-700 rounded-lg">
-                      <h3 className="text-xl font-semibold text-white mb-4">Active Nodes Status</h3>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-neutral-100 bg-neutral-600 rounded-lg">
-                          <thead className="bg-neutral-500">
-                            <tr>
-                              <th className="text-left py-3 px-4 font-semibold">Node Name</th>
-                              <th className="text-left py-3 px-4 font-semibold">Host</th>
-                              <th className="text-left py-3 px-4 font-semibold">Roles</th>
-                              <th className="text-left py-3 px-4 font-semibold">Disk Usage</th>
-                              <th className="text-left py-3 px-4 font-semibold">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {nodes.map((node) => {
-                              const nodeDisksData = nodeDisks[node.id] || [];
-                              const totalDisk = nodeDisksData.reduce((acc, disk) => acc + disk.total, 0);
-                              const usedDisk = nodeDisksData.reduce((acc, disk) => acc + disk.used, 0);
-                              const diskUsagePercent = totalDisk > 0 ? ((usedDisk / totalDisk) * 100).toFixed(1) : 0;
-                              
-                              return (
-                                <tr key={node.id} className="border-b border-neutral-500 hover:bg-neutral-500 transition-colors">
-                                  <td className="py-3 px-4">
-                                    <div>
-                                      <span className="font-medium">{node.name}</span>
-                                      <div className="text-sm text-neutral-400">{node.id}</div>
-                                    </div>
-                                  </td>
-                                  <td className="py-3 px-4 text-neutral-300">
-                                    {node.host}:{node.transport_address?.split(':')[1] || 'N/A'}
-                                  </td>
-                                  <td className="py-3 px-4">
-                                    <div className="flex flex-wrap gap-1">
-                                      {node.roles?.map((role, idx) => (
-                                        <span key={idx} className="px-2 py-1 bg-primary text-white text-xs rounded-full">
-                                          {role}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </td>
-                                  <td className="py-3 px-4 text-neutral-300">
-                                    <div>
-                                      <span className={`font-medium ${diskUsagePercent > 90 ? 'text-red-400' : diskUsagePercent > 70 ? 'text-yellow-400' : 'text-green-400'}`}>
-                                        {diskUsagePercent}%
-                                      </span>
-                                      <div className="text-sm text-neutral-400">
-                                        {formatBytes(usedDisk)} / {formatBytes(totalDisk)}
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="py-3 px-4">
-                                    <button
-                                      onClick={() => setSelectedNodeForDisks(selectedNodeForDisks === node.id ? "" : node.id)}
-                                      className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                                    >
-                                      {selectedNodeForDisks === node.id ? 'Hide' : 'View'} Disks
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Disk Management for Selected Node */}
-                  {selectedNodeForDisks && nodeDisks[selectedNodeForDisks] && (
-                    <div className="p-6 bg-neutral-700 rounded-lg">
-                      <h3 className="text-xl font-semibold text-white mb-4">
-                        Disk Paths for Node: {nodes.find(n => n.id === selectedNodeForDisks)?.name}
-                      </h3>
-                      <div className="space-y-4">
-                        {nodeDisks[selectedNodeForDisks].map((disk, index) => {
-                          const usagePercent = ((disk.used / disk.total) * 100).toFixed(1);
-                          const isPreferred = diskPreferences[selectedNodeForDisks] === disk.path;
-                          
-                          return (
-                            <div key={index} className="p-4 bg-neutral-600 rounded-lg">
-                              <div className="flex justify-between items-start mb-2">
-                                <div>
-                                  <h4 className="font-medium text-white">{disk.path}</h4>
-                                  {isPreferred && (
-                                    <span className="inline-block mt-1 px-2 py-1 bg-blue-600 text-white text-xs rounded-full">
-                                      PREFERRED PATH
-                                    </span>
-                                  )}
-                                </div>
-                                {!isPreferred && (
-                                  <button
-                                    onClick={() => handleSetPreferredDisk(selectedNodeForDisks, disk.path)}
-                                    className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                                  >
-                                    Set as Preferred
-                                  </button>
-                                )}
-                              </div>
-                              <div className="grid grid-cols-3 gap-4 text-sm">
-                                <div>
-                                  <span className="text-neutral-400">Total:</span>
-                                  <span className="ml-2 text-white">{formatBytes(disk.total)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-neutral-400">Used:</span>
-                                  <span className="ml-2 text-white">{formatBytes(disk.used)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-neutral-400">Available:</span>
-                                  <span className="ml-2 text-white">{formatBytes(disk.available)}</span>
-                                </div>
-                              </div>
-                              <div className="mt-3">
-                                <div className="flex justify-between text-sm mb-1">
-                                  <span className="text-neutral-400">Usage</span>
-                                  <span className={`${usagePercent > 90 ? 'text-red-400' : usagePercent > 70 ? 'text-yellow-400' : 'text-green-400'}`}>
-                                    {usagePercent}%
-                                  </span>
-                                </div>
-                                <div className="w-full bg-neutral-800 rounded-full h-2">
-                                  <div
-                                    className={`h-2 rounded-full ${usagePercent > 90 ? 'bg-red-600' : usagePercent > 70 ? 'bg-yellow-600' : 'bg-green-600'}`}
-                                    style={{ width: `${usagePercent}%` }}
-                                  ></div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center py-8 text-neutral-400">
-                  <p>Failed to load cluster information</p>
-                  <button
-                    onClick={fetchClusterInfo}
-                    className="mt-4 bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg"
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
-            </section>
-          </>
+          <ClusterManagement 
+            // Local node state
+            localNodes={clusterManagement.localNodes}
+            nodeStats={clusterManagement.nodeStats}
+            nodeDisks={clusterManagement.nodeDisks}
+            diskPreferences={clusterManagement.diskPreferences}
+            clusterLoading={clusterManagement.clusterLoading}
+            selectedNodeForDisks={clusterManagement.selectedNodeForDisks}
+            setSelectedNodeForDisks={clusterManagement.setSelectedNodeForDisks}
+            fetchLocalNodes={clusterManagement.fetchLocalNodes}
+            fetchNodeStats={clusterManagement.fetchNodeStats}
+            fetchDiskPreferences={clusterManagement.fetchDiskPreferences}
+            handleStartLocalNode={clusterManagement.handleStartLocalNode}
+            handleStopLocalNode={clusterManagement.handleStopLocalNode}
+            handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
+            handleSetPreferredDisk={clusterManagement.handleSetPreferredDisk}
+            // ES state
+            esIndices={elasticsearchManagement.esIndices}
+            selectedIndex={elasticsearchManagement.selectedIndex}
+            esHealth={elasticsearchManagement.esHealth}
+            esLoading={elasticsearchManagement.esLoading}
+            fetchESData={elasticsearchManagement.fetchESData}
+            handleCreateIndex={elasticsearchManagement.handleCreateIndex}
+            handleDeleteIndex={elasticsearchManagement.handleDeleteIndex}
+            handleSelectIndex={elasticsearchManagement.handleSelectIndex}
+            handleReindexData={elasticsearchManagement.handleReindexData}
+            handleGetIndexDetails={elasticsearchManagement.handleGetIndexDetails}
+            openESModal={openESModal}
+            // Modal controls
+            setShowClusterWizard={setShowClusterWizard}
+            setShowLocalNodeManager={setShowLocalNodeManager}
+            // Other
+            isAnyTaskRunning={isAnyTaskRunning}
+            formatBytes={formatBytes}
+          />
         )}
 
         {/* Configuration Tab */}
         {activeTab === "configuration" && (
-          <>
-            <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
-              <h2 className="text-3xl font-semibold text-white mb-6">
-                System Configuration
-              </h2>
-              
-              {configLoading ? (
-                <div className="text-center py-8">
-                  <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
-                  Loading configuration...
-                </div>
-              ) : config ? (
-                <div className="space-y-8">
-                  {/* Search Indices Configuration */}
-                  <div className="p-6 bg-neutral-700 rounded-lg">
-                    <h3 className="text-xl font-semibold text-white mb-4">
-                      Search Indices Configuration
-                    </h3>
-                    <p className="text-neutral-300 mb-4">
-                      Select which indices should be searched by default on the homepage.
-                    </p>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
-                      {esIndices.map((index) => (
-                        <label
-                          key={index.name}
-                          className="flex items-center p-3 bg-neutral-600 rounded-lg cursor-pointer hover:bg-neutral-500 transition-colors"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedSearchIndices.includes(index.name)}
-                            onChange={() => {
-                              setSelectedSearchIndices(prev => {
-                                if (prev.includes(index.name)) {
-                                  return prev.filter(idx => idx !== index.name);
-                                } else {
-                                  return [...prev, index.name];
-                                }
-                              });
-                            }}
-                            className="mr-3 w-4 h-4 text-primary bg-neutral-700 border-neutral-600 rounded focus:ring-primary focus:ring-2"
-                          />
-                          <div className="flex-1">
-                            <span className="text-white font-medium">{index.name}</span>
-                            <div className="text-sm text-neutral-400">
-                              {index.docCount.toLocaleString()} documents
-                            </div>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                    
-                    <button
-                      onClick={updateSearchIndices}
-                      className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-opacity-75"
-                      disabled={selectedSearchIndices.length === 0}
-                    >
-                      Update Search Indices
-                    </button>
-                  </div>
-
-                  {/* System Settings */}
-                  <div className="p-6 bg-neutral-700 rounded-lg">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-xl font-semibold text-white">
-                        System Settings
-                      </h3>
-                      {hasUnsavedSystemChanges && (
-                        <span className="text-yellow-400 text-sm font-medium">
-                          Unsaved changes
-                        </span>
-                      )}
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-300 mb-2">
-                          Minimum Visible Characters
-                        </label>
-                        <input
-                          type="number"
-                          min="1"
-                          max="10"
-                          value={tempSystemSettings.minVisibleChars}
-                          onChange={(e) => handleSystemSettingChange('minVisibleChars', parseInt(e.target.value) || 2)}
-                          className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                        <p className="text-xs text-neutral-400 mt-1">
-                          Number of characters to show when masking data
-                        </p>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-300 mb-2">
-                          Masking Ratio
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.1"
-                          value={tempSystemSettings.maskingRatio}
-                          onChange={(e) => handleSystemSettingChange('maskingRatio', parseFloat(e.target.value) || 0.2)}
-                          className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                        <p className="text-xs text-neutral-400 mt-1">
-                          Ratio of characters to mask (0.0 - 1.0)
-                        </p>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-300 mb-2">
-                          Username Masking Ratio
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.1"
-                          value={tempSystemSettings.usernameMaskingRatio}
-                          onChange={(e) => handleSystemSettingChange('usernameMaskingRatio', parseFloat(e.target.value) || 0.4)}
-                          className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                        <p className="text-xs text-neutral-400 mt-1">
-                          Special masking ratio for usernames (0.0 - 1.0)
-                        </p>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-300 mb-2">
-                          Batch Size
-                        </label>
-                        <input
-                          type="number"
-                          min="100"
-                          max="10000"
-                          step="100"
-                          value={tempSystemSettings.batchSize}
-                          onChange={(e) => handleSystemSettingChange('batchSize', parseInt(e.target.value) || 1000)}
-                          className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                        <p className="text-xs text-neutral-400 mt-1">
-                          Number of records to process in each batch
-                        </p>
-                      </div>
-                    </div>
-                    
-                    {/* Admin UI Settings */}
-                    <div className="mb-6">
-                      <h4 className="text-lg font-medium text-white mb-3">Admin UI Settings</h4>
-                      <label className="flex items-center p-3 bg-neutral-600 rounded-lg cursor-pointer hover:bg-neutral-500 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={tempSystemSettings.showRawLineByDefault}
-                          onChange={(e) => handleSystemSettingChange('showRawLineByDefault', e.target.checked)}
-                          className="mr-3 w-4 h-4 text-primary bg-neutral-700 border-neutral-600 rounded focus:ring-primary focus:ring-2"
-                        />
-                        <div>
-                          <span className="text-white font-medium">Show Raw Line by Default</span>
-                          <div className="text-sm text-neutral-400">
-                            Display the raw data line by default in account management
-                          </div>
-                        </div>
-                      </label>
-                    </div>
-                    
-                    {/* Action Buttons */}
-                    <div className="flex space-x-4">
-                      <button
-                        onClick={saveSystemSettings}
-                        disabled={!hasUnsavedSystemChanges}
-                        className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <FontAwesomeIcon icon={faSave} className="mr-2" />
-                        Save Changes
-                      </button>
-                      
-                      <button
-                        onClick={resetSystemSettings}
-                        disabled={!hasUnsavedSystemChanges}
-                        className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <FontAwesomeIcon icon={faTimes} className="mr-2" />
-                        Reset Changes
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {/* Elasticsearch Configuration */}
-                  <div className="p-6 bg-neutral-700 rounded-lg">
-                    <h3 className="text-xl font-semibold text-white mb-4">
-                      Elasticsearch Configuration
-                    </h3>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-300 mb-2">
-                          Elasticsearch Nodes
-                        </label>
-                        <div className="space-y-2">
-                          {config.elasticsearchNodes?.map((node, index) => (
-                            <div key={index} className="flex items-center justify-between p-2 bg-neutral-600 rounded">
-                              <span className="text-white text-sm">{node}</span>
-                              {config.writeNode === node && (
-                                <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded">
-                                  WRITE
-                                </span>
-                              )}
-                            </div>
-                          )) || (
-                            <p className="text-neutral-400 text-sm">No nodes configured</p>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-neutral-300 mb-2">
-                          Selected Index
-                        </label>
-                        <div className="p-3 bg-neutral-600 rounded-lg">
-                          <span className="text-white font-medium">{config.selectedIndex}</span>
-                          <div className="text-sm text-neutral-400 mt-1">
-                            Current index for new data operations
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="bg-blue-600 bg-opacity-20 border border-blue-600 rounded-lg p-4">
-                      <p className="text-blue-200 text-sm">
-                        <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
-                        Note: Elasticsearch node and cluster management is available in the "Cluster Management" tab.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <p className="text-neutral-400">Failed to load configuration</p>
-                  <button
-                    onClick={fetchConfig}
-                    className="mt-4 bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg"
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
-            </section>
-          </>
+          <ConfigurationManagement 
+            showNotification={showNotification}
+            esIndices={elasticsearchManagement.esIndices}
+            availableSearchIndices={elasticsearchManagement.availableSearchIndices}
+            setAvailableSearchIndices={elasticsearchManagement.setAvailableSearchIndices}
+          />
         )}
 
         {/* Account Management Tab */}
         {activeTab === "accounts" && (
-          <>
-            <section className="mb-12 p-6 bg-neutral-800 rounded-xl shadow-lg border border-neutral-700">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-3xl font-bold text-white">Account Management</h2>
-                <div className="flex space-x-4">
-                  <button
-                    onClick={toggleGlobalPasswordVisibility}
-                    className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg transition duration-150 ease-in-out flex items-center space-x-2"
-                  >
-                    <FontAwesomeIcon icon={showAllPasswords ? faEyeSlash : faEye} />
-                    <span>{showAllPasswords ? "Hide All Passwords" : "Show All Passwords"}</span>
-                  </button>
-                  <button
-                    onClick={handleDeleteSelected}
-                    disabled={selected.length === 0 || isAnyTaskRunning}
-                    className="bg-danger hover:bg-red-600 text-white px-4 py-2 rounded-lg disabled:opacity-50 transition duration-150 ease-in-out flex items-center space-x-2"
-                  >
-                    <FontAwesomeIcon icon={faTrash} />
-                    <span>Delete Selected ({selected.length})</span>
-                  </button>
-                </div>
-              </div>
-
-              {error && (
-                <div className="bg-red-900 border border-red-700 text-red-100 px-4 py-3 rounded-lg mb-6">
-                  <strong>Error:</strong> {error}
-                </div>
-              )}
-
-              <div className="overflow-hidden border border-neutral-600 rounded-lg">
-                <table className="min-w-full divide-y divide-neutral-600">
-                  <thead className="bg-neutral-700">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                        <input
-                          type="checkbox"
-                          className="form-checkbox h-4 w-4 text-blue-400 rounded focus:ring-blue-400 bg-neutral-600 border-neutral-500 cursor-pointer"
-                          checked={
-                            selected.length === accounts.length &&
-                            accounts.length > 0
-                          }
-                          onChange={selectAll}
-                        />
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                        URL
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                        Username
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                        Password
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                        Source File
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-700">
-                    {/* Table body rows */}
-                    {loading ? (
-                      <tr>
-                        <td
-                          colSpan="6"
-                          className="px-6 py-4 text-center text-neutral-400"
-                        >
-                          Loading records...
-                        </td>
-                      </tr>
-                    ) : accounts.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan="6"
-                          className="px-6 py-4 text-center text-neutral-400"
-                        >
-                          No records found.
-                        </td>
-                      </tr>
-                    ) : (
-                      accounts.map((account) => (
-                        <tr
-                          key={account.id}
-                          className="hover:bg-neutral-700 transition duration-150 ease-in-out"
-                        >
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <input
-                              type="checkbox"
-                              className="form-checkbox h-4 w-4 text-blue-400 rounded focus:ring-blue-400 bg-neutral-600 border-neutral-500 cursor-pointer"
-                              checked={selected.includes(account)}
-                              onChange={() => toggleSelect(account)}
-                            />
-                          </td>
-                          <td className="px-6 py-4 text-sm text-neutral-200 break-all">
-                            {/* Added break-all for URL overflow */}
-                            {account.url}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                            {account.username}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                            <div className="flex items-center">
-                              {showAllPasswords || !hiddenPasswords[account.id] ? (
-                                <span>{account.password}</span>
-                              ) : (
-                                <span>••••••••</span>
-                              )}
-                              <button
-                                onClick={() => togglePasswordVisibility(account.id)}
-                                className="ml-2 text-neutral-400 hover:text-blue-400 transition-colors"
-                              >
-                                <FontAwesomeIcon
-                                  icon={
-                                    showAllPasswords || !hiddenPasswords[account.id]
-                                      ? faEyeSlash
-                                      : faEye
-                                  }
-                                  className="text-base"
-                                />
-                              </button>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                            {account.sourceFile}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <div className="flex space-x-3">
-                              <button
-                                onClick={() => handleEditClick(account)}
-                                className="bg-primary hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform"
-                                title="Edit Account"
-                              >
-                                <FontAwesomeIcon icon={faEdit} />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteAccount(account.id)}
-                                className="bg-danger hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform"
-                                title="Delete Account"
-                              >
-                                <FontAwesomeIcon icon={faTrash} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Pagination Controls */}
-              <div className="mt-6 flex justify-center items-center space-x-2">
-                {/* Centered pagination */}
-                <button
-                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                  disabled={page === 1 || loading}
-                  className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
-                >
-                  Previous
-                </button>
-                {renderPaginationButtons()}
-                {/* Render dynamic pagination buttons */}
-                <button
-                  onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-                  disabled={page === totalPages || loading}
-                  className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
-                >
-                  Next
-                </button>
-              </div>
-            </section>
-          </>
+          <AccountManagement 
+            showNotification={showNotification}
+            isAnyTaskRunning={isAnyTaskRunning}
+          />
         )}
+      </div>
 
-        {/* Modals Section */}
-        {/* Edit Account Modal */}
-        {showEditModal && currentEditingAccount && (
-          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-            {/* Darker overlay, added padding */}
-            <div className="bg-neutral-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-neutral-700 relative">
-              {/* Enhanced modal box */}
-              <h3 className="text-2xl font-bold text-white mb-6">Edit Account</h3>
+      {/* Modals Section - Moved outside main container for proper overlay */}
+      {/* Local Node Manager */}
+      {showLocalNodeManager && (
+        <LocalNodeManager
+          isOpen={showLocalNodeManager}
+          onClose={() => setShowLocalNodeManager(false)}
+          clusterManagement={clusterManagement}
+          mode="create"
+        />
+      )}
+
+      {/* Cluster Setup Wizard */}
+      {showClusterWizard && (
+        <ClusterSetupWizard
+          isOpen={showClusterWizard}
+          onClose={() => setShowClusterWizard(false)}
+          onComplete={() => {
+            setShowClusterWizard(false);
+            // Refresh local nodes (which includes cluster info if available)
+            clusterManagement.fetchLocalNodes();
+            clusterManagement.fetchNodeStats();
+            clusterManagement.fetchDiskPreferences();
+          }}
+        />
+      )}
+
+      {/* Advanced Add Node Modal */}
+      {showAddNodeModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl border border-neutral-700 relative max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-bold text-white">Add Node - Advanced Configuration</h3>
               <button
-                onClick={handleCancelEdit}
-                className="absolute top-4 right-4 text-neutral-400 hover:text-red-400 text-3xl transition-colors"
+                onClick={() => setShowAddNodeModal(false)}
+                className="text-neutral-400 hover:text-red-400 text-3xl transition-colors"
               >
                 &times;
               </button>
-              <div className="space-y-4">
-                <div>
-                  <label
-                    htmlFor="edit-url"
-                    className="block text-sm font-medium text-neutral-300 mb-1"
-                  >
-                    URL
-                  </label>
-                  <input
-                    type="text"
-                    id="edit-url"
-                    name="url"
-                    value={editFormData.url}
-                    onChange={handleEditChange}
-                    className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="edit-username"
-                    className="block text-sm font-medium text-neutral-300 mb-1"
-                  >
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    id="edit-username"
-                    name="username"
-                    value={editFormData.username}
-                    onChange={handleEditChange}
-                    className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="edit-password"
-                    className="block text-sm font-medium text-neutral-300 mb-1"
-                  >
-                    Password
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={editModalPasswordHidden ? "password" : "text"}
-                      id="edit-password"
-                      name="password"
-                      value={editFormData.password}
-                      onChange={handleEditChange}
-                      className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      onClick={toggleEditModalPasswordVisibility}
-                      type="button"
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-neutral-400 hover:text-blue-400 transition-colors"
-                    >
-                      <FontAwesomeIcon
-                        icon={editModalPasswordHidden ? faEyeSlash : faEye}
-                        className="text-base"
-                      />
-                    </button>
-                  </div>
-                </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                  Node URL
+                </label>
+                <input
+                  type="url"
+                  value={clusterManagement.newNodeUrl}
+                  onChange={(e) => clusterManagement.setNewNodeUrl(e.target.value)}
+                  placeholder="http://localhost:9200"
+                  className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-sm text-neutral-400 mt-1">
+                  Enter the complete URL including protocol (http/https) and port
+                </p>
               </div>
-              <div className="mt-8 flex justify-end space-x-3">
+              
+              <div className="bg-neutral-800 p-3 rounded-md">
+                <p className="text-sm text-neutral-300">
+                  <strong>Quick Add:</strong> This will add the node to your cluster configuration. 
+                  For complex setups with custom node configurations, use the Cluster Setup Wizard instead.
+                </p>
+              </div>
+              
+              <div className="flex justify-end space-x-3 mt-6">
                 <button
-                  onClick={handleSaveEdit}
-                  className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50"
-                  disabled={editLoading}
-                >
-                  {editLoading ? (
-                    <FontAwesomeIcon
-                      icon={faCircleNotch}
-                      className="fa-spin mr-2"
-                    />
-                  ) : null}
-                  Save Changes
-                </button>
-                <button
-                  onClick={handleCancelEdit}
-                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out"
-                  disabled={editLoading}
+                  onClick={() => setShowAddNodeModal(false)}
+                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out"
                 >
                   Cancel
                 </button>
+                <button
+                  onClick={() => {
+                    clusterManagement.handleAddNode();
+                    setShowAddNodeModal(false);
+                  }}
+                  disabled={!clusterManagement.newNodeUrl.trim()}
+                  className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add Node
+                </button>
               </div>
             </div>
           </div>
-        )}
-        {showESModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-            <div className="bg-neutral-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl border border-neutral-700 relative max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-2xl font-bold text-white">
-                  {esModalType === "create" && "Create New Index"}
-                  {esModalType === "reindex" && "Reindex Data"}
-                  {esModalType === "details" && `Index Details: ${esModalData.indexName}`}
-                </h3>
-                <button
-                  onClick={closeESModal}
-                  className="text-neutral-400 hover:text-red-400 text-3xl transition-colors"
-                >
-                  &times;
-                </button>
-              </div>
+        </div>
+      )}
 
-              {/* Create Index Modal */}
-              {esModalType === "create" && (
-                <div className="space-y-4">
+      {/* Elasticsearch Index Modal */}
+      {showESModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-neutral-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl border border-neutral-700 relative max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-bold text-white">
+                {esModalType === "create" && "Create New Index"}
+                {esModalType === "reindex" && "Reindex Data"}
+                {esModalType === "details" && `Index Details: ${esModalData.indexName}`}
+              </h3>
+              <button
+                onClick={closeESModal}
+                className="text-neutral-400 hover:text-red-400 text-3xl transition-colors"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Create Index Modal */}
+            {esModalType === "create" && (
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="new-index-name" className="block text-sm font-medium text-neutral-300 mb-2">
+                    Index Name
+                  </label>
+                  <input
+                    type="text"
+                    id="new-index-name"
+                    value={newIndexName}
+                    onChange={(e) => setNewIndexName(e.target.value)}
+                    placeholder="Enter index name (lowercase, no spaces)"
+                    className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="text-sm text-neutral-400 mt-1">
+                    Index names will be automatically formatted (lowercase, special characters replaced with underscores)
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label htmlFor="new-index-name" className="block text-sm font-medium text-neutral-300 mb-2">
-                      Index Name
+                    <label htmlFor="new-index-shards" className="block text-sm font-medium text-neutral-300 mb-2">
+                      Number of Shards
                     </label>
                     <input
-                      type="text"
-                      id="new-index-name"
-                      value={newIndexName}
-                      onChange={(e) => setNewIndexName(e.target.value)}
-                      placeholder="Enter index name (lowercase, no spaces)"
+                      type="number"
+                      id="new-index-shards"
+                      value={newIndexShards}
+                      onChange={(e) => setNewIndexShards(e.target.value)}
+                      min="1"
+                      max="1000"
+                      placeholder="1"
                       className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <p className="text-sm text-neutral-400 mt-1">
-                      Index names will be automatically formatted (lowercase, special characters replaced with underscores)
+                      Range: 1-1000 (default: 1)
                     </p>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="new-index-shards" className="block text-sm font-medium text-neutral-300 mb-2">
-                        Number of Shards
-                      </label>
-                      <input
-                        type="number"
-                        id="new-index-shards"
-                        value={newIndexShards}
-                        onChange={(e) => setNewIndexShards(e.target.value)}
-                        min="1"
-                        max="1000"
-                        placeholder="1"
-                        className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                      <p className="text-sm text-neutral-400 mt-1">
-                        Range: 1-1000 (default: 1)
-                      </p>
-                    </div>
-                    
-                    <div>
-                      <label htmlFor="new-index-replicas" className="block text-sm font-medium text-neutral-300 mb-2">
-                        Number of Replicas
-                      </label>
-                      <input
-                        type="number"
-                        id="new-index-replicas"
-                        value={newIndexReplicas}
-                        onChange={(e) => setNewIndexReplicas(e.target.value)}
-                        min="0"
-                        max="100"
-                        placeholder="0"
-                        className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                      <p className="text-sm text-neutral-400 mt-1">
-                        Range: 0-100 (default: 0)
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="bg-neutral-800 p-3 rounded-md">
-                    <p className="text-sm text-neutral-300">
-                      <strong>Note:</strong> Shards determine how data is distributed across nodes. Replicas provide data redundancy and can improve search performance. 
-                      For most use cases, 1 shard and 0-1 replicas are sufficient for small to medium datasets.
-                    </p>
-                  </div>
-                  
-                  <div className="flex justify-end space-x-3 mt-6">
-                    <button
-                      onClick={handleCreateIndex}
-                      className="bg-green-600 hover:bg-green-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
-                      disabled={
-                        !newIndexName.trim() || 
-                        isAnyTaskRunning ||
-                        parseInt(newIndexShards) < 1 || 
-                        parseInt(newIndexShards) > 1000 ||
-                        parseInt(newIndexReplicas) < 0 || 
-                        parseInt(newIndexReplicas) > 100
-                      }
-                    >
-                      Create Index
-                    </button>
-                                        <button
-                      onClick={closeESModal}
-                      className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Reindex Modal */}
-              {esModalType === "reindex" && (
-                <div className="space-y-4">
                   <div>
-                    <label htmlFor="reindex-source" className="block text-sm font-medium text-neutral-300 mb-2">
-                      Source Index
+                    <label htmlFor="new-index-replicas" className="block text-sm font-medium text-neutral-300 mb-2">
+                      Number of Replicas
                     </label>
-                    <select
-                      id="reindex-source"
-                      value={reindexSource}
-                      onChange={(e) => setReindexSource(e.target.value)}
+                    <input
+                      type="number"
+                      id="new-index-replicas"
+                      value={newIndexReplicas}
+                      onChange={(e) => setNewIndexReplicas(e.target.value)}
+                      min="0"
+                      max="100"
+                      placeholder="0"
                       className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select source index</option>
-                      {esIndices.map((index) => (
-                        <option key={index.name} value={index.name}>
-                          {index.name} ({index.docCount.toLocaleString()} docs)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="reindex-dest" className="block text-sm font-medium text-neutral-300 mb-2">
-                      Destination Index
-                    </label>
-                    <select
-                      id="reindex-dest"
-                      value={reindexDest}
-                      onChange={(e) => setReindexDest(e.target.value)}
-                      className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Select destination index</option>
-                      {esIndices.map((index) => (
-                        <option key={index.name} value={index.name}>
-                          {index.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="bg-yellow-600 bg-opacity-20 border border-yellow-600 rounded-lg p-4 mt-4">
-                    <p className="text-yellow-200 text-sm">
-                      <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
-                      Warning: Reindexing will copy all documents from the source index to the destination index. 
-                      If the destination index already contains data, the documents will be merged.
+                    />
+                    <p className="text-sm text-neutral-400 mt-1">
+                      Range: 0-100 (default: 0)
                     </p>
                   </div>
-                  <div className="flex justify-end space-x-3 mt-6">
-                                        <button
-                      onClick={handleReindex}
-                      className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
-                      disabled={!reindexSource || !reindexDest || reindexSource === reindexDest || isAnyTaskRunning}
-                    >
-                      Start Reindexing
-                    </button>
-                    <button
-                      onClick={closeESModal}
-                      className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
-                    >
-                      Cancel
-                    </button>
-
-                  </div>
                 </div>
-              )}
-
-              {/* Index Details Modal */}
-              {esModalType === "details" && (
-                <div className="space-y-6">
-                  {esLoading ? (
-                    <div className="text-center py-8">
-                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin text-3xl text-blue-400 mb-4" />
-                      <p className="text-neutral-400">Loading index details...</p>
-                    </div>
-                  ) : indexDetails ? (
-                    <>
-                      {/* Basic Stats */}
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="bg-neutral-700 p-4 rounded-lg">
-                          <h4 className="text-sm text-neutral-400">Documents</h4>
-                          <p className="text-2xl font-bold text-white">{indexDetails.stats.docs.count.toLocaleString()}</p>
-                        </div>
-                        <div className="bg-neutral-700 p-4 rounded-lg">
-                          <h4 className="text-sm text-neutral-400">Size</h4>
-                          <p className="text-2xl font-bold text-white">{formatBytes(indexDetails.stats.store.size_in_bytes)}</p>
-                        </div>
-                        <div className="bg-neutral-700 p-4 rounded-lg">
-                          <h4 className="text-sm text-neutral-400">Searches</h4>
-                          <p className="text-2xl font-bold text-white">{indexDetails.stats.search.query_total.toLocaleString()}</p>
-                        </div>
-                        <div className="bg-neutral-700 p-4 rounded-lg">
-                          <h4 className="text-sm text-neutral-400">Indexing Ops</h4>
-                          <p className="text-2xl font-bold text-white">{indexDetails.stats.indexing.index_total.toLocaleString()}</p>
-                        </div>
-                      </div>
-
-                      {/* Mapping */}
-                      <div>
-                        <h4 className="text-lg font-semibold text-white mb-3">Mapping</h4>
-                        <div className="bg-neutral-900 p-4 rounded-lg border border-neutral-700 max-h-60 overflow-y-auto">
-                          <pre className="text-sm text-neutral-300 whitespace-pre-wrap">
-                            {JSON.stringify(indexDetails.mapping, null, 2)}
-                          </pre>
-                        </div>
-                      </div>
-
-                      {/* Settings (condensed) */}
-                      <div>
-                        <h4 className="text-lg font-semibold text-white mb-3">Key Settings</h4>
-                        <div className="bg-neutral-700 p-4 rounded-lg space-y-2">
-                          <div className="flex justify-between">
-                            <span className="text-neutral-400">Number of Shards:</span>
-                            <span className="text-white">{indexDetails.settings.index?.number_of_shards || 'N/A'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-neutral-400">Number of Replicas:</span>
-                            <span className="text-white">{indexDetails.settings.index?.number_of_replicas || 'N/A'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-neutral-400">Creation Date:</span>
-                            <span className="text-white">
-                              {indexDetails.settings.index?.creation_date ? 
-                                new Date(parseInt(indexDetails.settings.index.creation_date)).toLocaleString() : 'N/A'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-center py-8 text-neutral-400">
-                      Failed to load index details
-                    </div>
-                  )}
-                  
-                  <div className="flex justify-end">
-                    <button
-                      onClick={closeESModal}
-                      className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
-                    >
-                      Close
-                    </button>
-                  </div>
+                
+                <div className="bg-neutral-800 p-3 rounded-md">
+                  <p className="text-sm text-neutral-300">
+                    <strong>Note:</strong> Shards determine how data is distributed across nodes. Replicas provide data redundancy and can improve search performance. 
+                    For most use cases, 1 shard and 0-1 replicas are sufficient for small to medium datasets.
+                  </p>
                 </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Elasticsearch Configuration Modal */}
-        {showEsConfigModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-            <div className="bg-neutral-800 p-8 rounded-xl shadow-2xl w-full max-w-4xl border border-neutral-700 relative max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-2xl font-bold text-white">
-                  {esConfigModalType === "paths" && "Configure Elasticsearch Paths"}
-                  {esConfigModalType === "settings" && "Edit Elasticsearch Settings"}
-                  {esConfigModalType === "file" && "View Configuration File"}
-                </h3>
-                <button
-                  onClick={closeEsConfigModal}
-                  className="text-neutral-400 hover:text-red-400 text-3xl transition-colors"
-                >
-                  &times;
-                </button>
-              </div>
-
-              {/* Paths Configuration */}
-              {esConfigModalType === "paths" && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Config File Path
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsPaths.configFilePath || ""}
-                      onChange={(e) => setTempEsPaths({...tempEsPaths, configFilePath: e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="C:\elasticsearch\config\elasticsearch.yml"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Data Path
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsPaths.dataPath || ""}
-                      onChange={(e) => setTempEsPaths({...tempEsPaths, dataPath: e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="C:\elasticsearch\data"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Logs Path
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsPaths.logsPath || ""}
-                      onChange={(e) => setTempEsPaths({...tempEsPaths, logsPath: e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="C:\elasticsearch\logs"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      JVM Options Path
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsPaths.jvmOptionsPath || ""}
-                      onChange={(e) => setTempEsPaths({...tempEsPaths, jvmOptionsPath: e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="C:\elasticsearch\config\jvm.options"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Restart Command
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsPaths.restartCommand || ""}
-                      onChange={(e) => setTempEsPaths({...tempEsPaths, restartCommand: e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="net restart elasticsearch"
-                    />
-                  </div>
-                  
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="autoBackup"
-                      checked={tempEsPaths.autoBackup || false}
-                      onChange={(e) => setTempEsPaths({...tempEsPaths, autoBackup: e.target.checked})}
-                      className="mr-2"
-                    />
-                    <label htmlFor="autoBackup" className="text-sm text-neutral-300">
-                      Automatically backup configuration before changes
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* Settings Configuration */}
-              {esConfigModalType === "settings" && esConfigFile && (
-                <div className="space-y-4">
-                  <div className="mb-4">
-                    <p className="text-sm text-neutral-400 mb-4">
-                      Edit Elasticsearch configuration settings. Changes require a service restart to take effect.
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Cluster Name
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsSettings['cluster.name'] || ""}
-                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'cluster.name': e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="my-elasticsearch-cluster"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      HTTP Host
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsSettings['http.host'] || ""}
-                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'http.host': e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="0.0.0.0"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      HTTP Port
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsSettings['http.port'] || ""}
-                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'http.port': e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="9200"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Initial Master Nodes
-                    </label>
-                    <input
-                      type="text"
-                      value={tempEsSettings['cluster.initial_master_nodes'] || ""}
-                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'cluster.initial_master_nodes': e.target.value})}
-                      className="w-full px-4 py-2 bg-neutral-700 border border-neutral-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder='["node-1"]'
-                    />
-                  </div>
-                  
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="securityEnabled"
-                      checked={tempEsSettings['xpack.security.enabled'] === 'true'}
-                      onChange={(e) => setTempEsSettings({...tempEsSettings, 'xpack.security.enabled': e.target.checked ? 'true' : 'false'})}
-                      className="mr-2"
-                    />
-                    <label htmlFor="securityEnabled" className="text-sm text-neutral-300">
-                      Enable X-Pack Security
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* File View */}
-              {esConfigModalType === "file" && esConfigFile && (
-                <div className="space-y-4">
-                  <div className="mb-4">
-                    <p className="text-sm text-neutral-400">
-                      Configuration file: {esConfigFile.configPath}
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Raw Configuration Content
-                    </label>
-                    <textarea
-                      value={esConfigFile.rawContent || ""}
-                      readOnly
-                      className="w-full h-64 px-4 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-white font-mono text-sm focus:outline-none"
-                      style={{ fontFamily: 'monospace' }}
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Parsed Settings
-                    </label>
-                    <div className="bg-neutral-900 border border-neutral-600 rounded-lg p-4 max-h-48 overflow-y-auto">
-                      <pre className="text-sm text-neutral-300 font-mono">
-                        {JSON.stringify(esConfigFile.parsedConfig, null, 2)}
-                      </pre>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Modal Actions */}
-              <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-neutral-700">
-                {esConfigModalType === "paths" && (
+                
+                <div className="flex justify-end space-x-3 mt-6">
                   <button
-                    onClick={updateEsConfigPaths}
-                    className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
+                    onClick={handleCreateIndex}
+                    className="bg-green-600 hover:bg-green-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
+                    disabled={
+                      !newIndexName.trim() || 
+                      isAnyTaskRunning ||
+                      parseInt(newIndexShards) < 1 || 
+                      parseInt(newIndexShards) > 1000 ||
+                      parseInt(newIndexReplicas) < 0 || 
+                      parseInt(newIndexReplicas) > 100
+                    }
                   >
-                    Save Paths
+                    Create Index
                   </button>
-                )}
-                
-                {esConfigModalType === "settings" && (
-                  <>
-                    <button
-                      onClick={() => updateEsConfigSettings(false)}
-                      className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75"
-                    >
-                      Save Settings
-                    </button>
-                    <button
-                      onClick={() => updateEsConfigSettings(true)}
-                      className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-75"
-                    >
-                      Save & Restart
-                    </button>
-                  </>
-                )}
-                
-                <button
-                  onClick={closeEsConfigModal}
-                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-neutral-500 focus:ring-opacity-75"
-                >
-                  Close
-                </button>
+                  <button
+                    onClick={closeESModal}
+                    className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Reindex Modal */}
+            {esModalType === "reindex" && (
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="reindex-source" className="block text-sm font-medium text-neutral-300 mb-2">
+                    Source Index
+                  </label>
+                  <select
+                    id="reindex-source"
+                    value={reindexSource}
+                    onChange={(e) => setReindexSource(e.target.value)}
+                    className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select source index</option>
+                    {elasticsearchManagement.esIndices.map((index) => (
+                      <option key={index.index} value={index.index}>
+                        {index.index} ({(index['docs.count'] || 0).toLocaleString()} docs)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="reindex-dest" className="block text-sm font-medium text-neutral-300 mb-2">
+                    Destination Index
+                  </label>
+                  <select
+                    id="reindex-dest"
+                    value={reindexDest}
+                    onChange={(e) => setReindexDest(e.target.value)}
+                    className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select destination index</option>
+                    {elasticsearchManagement.esIndices.map((index) => (
+                      <option key={index.index} value={index.index}>
+                        {index.index}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="bg-yellow-600 bg-opacity-20 border border-yellow-600 rounded-lg p-4 mt-4">
+                  <p className="text-yellow-200 text-sm">
+                    <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
+                    Warning: Reindexing will copy all documents from the source index to the destination index. 
+                    If the destination index already contains data, the documents will be merged.
+                  </p>
+                </div>
+                <div className="flex justify-end space-x-3 mt-6">
+                  <button
+                    onClick={handleReindex}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
+                    disabled={!reindexSource || !reindexDest || reindexSource === reindexDest || isAnyTaskRunning}
+                  >
+                    Start Reindexing
+                  </button>
+                  <button
+                    onClick={closeESModal}
+                    className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -13,7 +13,7 @@ function initializeElasticsearchClients() {
     console.log(`🔍 Initialized main Elasticsearch client with nodes: ${nodes.join(', ')}`);
   } else {
     // Fall back to default configuration
-    const DEFAULT_CONFIG = require("../config").DEFAULT_CONFIG;
+    const { DEFAULT_CONFIG } = require("../config");
     const defaultNodes = DEFAULT_CONFIG.elasticsearchNodes;
     es = new Client({ nodes: defaultNodes });
     console.log(`🔍 Initialized main Elasticsearch client with default nodes: ${defaultNodes.join(', ')}`);
@@ -26,7 +26,7 @@ function initializeElasticsearchClients() {
     console.log(`✍️ Initialized write client for node: ${writeNode}`);
   } else {
     // Fall back to default write node or use main client
-    const DEFAULT_CONFIG = require("../config").DEFAULT_CONFIG;
+    const { DEFAULT_CONFIG } = require("../config");
     const defaultWriteNode = DEFAULT_CONFIG.writeNode;
     if (defaultWriteNode) {
       esWrite = new Client({ node: defaultWriteNode });
@@ -41,18 +41,20 @@ function initializeElasticsearchClients() {
 // Helper function to check if Elasticsearch is available
 async function isElasticsearchAvailable() {
   try {
+    if (!es) return false;
     await es.ping();
     return true;
   } catch (error) {
+    console.warn('⚠️ Elasticsearch not available:', error.message);
     return false;
   }
 }
 
 // Helper function to format bytes
 function formatBytes(bytes) {
-  if (bytes === 0) return '0 Bytes';
+  if (bytes === 0) return '0 B';
   const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
