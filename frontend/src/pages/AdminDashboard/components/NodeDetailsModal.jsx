@@ -10,8 +10,10 @@ export default function NodeDetailsModal({ show, onClose, node }) {
   const [configLoading, setConfigLoading] = useState(false);
   const [nodeIndices, setNodeIndices] = useState([]);
   const [indicesLoading, setIndicesLoading] = useState(false);
+  const [indicesError, setIndicesError] = useState(null);
   const [showCreateIndexForm, setShowCreateIndexForm] = useState(false);
   const [isCreatingIndex, setIsCreatingIndex] = useState(false);
+  const [isDeletingIndex, setIsDeletingIndex] = useState(null);
   const [newIndexName, setNewIndexName] = useState('');
   const [newIndexShards, setNewIndexShards] = useState('1');
   const [newIndexReplicas, setNewIndexReplicas] = useState('0');
@@ -21,17 +23,26 @@ export default function NodeDetailsModal({ show, onClose, node }) {
 
   const { deleteIndex, pollTask } = useElasticsearchManagement(console.log);
 
-  const fetchNodeIndices = async () => {
+  // Add validation for form inputs
+  const isValidIndexName = newIndexName.trim().length > 0 && !/[A-Z\s]/.test(newIndexName);
+  const isValidShards = parseInt(newIndexShards) > 0;
+  const isValidReplicas = parseInt(newIndexReplicas) >= 0;
+  const isFormValid = isValidIndexName && isValidShards && isValidReplicas;
+
+  const fetchNodeIndices = async (showLoading = true) => {
     if (node) {
-      setIndicesLoading(true);
+      if (showLoading) setIndicesLoading(true);
+      setIndicesError(null);
+      
       try {
         const response = await axiosClient.get(`/api/admin/cluster-advanced/${node.name}/indices`);
-        setNodeIndices(response.data);
+        setNodeIndices(response.data || []);
       } catch (error) {
         console.error("Failed to load node indices", error);
+        setIndicesError(error.response?.data?.error || 'Failed to load indices');
         setNodeIndices([]);
       } finally {
-        setIndicesLoading(false);
+        if (showLoading) setIndicesLoading(false);
       }
     }
   };
@@ -72,24 +83,35 @@ export default function NodeDetailsModal({ show, onClose, node }) {
       setNewIndexReplicas('0');
       setShowDeleteModal(false);
       setIndexToDelete(null);
+      setIndicesError(null);
+      setIsDeletingIndex(null);
     }
   }, [show]);
 
   const handleCreateIndex = async () => {
+    if (!isFormValid) {
+      return;
+    }
+
     setIsCreatingIndex(true);
     try {
       await axiosClient.post(`/api/admin/cluster-advanced/${node.name}/indices`, {
-        indexName: newIndexName,
-        shards: newIndexShards,
-        replicas: newIndexReplicas,
+        indexName: newIndexName.trim(),
+        shards: parseInt(newIndexShards),
+        replicas: parseInt(newIndexReplicas),
       });
+      
+      // Reset form and close
       setShowCreateIndexForm(false);
       setNewIndexName('');
       setNewIndexShards('1');
       setNewIndexReplicas('0');
-      fetchNodeIndices(); // Refresh the list
+      
+      // Refresh the list
+      await fetchNodeIndices(false); // Don't show loading spinner for refresh
     } catch (error) {
       console.error("Failed to create index", error);
+      // Error handling could be improved with notifications
     } finally {
       setIsCreatingIndex(false);
     }
@@ -102,6 +124,7 @@ export default function NodeDetailsModal({ show, onClose, node }) {
 
   const confirmDelete = async () => {
     if (indexToDelete) {
+      setIsDeletingIndex(indexToDelete.index);
       try {
         const response = await deleteIndex(indexToDelete.index);
       } catch (err) {
@@ -109,7 +132,8 @@ export default function NodeDetailsModal({ show, onClose, node }) {
       } finally {
         setShowDeleteModal(false);
         setIndexToDelete(null);
-        fetchNodeIndices(); // Refresh list after deletion attempt
+        setIsDeletingIndex(null);
+        await fetchNodeIndices(false); // Refresh list after deletion attempt
       }
     }
   };
@@ -178,6 +202,23 @@ export default function NodeDetailsModal({ show, onClose, node }) {
               </div>
             )}
             
+            {indicesError && node.isRunning && (
+              <div className="mb-4 p-3 bg-red-600 rounded-lg border border-red-500">
+                <div className="flex items-center space-x-2">
+                  <FontAwesomeIcon icon={faExclamationTriangle} className="text-red-100" />
+                  <p className="text-red-200 text-sm">
+                    {indicesError}
+                  </p>
+                </div>
+                <button
+                  onClick={() => fetchNodeIndices()}
+                  className="mt-2 bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-white">Indices on {node.name}</h3>
               {node.isRunning ? (
@@ -204,28 +245,59 @@ export default function NodeDetailsModal({ show, onClose, node }) {
               <div className="bg-neutral-700 p-4 rounded-lg mb-4">
                 <h4 className="text-lg font-semibold mb-2">New Index</h4>
                 <div className="space-y-2">
-                  <input
-                    type="text"
-                    value={newIndexName}
-                    onChange={(e) => setNewIndexName(e.target.value)}
-                    placeholder="Enter index name"
-                    className="w-full p-2 rounded-md bg-neutral-800 text-white"
-                  />
+                  <div>
+                    <input
+                      type="text"
+                      value={newIndexName}
+                      onChange={(e) => setNewIndexName(e.target.value)}
+                      placeholder="Enter index name (lowercase, no spaces)"
+                      className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 ${
+                        newIndexName && !isValidIndexName 
+                          ? 'border-red-500 focus:ring-red-500' 
+                          : 'border-neutral-600 focus:ring-blue-500'
+                      }`}
+                    />
+                    {newIndexName && !isValidIndexName && (
+                      <p className="text-red-400 text-xs mt-1">
+                        Index name must be lowercase with no spaces or special characters
+                      </p>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="number"
-                      value={newIndexShards}
-                      onChange={(e) => setNewIndexShards(e.target.value)}
-                      placeholder="Shards"
-                      className="w-full p-2 rounded-md bg-neutral-800 text-white"
-                    />
-                    <input
-                      type="number"
-                      value={newIndexReplicas}
-                      onChange={(e) => setNewIndexReplicas(e.target.value)}
-                      placeholder="Replicas"
-                      className="w-full p-2 rounded-md bg-neutral-800 text-white"
-                    />
+                    <div>
+                      <input
+                        type="number"
+                        value={newIndexShards}
+                        onChange={(e) => setNewIndexShards(e.target.value)}
+                        placeholder="Shards"
+                        min="1"
+                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 ${
+                          !isValidShards 
+                            ? 'border-red-500 focus:ring-red-500' 
+                            : 'border-neutral-600 focus:ring-blue-500'
+                        }`}
+                      />
+                      {!isValidShards && (
+                        <p className="text-red-400 text-xs mt-1">Must be at least 1</p>
+                      )}
+                    </div>
+                    <div>
+                      <input
+                        type="number"
+                        value={newIndexReplicas}
+                        onChange={(e) => setNewIndexReplicas(e.target.value)}
+                        placeholder="Replicas"
+                        min="0"
+                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 ${
+                          !isValidReplicas 
+                            ? 'border-red-500 focus:ring-red-500' 
+                            : 'border-neutral-600 focus:ring-blue-500'
+                        }`}
+                      />
+                      {!isValidReplicas && (
+                        <p className="text-red-400 text-xs mt-1">Must be 0 or greater</p>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="flex justify-end mt-2 space-x-2">
@@ -233,8 +305,11 @@ export default function NodeDetailsModal({ show, onClose, node }) {
                   <button 
                     onClick={handleCreateIndex} 
                     className="bg-primary px-3 py-1 rounded w-24 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600" 
-                    disabled={isCreatingIndex || !node.isRunning || !newIndexName.trim()}
-                    title={!node.isRunning ? "Node must be running to create indices" : ""}
+                    disabled={isCreatingIndex || !node.isRunning || !isFormValid}
+                    title={
+                      !node.isRunning ? "Node must be running to create indices" : 
+                      !isFormValid ? "Please fix validation errors" : ""
+                    }
                   >
                     {isCreatingIndex ? <FontAwesomeIcon icon={faCircleNotch} spin /> : 'Confirm'}
                   </button>
@@ -265,10 +340,17 @@ export default function NodeDetailsModal({ show, onClose, node }) {
                       <button 
                         onClick={() => handleDeleteClick(index)} 
                         className="text-red-500 hover:text-red-400 disabled:text-gray-500 disabled:cursor-not-allowed"
-                        disabled={!node.isRunning}
-                        title={!node.isRunning ? "Start the node to delete indices" : "Delete index"}
+                        disabled={!node.isRunning || isDeletingIndex === index.index}
+                        title={
+                          !node.isRunning ? "Start the node to delete indices" : 
+                          isDeletingIndex === index.index ? "Deleting..." : "Delete index"
+                        }
                       >
-                        <FontAwesomeIcon icon={faTrash} />
+                        {isDeletingIndex === index.index ? (
+                          <FontAwesomeIcon icon={faCircleNotch} spin />
+                        ) : (
+                          <FontAwesomeIcon icon={faTrash} />
+                        )}
                       </button>
                     </td>
                   </tr>

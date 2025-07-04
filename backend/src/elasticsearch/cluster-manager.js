@@ -763,6 +763,152 @@ REM Start Elasticsearch
     console.log(`❌ Timeout reached after ${timeout/1000} seconds. No process found on port ${port}`);
     return null; // Timeout reached
   }
+
+  /**
+   * Update an existing Elasticsearch node configuration
+   */
+  async updateNode(nodeName, updates) {
+    try {
+      console.log(`🔧 Updating node ${nodeName} with:`, updates);
+      
+      // Get current node config
+      const currentConfig = await this.getNodeConfig(nodeName);
+      const configPath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'elasticsearch.yml');
+      
+      // Create updated configuration object
+      const updatedConfig = {
+        'cluster.name': updates.cluster || currentConfig.cluster.name,
+        'node.name': updates.name || currentConfig.node.name,
+        'network.host': updates.host || currentConfig.network.host,
+        'http.port': updates.port || currentConfig.http.port,
+        'transport.port': updates.transportPort || currentConfig.transport.port,
+        'path.data': updates.dataPath || currentConfig.path.data,
+        'path.logs': updates.logsPath || currentConfig.path.logs,
+        'node.roles': updates.roles ? `[${this.formatNodeRoles(updates.roles)}]` : `[${this.formatNodeRoles(currentConfig.node.roles || { master: true, data: true, ingest: true })}]`,
+        'node.attr.custom_id': updates.name || currentConfig.node.name,
+        'discovery.type': 'single-node',
+        'bootstrap.memory_lock': false,
+        'xpack.security.enabled': false,
+        'xpack.security.transport.ssl.enabled': false,
+        'xpack.security.http.ssl.enabled': false
+      };
+      
+      // Create new directories if paths have changed or don't exist
+      const newDataPath = updates.dataPath || currentConfig.path.data;
+      const newLogsPath = updates.logsPath || currentConfig.path.logs;
+      
+      if (newDataPath) {
+        try {
+          await fs.mkdir(newDataPath, { recursive: true });
+          console.log(`📁 Ensured data directory exists: ${newDataPath}`);
+        } catch (error) {
+          console.warn(`⚠️ Could not create data directory ${newDataPath}:`, error.message);
+        }
+      }
+      
+      if (newLogsPath) {
+        try {
+          await fs.mkdir(newLogsPath, { recursive: true });
+          console.log(`📁 Ensured logs directory exists: ${newLogsPath}`);
+        } catch (error) {
+          console.warn(`⚠️ Could not create logs directory ${newLogsPath}:`, error.message);
+        }
+      }
+      
+      // Generate new YAML configuration
+      const configLines = [];
+      configLines.push(`# Elasticsearch Configuration for ${updatedConfig['node.name']}`);
+      configLines.push(`# Updated automatically by TrustQuery`);
+      configLines.push('');
+      configLines.push('# Cluster settings');
+      configLines.push(`cluster.name: ${updatedConfig['cluster.name']}`);
+      configLines.push(`node.name: ${updatedConfig['node.name']}`);
+      configLines.push('');
+      configLines.push('# Network settings');
+      configLines.push(`network.host: ${updatedConfig['network.host']}`);
+      configLines.push(`http.port: ${updatedConfig['http.port']}`);
+      configLines.push(`transport.port: ${updatedConfig['transport.port']}`);
+      configLines.push('');
+      configLines.push('# Path settings');
+      configLines.push(`path.data: ${updatedConfig['path.data']}`);
+      configLines.push(`path.logs: ${updatedConfig['path.logs']}`);
+      configLines.push('');
+      configLines.push('# Node roles');
+      configLines.push(`node.roles: ${updatedConfig['node.roles']}`);
+      configLines.push('');
+      configLines.push('# Custom attribute for shard allocation');
+      configLines.push(`node.attr.custom_id: ${updatedConfig['node.attr.custom_id']}`);
+      configLines.push('');
+      configLines.push('# Discovery settings');
+      configLines.push(`discovery.type: ${updatedConfig['discovery.type']}`);
+      configLines.push('');
+      configLines.push('# Memory settings');
+      configLines.push(`bootstrap.memory_lock: ${updatedConfig['bootstrap.memory_lock']}`);
+      configLines.push('');
+      configLines.push('# Security settings (basic)');
+      configLines.push(`xpack.security.enabled: ${updatedConfig['xpack.security.enabled']}`);
+      configLines.push(`xpack.security.transport.ssl.enabled: ${updatedConfig['xpack.security.transport.ssl.enabled']}`);
+      configLines.push(`xpack.security.http.ssl.enabled: ${updatedConfig['xpack.security.http.ssl.enabled']}`);
+      configLines.push('');
+      
+      const newConfigContent = configLines.join('\n');
+      
+      // Write updated configuration to file
+      await fs.writeFile(configPath, newConfigContent);
+      console.log(`✅ Updated configuration file: ${configPath}`);
+      
+      // Update log4j2.properties if logs path changed
+      if (updates.logsPath && updates.logsPath !== currentConfig.path.logs) {
+        try {
+          const log4j2Config = this.generateLog4j2Config(newLogsPath);
+          const log4j2Path = path.join(this.baseElasticsearchPath, 'config', nodeName, 'log4j2.properties');
+          await fs.writeFile(log4j2Path, log4j2Config);
+          console.log(`✅ Updated log4j2.properties with new logs path`);
+        } catch (error) {
+          console.warn(`⚠️ Could not update log4j2.properties:`, error.message);
+        }
+      }
+      
+      // Verify paths exist after creation
+      const pathStatus = {
+        dataPath: { path: newDataPath, exists: false },
+        logsPath: { path: newLogsPath, exists: false }
+      };
+      
+      try {
+        if (newDataPath) {
+          await fs.access(newDataPath);
+          pathStatus.dataPath.exists = true;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Data path may not exist: ${newDataPath}`);
+      }
+      
+      try {
+        if (newLogsPath) {
+          await fs.access(newLogsPath);
+          pathStatus.logsPath.exists = true;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Logs path may not exist: ${newLogsPath}`);
+      }
+      
+      return {
+        success: true,
+        configPath,
+        dataPath: newDataPath,
+        logsPath: newLogsPath,
+        pathStatus,
+        message: `Node ${nodeName} configuration updated successfully`
+      };
+      
+    } catch (error) {
+      console.error(`❌ Failed to update node ${nodeName}:`, error);
+      throw error;
+    }
+  }
+
+  // ...existing code...
 }
 
 module.exports = new ElasticsearchClusterManager();

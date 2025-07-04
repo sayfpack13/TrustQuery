@@ -8,7 +8,7 @@ const clusterManager = require("../elasticsearch/cluster-manager");
 const router = express.Router();
 
 // Validation function for port conflicts
-async function validateNodePorts(newNodeConfig) {
+async function validateNodePorts(newNodeConfig, editingNodeName = null) {
   const existingMetadata = getConfig('nodeMetadata') || {};
   const conflicts = [];
   const suggestions = {};
@@ -20,6 +20,11 @@ async function validateNodePorts(newNodeConfig) {
 
   // Check against existing nodes
   for (const [nodeUrl, metadata] of Object.entries(existingMetadata)) {
+    // If editing, skip checking the node against itself
+    if (editingNodeName && metadata.name === editingNodeName) {
+      continue;
+    }
+
     const existingHost = metadata.host || 'localhost';
     const existingHttpPort = parseInt(metadata.port) || 9200;
     const existingTransportPort = parseInt(metadata.transportPort) || 9300;
@@ -53,6 +58,26 @@ async function validateNodePorts(newNodeConfig) {
         type: 'node_name',
         conflictWith: metadata.name,
         message: `Node name "${newNodeConfig.name}" already exists`
+      });
+    }
+
+    // Check for data path conflicts
+    if (newNodeConfig.dataPath && metadata.dataPath && newNodeConfig.dataPath === metadata.dataPath) {
+      conflicts.push({
+        type: 'data_path',
+        conflictWith: metadata.name,
+        path: newNodeConfig.dataPath,
+        message: `Data path "${newNodeConfig.dataPath}" is already used by node "${metadata.name}"`
+      });
+    }
+
+    // Check for logs path conflicts
+    if (newNodeConfig.logsPath && metadata.logsPath && newNodeConfig.logsPath === metadata.logsPath) {
+      conflicts.push({
+        type: 'logs_path',
+        conflictWith: metadata.name,
+        path: newNodeConfig.logsPath,
+        message: `Logs path "${newNodeConfig.logsPath}" is already used by node "${metadata.name}"`
       });
     }
   }
@@ -302,20 +327,23 @@ router.post("/nodes", verifyJwt, async (req, res) => {
       return res.status(400).json({ error: "Node name is required" });
     }
 
-    // Validate port conflicts before creating the node
-    const portValidation = await validateNodePorts(nodeConfig);
-    if (!portValidation.valid) {
-      return res.status(400).json({ 
-        error: "Port conflict detected", 
-        conflicts: portValidation.conflicts,
-        suggestions: portValidation.suggestions
-      });
+    // Basic validation for required fields only
+    if (!nodeConfig.port || !nodeConfig.transportPort) {
+      return res.status(400).json({ error: "Port and transport port are required" });
+    }
+
+    // Ensure paths are strings (not objects)
+    if (nodeConfig.dataPath && typeof nodeConfig.dataPath !== 'string') {
+      return res.status(400).json({ error: "Data path must be a string" });
+    }
+    if (nodeConfig.logsPath && typeof nodeConfig.logsPath !== 'string') {
+      return res.status(400).json({ error: "Logs path must be a string" });
     }
 
     // Initialize cluster manager if not already done
     await clusterManager.initialize();
 
-    // Create the node
+    // Create the node (frontend validation ensures no conflicts)
     const createdNode = await clusterManager.createNode(nodeConfig);
 
     // Update configuration
@@ -323,8 +351,17 @@ router.post("/nodes", verifyJwt, async (req, res) => {
     const updatedNodes = [...currentNodes, createdNode.nodeUrl];
     await setConfig('elasticsearchNodes', updatedNodes);
 
-    // Store node metadata
+    // Store node metadata (avoid spreading nodeConfig to prevent overwriting paths)
     const currentMetadata = getConfig('nodeMetadata') || {};
+    
+    // Log the types for debugging
+    console.log('📝 Node creation - Path types:', {
+      dataPath: typeof createdNode.dataPath,
+      logsPath: typeof createdNode.logsPath,
+      dataPathValue: createdNode.dataPath,
+      logsPathValue: createdNode.logsPath
+    });
+    
     currentMetadata[createdNode.nodeUrl] = {
       name: createdNode.name,
       configPath: createdNode.configPath,
@@ -332,7 +369,14 @@ router.post("/nodes", verifyJwt, async (req, res) => {
       dataPath: createdNode.dataPath,
       logsPath: createdNode.logsPath,
       cluster: nodeConfig.cluster || 'trustquery-cluster',
-      ...nodeConfig
+      host: nodeConfig.host || 'localhost',
+      port: nodeConfig.port,
+      transportPort: nodeConfig.transportPort,
+      roles: nodeConfig.roles || {
+        master: true,
+        data: true,
+        ingest: true
+      }
     };
     await setConfig('nodeMetadata', currentMetadata);
 
@@ -349,36 +393,86 @@ router.post("/nodes", verifyJwt, async (req, res) => {
 // PUT update node configuration
 router.put("/nodes/:nodeName", verifyJwt, async (req, res) => {
   try {
-    const { nodeName } = req.params;
+    const { nodeName } = req.params; // The original name of the node being edited
     const updates = req.body;
-    
-    // Get current node metadata
+
+    // Get current node metadata to find the original config
     const currentMetadata = getConfig('nodeMetadata') || {};
-    
-    // Find the node by name
+    let originalNodeConfig = null;
     let nodeUrl = null;
+
     for (const [url, metadata] of Object.entries(currentMetadata)) {
       if (metadata.name === nodeName) {
+        originalNodeConfig = metadata;
         nodeUrl = url;
         break;
       }
     }
-    
-    if (!nodeUrl) {
+
+    if (!originalNodeConfig) {
       return res.status(404).json({ error: `Node "${nodeName}" not found` });
     }
+
+    // Create the potential new configuration by merging updates
+    const updatedNodeConfig = { ...originalNodeConfig, ...updates };
+
+    // Validate the updated configuration, passing the original node name to exclude it from self-conflict checks
+    const validation = await validateNodePorts(updatedNodeConfig, nodeName);
+
+    if (!validation.valid) {
+      return res.status(409).json({ // 409 Conflict is more appropriate here
+        error: "Validation failed",
+        conflicts: validation.conflicts,
+        suggestions: validation.suggestions,
+      });
+    }
+
+    // Validate path types if provided
+    if (updates.dataPath && typeof updates.dataPath !== 'string') {
+      return res.status(400).json({ error: "Data path must be a string" });
+    }
+    if (updates.logsPath && typeof updates.logsPath !== 'string') {
+      return res.status(400).json({ error: "Logs path must be a string" });
+    }
     
-    // Update the metadata
-    currentMetadata[nodeUrl] = {
-      ...currentMetadata[nodeUrl],
-      ...updates
+    // Update the actual configuration files using cluster manager
+    const updateResult = await clusterManager.updateNode(nodeName, updates);
+    console.log(`Node ${nodeName} configuration update result:`, updateResult);
+    
+    // Update the metadata in config.json (ensure paths are strings)
+    const newMetadata = {
+      ...originalNodeConfig,
+      ...updates,
+      dataPath: typeof updates.dataPath === 'string' ? updates.dataPath : originalNodeConfig.dataPath,
+      logsPath: typeof updates.logsPath === 'string' ? updates.logsPath : originalNodeConfig.logsPath,
     };
+
+    // If the URL changes (e.g., new host or port), we need to update the key in metadata
+    const newHost = newMetadata.host;
+    const newPort = newMetadata.port;
+    const newNodeUrl = `http://${newHost}:${newPort}`;
+
+    if (nodeUrl !== newNodeUrl) {
+      // Remove the old entry
+      delete currentMetadata[nodeUrl];
+    }
+
+    // Add/update the entry with the new URL and metadata
+    currentMetadata[newNodeUrl] = newMetadata;
     
     await setConfig('nodeMetadata', currentMetadata);
+
+    // Also update the elasticsearchNodes array if the URL changed
+    if (nodeUrl !== newNodeUrl) {
+      const currentNodes = getConfig('elasticsearchNodes') || [];
+      const updatedNodes = currentNodes.map(url => url === nodeUrl ? newNodeUrl : url);
+      await setConfig('elasticsearchNodes', updatedNodes);
+    }
     
     res.json({
       message: `Node "${nodeName}" updated successfully`,
-      node: currentMetadata[nodeUrl]
+      node: newMetadata,
+      updateResult: updateResult
     });
   } catch (error) {
     console.error("Error updating node:", error);
@@ -804,13 +898,15 @@ router.delete("/:nodeName/indices/:indexName", verifyJwt, async (req, res) => {
 // Validate node configuration before creation
 router.post("/nodes/validate", verifyJwt, async (req, res) => {
   try {
-    const nodeConfig = req.body.nodeConfig || req.body;
-    
-    if (!nodeConfig || !nodeConfig.name) {
+    const { nodeConfig, originalName } = req.body;
+    const configToValidate = nodeConfig || req.body;
+
+    if (!configToValidate || !configToValidate.name) {
       return res.status(400).json({ error: "Node name is required" });
     }
 
-    const validation = await validateNodePorts(nodeConfig);
+    // Pass the originalName to the validation function if it exists (i.e., we are editing)
+    const validation = await validateNodePorts(configToValidate, originalName || null);
     
     res.json({
       valid: validation.valid,
@@ -820,6 +916,44 @@ router.post("/nodes/validate", verifyJwt, async (req, res) => {
   } catch (error) {
     console.error("Error validating node configuration:", error);
     res.status(500).json({ error: "Failed to validate node configuration: " + error.message });
+  }
+});
+
+// GET individual node details
+router.get("/nodes/:nodeName", verifyJwt, async (req, res) => {
+  try {
+    console.log(`🔍 Retrieving details for node: ${req.params.nodeName}`);
+    const { nodeName } = req.params;
+    
+    // Get current node metadata
+    const currentMetadata = getConfig('nodeMetadata') || {};
+    console.log(`📝 Current metadata has ${Object.keys(currentMetadata).length} entries`);
+    
+    // Find the node by name
+    let nodeUrl = null;
+    let nodeData = null;
+    for (const [url, metadata] of Object.entries(currentMetadata)) {
+      console.log(`📌 Checking node: ${metadata.name} against: ${nodeName}`);
+      if (metadata.name === nodeName) {
+        nodeUrl = url;
+        nodeData = metadata;
+        break;
+      }
+    }
+    
+    if (!nodeUrl || !nodeData) {
+      console.log(`❌ Node "${nodeName}" not found in metadata`);
+      return res.status(404).json({ error: `Node "${nodeName}" not found` });
+    }
+    
+    console.log(`✅ Found node "${nodeName}" at URL: ${nodeUrl}`);
+    res.json({
+      nodeUrl,
+      ...nodeData
+    });
+  } catch (error) {
+    console.error("Error getting node details:", error);
+    res.status(500).json({ error: "Failed to get node details: " + error.message });
   }
 });
 

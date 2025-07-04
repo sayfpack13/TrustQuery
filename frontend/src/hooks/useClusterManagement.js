@@ -80,7 +80,11 @@ export const useClusterManagement = (showNotification) => {
         roles: newNodeRoles
       };
       
-      await axiosClient.post('/api/admin/cluster-advanced/nodes', config);
+      console.log('createLocalNode called with config:', config);
+      
+      const response = await axiosClient.post('/api/admin/cluster-advanced/nodes', config);
+      console.log('Node creation response:', response.data);
+      
       showNotificationRef.current('success', `Node "${config.name}" created successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
       
@@ -90,6 +94,7 @@ export const useClusterManagement = (showNotification) => {
       }
     } catch (error) {
       console.error('Error creating node:', error);
+      console.error('Error response:', error.response?.data);
       showNotificationRef.current('error', `Failed to create node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
       throw error; // Re-throw to allow form to handle error state
     }
@@ -102,8 +107,18 @@ export const useClusterManagement = (showNotification) => {
       fetchLocalNodes(); // Refresh list
     } catch (error) {
       console.error('Error updating node:', error);
-      showNotificationRef.current('error', `Failed to update node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
-      throw error; // Re-throw
+      
+      // Handle validation conflicts specifically
+      if (error.response?.status === 409 && error.response?.data?.conflicts) {
+        // This is a validation error with conflicts - re-throw it so the component can handle it
+        const validationError = new Error('Validation failed');
+        validationError.validationData = error.response.data;
+        throw validationError;
+      } else {
+        // Handle other types of errors
+        showNotificationRef.current('error', `Failed to update node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+        throw error; // Re-throw
+      }
     }
   }, [fetchLocalNodes]);
 
@@ -153,6 +168,17 @@ export const useClusterManagement = (showNotification) => {
     }
   };
 
+  const getNodeDetails = useCallback(async (nodeName) => {
+    try {
+      const response = await axiosClient.get(`/api/admin/cluster-advanced/nodes/${nodeName}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Error fetching details for node ${nodeName}:`, error);
+      showNotificationRef.current('error', `Failed to fetch node details: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      throw error; // Re-throw for handling in the component
+    }
+  }, []);
+
   const createCluster = useCallback(async (clusterName) => {
     try {
       // For now, we'll just add it to the cluster list when a node is created with it
@@ -174,6 +200,7 @@ export const useClusterManagement = (showNotification) => {
     handleDeleteLocalNode,
     handleStartLocalNode,
     handleStopLocalNode,
+    getNodeDetails,
     // Form state
     newNodeName,
     setNewNodeName,

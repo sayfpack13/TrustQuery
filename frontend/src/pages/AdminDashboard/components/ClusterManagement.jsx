@@ -287,71 +287,8 @@ export default function ClusterManagement({
               )}
             </div>
 
-            {/* Disk Management for Selected Node */}
-            {selectedNodeForDisks && nodeDisks[selectedNodeForDisks] && (
-              <div className="p-6 bg-neutral-700 rounded-lg">
-                <h3 className="text-xl font-semibold text-white mb-4">
-                  Disk Paths for Node: {selectedNodeForDisks}
-                </h3>
-                <div className="space-y-4">
-                  {(nodeDisks[selectedNodeForDisks] || []).map((disk, index) => {
-                    const usagePercent = ((disk.used / disk.total) * 100).toFixed(1);
-                    const isPreferred = diskPreferences[selectedNodeForDisks] === disk.path;
-                    
-                    return (
-                      <div key={index} className="p-4 bg-neutral-600 rounded-lg">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <h4 className="font-medium text-white">{disk.path}</h4>
-                            {isPreferred && (
-                              <span className="inline-block mt-1 px-2 py-1 bg-blue-600 text-white text-xs rounded-full">
-                                PREFERRED PATH
-                              </span>
-                            )}
-                          </div>
-                          {!isPreferred && (
-                            <button
-                              onClick={() => handleSetPreferredDisk(selectedNodeForDisks, disk.path)}
-                              className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                            >
-                              Set as Preferred
-                            </button>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 text-sm">
-                          <div>
-                            <span className="text-neutral-400">Total:</span>
-                            <span className="ml-2 text-white">{formatBytes(disk.total)}</span>
-                          </div>
-                          <div>
-                            <span className="text-neutral-400">Used:</span>
-                            <span className="ml-2 text-white">{formatBytes(disk.used)}</span>
-                          </div>
-                          <div>
-                            <span className="text-neutral-400">Available:</span>
-                            <span className="ml-2 text-white">{formatBytes(disk.available)}</span>
-                          </div>
-                        </div>
-                        <div className="mt-3">
-                          <div className="flex justify-between text-sm mb-1">
-                            <span className="text-neutral-400">Usage</span>
-                            <span className={`${usagePercent > 90 ? 'text-red-400' : usagePercent > 70 ? 'text-yellow-400' : 'text-green-400'}`}>
-                              {usagePercent}%
-                            </span>
-                          </div>
-                          <div className="w-full bg-neutral-800 rounded-full h-2">
-                            <div
-                              className={`h-2 rounded-full ${usagePercent > 90 ? 'bg-red-600' : usagePercent > 70 ? 'bg-yellow-600' : 'bg-green-600'}`}
-                              style={{ width: `${usagePercent}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            {/* Disk Management for Selected Node - REMOVED since it's no longer used */}
+            {/* This section has been removed as disk management is now handled differently */}
           </div>
         )}
       </section>
@@ -411,49 +348,83 @@ export default function ClusterManagement({
 function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
   const [nodeIndices, setNodeIndices] = useState([]);
   const [indicesLoading, setIndicesLoading] = useState(false);
+  const [indicesError, setIndicesError] = useState(null);
   const [showCreateIndexForm, setShowCreateIndexForm] = useState(false);
   const [isCreatingIndex, setIsCreatingIndex] = useState(false);
+  const [isDeletingIndex, setIsDeletingIndex] = useState(null);
   const [newIndexName, setNewIndexName] = useState('');
   const [newIndexShards, setNewIndexShards] = useState('1');
   const [newIndexReplicas, setNewIndexReplicas] = useState('0');
 
-  const fetchNodeIndices = async () => {
+  // Add validation for form inputs
+  const isValidIndexName = newIndexName.trim().length > 0 && !/[A-Z\s]/.test(newIndexName);
+  const isValidShards = parseInt(newIndexShards) > 0;
+  const isValidReplicas = parseInt(newIndexReplicas) >= 0;
+  const isFormValid = isValidIndexName && isValidShards && isValidReplicas;
+
+  const fetchNodeIndices = async (showLoading = true) => {
     if (!node.isRunning) {
       setNodeIndices([]);
+      setIndicesError(null);
       return;
     }
     
-    setIndicesLoading(true);
+    if (showLoading) setIndicesLoading(true);
+    setIndicesError(null);
+    
     try {
-      const response = await axiosClient.get(`/api/admin/cluster-advanced/${node.name}/indices`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      const response = await axiosClient.get(`/api/admin/cluster-advanced/${node.name}/indices`, {
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
       setNodeIndices(response.data || []);
     } catch (error) {
       console.error(`Failed to load indices for node ${node.name}:`, error);
+      
+      if (error.name === 'AbortError') {
+        setIndicesError('Request timed out. The node may be unresponsive.');
+      } else if (error.response?.status === 404) {
+        setIndicesError('Node not found or no longer available.');
+      } else if (error.response?.status >= 500) {
+        setIndicesError('Server error. The node may be experiencing issues.');
+      } else {
+        setIndicesError(error.response?.data?.error || 'Failed to load indices');
+      }
+      
       setNodeIndices([]);
     } finally {
-      setIndicesLoading(false);
+      if (showLoading) setIndicesLoading(false);
     }
   };
 
   const handleCreateIndex = async () => {
-    if (!newIndexName.trim()) {
+    if (!isFormValid) {
       return;
     }
 
     setIsCreatingIndex(true);
     try {
       await axiosClient.post(`/api/admin/cluster-advanced/${node.name}/indices`, {
-        indexName: newIndexName,
-        shards: newIndexShards,
-        replicas: newIndexReplicas,
+        indexName: newIndexName.trim(),
+        shards: parseInt(newIndexShards),
+        replicas: parseInt(newIndexReplicas),
       });
+      
+      // Reset form and close
       setShowCreateIndexForm(false);
       setNewIndexName('');
       setNewIndexShards('1');
       setNewIndexReplicas('0');
-      fetchNodeIndices(); // Refresh the list
+      
+      // Refresh the list
+      await fetchNodeIndices(false); // Don't show loading spinner for refresh
     } catch (error) {
       console.error("Failed to create index", error);
+      // Error handling could be improved with notifications
     } finally {
       setIsCreatingIndex(false);
     }
@@ -464,23 +435,49 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
       return;
     }
 
+    setIsDeletingIndex(indexName);
     try {
       await axiosClient.delete(`/api/admin/cluster-advanced/${node.name}/indices/${indexName}`);
-      fetchNodeIndices(); // Refresh the list
+      await fetchNodeIndices(false); // Refresh the list without loading spinner
     } catch (error) {
       console.error("Failed to delete index", error);
+      // Error handling could be improved with notifications
+    } finally {
+      setIsDeletingIndex(null);
     }
   };
 
   // Fetch indices when node becomes running or when component mounts
   React.useEffect(() => {
-    fetchNodeIndices();
-  }, [node.isRunning, node.name]);
+    const controller = new AbortController();
+    
+    if (node.isRunning) {
+      fetchNodeIndices();
+    } else {
+      // Clear data when node is not running
+      setNodeIndices([]);
+      setIndicesError(null);
+      // Also close any open forms and reset loading states
+      if (showCreateIndexForm) {
+        setShowCreateIndexForm(false);
+      }
+      setIsCreatingIndex(false);
+      setIsDeletingIndex(null);
+    }
 
-  // Hide create index form if node stops running
+    return () => {
+      controller.abort();
+      // Clear any ongoing operations
+      setIsCreatingIndex(false);
+      setIsDeletingIndex(null);
+    };
+  }, [node.isRunning, node.name, showCreateIndexForm]);
+
+  // Hide create index form if node stops running and reset any errors
   React.useEffect(() => {
     if (!node.isRunning && showCreateIndexForm) {
       setShowCreateIndexForm(false);
+      setIndicesError(null);
     }
   }, [node.isRunning, showCreateIndexForm]);
 
@@ -546,34 +543,80 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
         </div>
       )}
 
+      {indicesError && node.isRunning && (
+        <div className="mb-4 p-3 bg-red-600 rounded-lg border border-red-500">
+          <div className="flex items-center space-x-2">
+            <FontAwesomeIcon icon={faExclamationCircle} className="text-red-100" />
+            <p className="text-red-200 text-sm">
+              {indicesError}
+            </p>
+          </div>
+          <button
+            onClick={() => fetchNodeIndices()}
+            className="mt-2 bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {showCreateIndexForm && node.isRunning && (
         <div className="mb-4 p-4 bg-neutral-800 rounded-lg border border-neutral-500">
           <h4 className="text-lg font-semibold text-white mb-3">Create New Index on {node.name}</h4>
           <div className="space-y-3">
-            <input
-              type="text"
-              value={newIndexName}
-              onChange={(e) => setNewIndexName(e.target.value)}
-              placeholder="Enter index name"
-              className="w-full p-3 rounded-md bg-neutral-900 text-white border border-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div>
+              <input
+                type="text"
+                value={newIndexName}
+                onChange={(e) => setNewIndexName(e.target.value)}
+                placeholder="Enter index name (lowercase, no spaces)"
+                className={`w-full p-3 rounded-md bg-neutral-900 text-white border focus:outline-none focus:ring-2 ${
+                  newIndexName && !isValidIndexName 
+                    ? 'border-red-500 focus:ring-red-500' 
+                    : 'border-neutral-600 focus:ring-blue-500'
+                }`}
+              />
+              {newIndexName && !isValidIndexName && (
+                <p className="text-red-400 text-xs mt-1">
+                  Index name must be lowercase with no spaces or special characters
+                </p>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
-              <input
-                type="number"
-                value={newIndexShards}
-                onChange={(e) => setNewIndexShards(e.target.value)}
-                placeholder="Shards"
-                min="1"
-                className="w-full p-3 rounded-md bg-neutral-900 text-white border border-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="number"
-                value={newIndexReplicas}
-                onChange={(e) => setNewIndexReplicas(e.target.value)}
-                placeholder="Replicas"
-                min="0"
-                className="w-full p-3 rounded-md bg-neutral-900 text-white border border-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <div>
+                <input
+                  type="number"
+                  value={newIndexShards}
+                  onChange={(e) => setNewIndexShards(e.target.value)}
+                  placeholder="Shards"
+                  min="1"
+                  className={`w-full p-3 rounded-md bg-neutral-900 text-white border focus:outline-none focus:ring-2 ${
+                    !isValidShards 
+                      ? 'border-red-500 focus:ring-red-500' 
+                      : 'border-neutral-600 focus:ring-blue-500'
+                  }`}
+                />
+                {!isValidShards && (
+                  <p className="text-red-400 text-xs mt-1">Must be at least 1</p>
+                )}
+              </div>
+              <div>
+                <input
+                  type="number"
+                  value={newIndexReplicas}
+                  onChange={(e) => setNewIndexReplicas(e.target.value)}
+                  placeholder="Replicas"
+                  min="0"
+                  className={`w-full p-3 rounded-md bg-neutral-900 text-white border focus:outline-none focus:ring-2 ${
+                    !isValidReplicas 
+                      ? 'border-red-500 focus:ring-red-500' 
+                      : 'border-neutral-600 focus:ring-blue-500'
+                  }`}
+                />
+                {!isValidReplicas && (
+                  <p className="text-red-400 text-xs mt-1">Must be 0 or greater</p>
+                )}
+              </div>
             </div>
           </div>
           <div className="flex justify-end mt-4 space-x-3">
@@ -586,7 +629,8 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
             <button 
               onClick={handleCreateIndex} 
               className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-white transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600" 
-              disabled={isCreatingIndex || !newIndexName.trim()}
+              disabled={isCreatingIndex || !isFormValid}
+              title={!isFormValid ? "Please fix validation errors" : ""}
             >
               {isCreatingIndex ? <FontAwesomeIcon icon={faCircleNotch} spin /> : 'Create Index'}
             </button>
@@ -641,9 +685,14 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
                         <button 
                           onClick={() => handleDeleteIndex(index.index)} 
                           className="text-red-500 hover:text-red-400 transition duration-150 ease-in-out disabled:text-gray-500 disabled:cursor-not-allowed"
-                          disabled={isAnyTaskRunning}
+                          disabled={isAnyTaskRunning || isDeletingIndex === index.index}
+                          title={isDeletingIndex === index.index ? "Deleting..." : "Delete index"}
                         >
-                          <FontAwesomeIcon icon={faTrash} />
+                          {isDeletingIndex === index.index ? (
+                            <FontAwesomeIcon icon={faCircleNotch} spin />
+                          ) : (
+                            <FontAwesomeIcon icon={faTrash} />
+                          )}
                         </button>
                       </td>
                     </tr>

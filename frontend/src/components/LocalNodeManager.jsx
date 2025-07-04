@@ -22,7 +22,7 @@ const LocalNodeManager = ({
   mode = 'create', // 'create' or 'edit'
   nodeToEdit
 }) => {
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(true);
   const [newClusterName, setNewClusterName] = useState('');
   const [showNewCluster, setShowNewCluster] = useState(false);
   
@@ -31,7 +31,32 @@ const LocalNodeManager = ({
   const [validationSuggestions, setValidationSuggestions] = useState({});
   const [isValidating, setIsValidating] = useState(false);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
-  
+  const [isApplyingSuggestions, setIsApplyingSuggestions] = useState(false);
+  const [lastValidatedConfig, setLastValidatedConfig] = useState(null); // Track successful validation
+
+  const updatePathsForNewName = (newName, oldName, currentDataPath, currentLogsPath, setDataPath, setLogsPath) => {
+    const defaultDataPath = (name) => `C:\\elasticsearch\\${name}\\data`;
+    const defaultLogsPath = (name) => `C:\\elasticsearch\\${name}\\logs`;
+
+    if (oldName !== newName) {
+        // Update data path if it's empty or was the default for the old name
+        if (!currentDataPath || currentDataPath === defaultDataPath(oldName)) {
+            setDataPath(defaultDataPath(newName));
+        }
+        // Update logs path if it's empty or was the default for the old name
+        if (!currentLogsPath || currentLogsPath === defaultLogsPath(oldName)) {
+            setLogsPath(defaultLogsPath(newName));
+        }
+    }
+  };
+
+  const handleNodeNameChange = (e) => {
+      const newName = e.target.value;
+      const oldName = newNodeName;
+      setNewNodeName(newName);
+      updatePathsForNewName(newName, oldName, newNodeDataPath, newNodeLogsPath, setNewNodeDataPath, setNewNodeLogsPath);
+  };
+
   // Track validation to prevent duplicates
   const validationTimeoutRef = useRef(null);
   const lastValidationConfigRef = useRef(null);
@@ -91,36 +116,7 @@ const LocalNodeManager = ({
     }
   }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles]);
 
-  // Real-time validation when ports change (debounced)
-  useEffect(() => {
-    // Clear existing timeout
-    if (validationTimeoutRef.current) {
-      clearTimeout(validationTimeoutRef.current);
-    }
-    
-    if (mode === 'create' && newNodeName && newNodePort && newNodeTransportPort) {
-      validationTimeoutRef.current = setTimeout(async () => {
-        const nodeConfig = {
-          name: newNodeName,
-          host: newNodeHost,
-          port: parseInt(newNodePort),
-          transportPort: parseInt(newNodeTransportPort),
-          cluster: newNodeCluster,
-        };
-        
-        // Only validate if ports are valid numbers
-        if (!isNaN(nodeConfig.port) && !isNaN(nodeConfig.transportPort)) {
-          await validateNodeConfiguration(nodeConfig);
-        }
-      }, 1000); // 1 second debounce
-    }
-
-    return () => {
-      if (validationTimeoutRef.current) {
-        clearTimeout(validationTimeoutRef.current);
-      }
-    };
-  }, [newNodeName, newNodeHost, newNodePort, newNodeTransportPort, newNodeCluster, mode]);
+  // Remove auto-validation on input change - validation now only happens on button click
 
   // Cleanup validation timeout on unmount or close
   useEffect(() => {
@@ -138,10 +134,12 @@ const LocalNodeManager = ({
         clearTimeout(validationTimeoutRef.current);
       }
       lastValidationConfigRef.current = null;
+      setLastValidatedConfig(null);
       setValidationErrors([]);
       setValidationSuggestions({});
       setShowValidationErrors(false);
       setIsValidating(false);
+      setIsApplyingSuggestions(false);
     }
   }, [isOpen]);
 
@@ -163,27 +161,33 @@ const LocalNodeManager = ({
     }
   };
 
-  const generateDefaultPaths = () => {
-    if (newNodeName) {
-      setNewNodeDataPath(`C:\\elasticsearch\\${newNodeName}\\data`);
-      setNewNodeLogsPath(`C:\\elasticsearch\\${newNodeName}\\logs`);
-    }
-  };
-
   // Validation function
   const validateNodeConfiguration = async (nodeConfig) => {
+    // When editing, we need to pass the original node name to the validation function
+    const requestBody = mode === 'edit' 
+      ? { nodeConfig: nodeConfig, originalName: nodeToEdit?.name } 
+      : { nodeConfig: nodeConfig };
+
     // Create a unique key for this configuration
     const configKey = JSON.stringify({
       name: nodeConfig.name,
       host: nodeConfig.host,
       port: nodeConfig.port,
       transportPort: nodeConfig.transportPort,
-      cluster: nodeConfig.cluster
+      cluster: nodeConfig.cluster,
+      dataPath: nodeConfig.dataPath,
+      logsPath: nodeConfig.logsPath,
+      mode: mode // Include mode in cache key
     });
     
-    // Skip if we're already validating the same configuration
-    if (isValidating || lastValidationConfigRef.current === configKey) {
+    // Skip if we're already validating
+    if (isValidating) {
       return false;
+    }
+    
+    // Check if this exact config was already successfully validated
+    if (lastValidatedConfig === configKey) {
+      return true; // Already validated and passed
     }
     
     lastValidationConfigRef.current = configKey;
@@ -192,17 +196,21 @@ const LocalNodeManager = ({
     setValidationSuggestions({});
     
     try {
-      const response = await axiosClient.post('/api/admin/cluster-advanced/nodes/validate', nodeConfig);
+      const response = await axiosClient.post('/api/admin/cluster-advanced/nodes/validate', requestBody);
       
       if (!response.data.valid) {
         setValidationErrors(response.data.conflicts || []);
         setValidationSuggestions(response.data.suggestions || {});
         setShowValidationErrors(true);
         return false;
+      } else {
+        // Validation passed - clear any previous errors
+        setValidationErrors([]);
+        setValidationSuggestions({});
+        setShowValidationErrors(false);
+        setLastValidatedConfig(configKey); // Remember this config was validated successfully
+        return true;
       }
-      
-      setShowValidationErrors(false);
-      return true;
     } catch (error) {
       console.error('Validation error:', error);
       setValidationErrors([{
@@ -217,7 +225,16 @@ const LocalNodeManager = ({
   };
 
   // Auto-suggest available ports
-  const applySuggestions = () => {
+  const applySuggestions = async () => {
+    setIsApplyingSuggestions(true);
+    
+    // Clear any pending validation first
+    if (validationTimeoutRef.current) {
+      clearTimeout(validationTimeoutRef.current);
+    }
+
+    console.log('Applying suggestions:', validationSuggestions);
+
     if (validationSuggestions.httpPort) {
       setNewNodePort(validationSuggestions.httpPort.toString());
     }
@@ -225,21 +242,48 @@ const LocalNodeManager = ({
       setNewNodeTransportPort(validationSuggestions.transportPort.toString());
     }
     if (validationSuggestions.nodeName && validationSuggestions.nodeName.length > 0) {
-      setNewNodeName(validationSuggestions.nodeName[0]); // Use first suggestion
+      const suggestedName = validationSuggestions.nodeName[0];
+      const oldName = newNodeName;
+      setNewNodeName(suggestedName);
+      // Update paths with the new node name
+      updatePathsForNewName(suggestedName, oldName, newNodeDataPath, newNodeLogsPath, setNewNodeDataPath, setNewNodeLogsPath);
     }
     
-    // Reset validation state to allow fresh validation
+    // Clear validation state completely after applying suggestions
     lastValidationConfigRef.current = null;
+    setLastValidatedConfig(null); // Reset successful validation tracking
+    setValidationErrors([]);
+    setValidationSuggestions({});
     setShowValidationErrors(false);
+    
+    console.log('Suggestions applied, validation state cleared');
+    
+    // Give a longer delay to prevent immediate re-validation
+    await new Promise(resolve => setTimeout(resolve, 500));
+    setIsApplyingSuggestions(false);
   };
 
   // Apply specific node name suggestion
-  const applyNodeNameSuggestion = (suggestedName) => {
+  const applyNodeNameSuggestion = async (suggestedName) => {
+    // Clear any pending validation first
+    if (validationTimeoutRef.current) {
+      clearTimeout(validationTimeoutRef.current);
+    }
+
+    const oldName = newNodeName;
     setNewNodeName(suggestedName);
+    // Update paths with the new node name
+    updatePathsForNewName(suggestedName, oldName, newNodeDataPath, newNodeLogsPath, setNewNodeDataPath, setNewNodeLogsPath);
     
-    // Reset validation state to allow fresh validation
+    // Clear validation state completely after applying suggestion
     lastValidationConfigRef.current = null;
+    setLastValidatedConfig(null); // Reset successful validation tracking
+    setValidationErrors([]);
+    setValidationSuggestions({});
     setShowValidationErrors(false);
+    
+    // Give a longer delay to prevent immediate re-validation
+    await new Promise(resolve => setTimeout(resolve, 500));
   };
 
   // Auto-suggest ports when cluster is selected
@@ -251,44 +295,7 @@ const LocalNodeManager = ({
       clearTimeout(validationTimeoutRef.current);
     }
     
-    // If creating a new node and cluster name matches existing nodes, suggest available ports
-    if (mode === 'create' && newNodeName) {
-      try {
-        const tempConfig = {
-          name: newNodeName,
-          host: newNodeHost,
-          port: parseInt(newNodePort) || 9200,
-          transportPort: parseInt(newNodeTransportPort) || 9300,
-          cluster: clusterName,
-        };
-        
-        const response = await axiosClient.post('/api/admin/cluster-advanced/nodes/validate', tempConfig);
-        
-        if (!response.data.valid && response.data.suggestions) {
-          // Auto-apply suggestions for port conflicts
-          const hasPortConflicts = response.data.conflicts.some(c => 
-            c.type === 'http_port' || c.type === 'transport_port'
-          );
-          
-          if (hasPortConflicts) {
-            if (response.data.suggestions.httpPort) {
-              setNewNodePort(response.data.suggestions.httpPort.toString());
-            }
-            if (response.data.suggestions.transportPort) {
-              setNewNodeTransportPort(response.data.suggestions.transportPort.toString());
-            }
-          }
-          
-          // Auto-apply node name suggestion if there's a name conflict
-          const hasNameConflict = response.data.conflicts.some(c => c.type === 'node_name');
-          if (hasNameConflict && response.data.suggestions.nodeName && response.data.suggestions.nodeName.length > 0) {
-            setNewNodeName(response.data.suggestions.nodeName[0]);
-          }
-        }
-      } catch (error) {
-        console.log('Auto-suggestion failed:', error);
-      }
-    }
+    // No auto-validation here - only manual validation on button click
   };
 
   return (
@@ -327,14 +334,13 @@ const LocalNodeManager = ({
               <input
                 type="text"
                 value={newNodeName}
-                onChange={(e) => setNewNodeName(e.target.value)}
+                onChange={handleNodeNameChange}
                 placeholder="e.g., node-1, data-node-01"
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
                   validationErrors.some(e => e.type === 'node_name') 
                     ? 'border-red-500 focus:ring-red-500' 
                     : 'border-neutral-700 focus:ring-blue-500'
                 }`}
-                onBlur={generateDefaultPaths}
               />
               <p className="text-neutral-400 text-xs mt-1">Unique identifier for this node</p>
             </div>
@@ -469,54 +475,61 @@ const LocalNodeManager = ({
           </div>
 
           {/* Advanced Configuration */}
-          <div>
-            <button
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="flex items-center text-blue-400 hover:text-blue-300 transition-colors"
-            >
-              <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
-              Advanced Configuration
-              <span className="ml-2 text-neutral-500">{showAdvanced ? '▼' : '▶'}</span>
-            </button>
-            
-            {showAdvanced && (
-              <div className="mt-4 space-y-4 p-4 bg-neutral-900 rounded-lg border border-neutral-700">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      <FontAwesomeIcon icon={faFolder} className="mr-2" />
-                      Data Path
-                    </label>
-                    <input
-                      type="text"
-                      value={newNodeDataPath}
-                      onChange={(e) => setNewNodeDataPath(e.target.value)}
-                      placeholder="C:\elasticsearch\node-name\data"
-                      className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-800 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <p className="text-neutral-400 text-xs mt-1">Where node data will be stored</p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      <FontAwesomeIcon icon={faFolder} className="mr-2" />
-                      Logs Path
-                    </label>
-                    <input
-                      type="text"
-                      value={newNodeLogsPath}
-                      onChange={(e) => setNewNodeLogsPath(e.target.value)}
-                      placeholder="C:\elasticsearch\node-name\logs"
-                      className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-800 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <p className="text-neutral-400 text-xs mt-1">Where node logs will be stored</p>
-                  </div>
-                </div>
+          <div className="mt-4 space-y-4 p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                  <FontAwesomeIcon icon={faFolder} className="mr-2" />
+                  Data Path
+                  {validationErrors.some(e => e.type === 'data_path') && (
+                    <span className="ml-2 text-red-400 text-xs">
+                      <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
+                      Path conflict
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={newNodeDataPath}
+                  onChange={(e) => setNewNodeDataPath(e.target.value)}
+                  placeholder="C:\\elasticsearch\\node-name\\data"
+                  className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none focus:ring-2 ${
+                    validationErrors.some(e => e.type === 'data_path')
+                    ? 'border-red-500 focus:ring-red-500'
+                    : 'border-neutral-700 focus:ring-blue-500'
+                  }`}
+                />
+                <p className="text-neutral-400 text-xs mt-1">Where node data will be stored</p>
               </div>
-            )}
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                  <FontAwesomeIcon icon={faFolder} className="mr-2" />
+                  Logs Path
+                  {validationErrors.some(e => e.type === 'logs_path') && (
+                    <span className="ml-2 text-red-400 text-xs">
+                      <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
+                      Path conflict
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={newNodeLogsPath}
+                  onChange={(e) => setNewNodeLogsPath(e.target.value)}
+                  placeholder="C:\\elasticsearch\\node-name\\logs"
+                  className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none focus:ring-2 ${
+                    validationErrors.some(e => e.type === 'logs_path')
+                    ? 'border-red-500 focus:ring-red-500'
+                    : 'border-neutral-700 focus:ring-blue-500'
+                  }`}
+                />
+                <p className="text-neutral-400 text-xs mt-1">Where node logs will be stored</p>
+              </div>
+            </div>
           </div>
 
           {/* Help Text */}
-          <div className="bg-blue-900 bg-opacity-30 border border-blue-700 rounded-lg p-4">
+          <div className="p-4 bg-neutral-900 rounded-lg border border-dashed border-neutral-700">
             <div className="flex items-start space-x-3">
               <FontAwesomeIcon icon={faInfoCircle} className="text-blue-400 mt-1" />
               <div>
@@ -531,85 +544,120 @@ const LocalNodeManager = ({
           </div>
         </div>
 
-        {/* Validation Errors */}
-        {showValidationErrors && validationErrors.length > 0 && (
-          <div className="mx-6 mb-4 p-4 bg-red-600 rounded-lg border border-red-500">
-            <div className="flex items-start space-x-3">
-              <FontAwesomeIcon icon={faExclamationTriangle} className="text-red-100 text-xl mt-1" />
-              <div className="flex-1">
-                <h4 className="text-red-100 font-semibold mb-2">Configuration Conflicts Detected</h4>
-                <div className="space-y-2">
-                  {validationErrors.map((error, index) => (
-                    <div key={index} className="text-red-200 text-sm">
-                      • {error.message}
-                    </div>
-                  ))}
-                </div>
-                
-                {/* Suggestions */}
-                {(validationSuggestions.httpPort || validationSuggestions.transportPort || validationSuggestions.nodeName) && (
-                  <div className="mt-4 space-y-3">
-                    {/* Port Suggestions */}
-                    {(validationSuggestions.httpPort || validationSuggestions.transportPort) && (
-                      <div className="p-3 bg-red-700 rounded border border-red-600">
-                        <h5 className="text-red-100 font-medium mb-2">Suggested Available Ports:</h5>
-                        <div className="space-y-1 text-red-200 text-sm">
-                          {validationSuggestions.httpPort && (
-                            <div>• HTTP Port: {validationSuggestions.httpPort}</div>
-                          )}
-                          {validationSuggestions.transportPort && (
-                            <div>• Transport Port: {validationSuggestions.transportPort}</div>
-                          )}
-                        </div>
-                        <button
-                          onClick={applySuggestions}
-                          className="mt-3 bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded text-sm transition duration-150"
-                        >
-                          <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                          Apply Port Suggestions
-                        </button>
-                      </div>
-                    )}
-                    
-                    {/* Node Name Suggestions */}
-                    {validationSuggestions.nodeName && validationSuggestions.nodeName.length > 0 && (
-                      <div className="p-3 bg-red-700 rounded border border-red-600">
-                        <h5 className="text-red-100 font-medium mb-2">Suggested Available Node Names:</h5>
-                        <div className="space-y-2">
-                          {validationSuggestions.nodeName.map((suggestedName, index) => (
-                            <div key={index} className="flex items-center justify-between bg-red-800 p-2 rounded">
-                              <span className="text-red-200 text-sm font-mono">{suggestedName}</span>
-                              <button
-                                onClick={() => applyNodeNameSuggestion(suggestedName)}
-                                className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs transition duration-150"
-                              >
-                                <FontAwesomeIcon icon={faCheckCircle} className="mr-1" />
-                                Use This
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                        <button
-                          onClick={() => applyNodeNameSuggestion(validationSuggestions.nodeName[0])}
-                          className="mt-3 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm transition duration-150"
-                        >
-                          <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                          Use First Suggestion
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              <button
-                onClick={() => setShowValidationErrors(false)}
-                className="text-red-200 hover:text-white transition-colors"
-              >
-                <FontAwesomeIcon icon={faTimes} />
-              </button>
+        {/* Running Node Warning - Show only in edit mode when node is running */}
+        {mode === 'edit' && nodeToEdit?.isRunning && (
+          <div className="mt-6 p-4 bg-amber-900 rounded-lg border border-amber-700">
+            <h3 className="text-lg font-semibold text-amber-100 mb-2 flex items-center">
+              <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
+              Node is Currently Running
+            </h3>
+            <p className="text-amber-200 text-sm mb-3">
+              Configuration changes are disabled while the node is running. Stop the node first to make changes, or the changes will require a restart to take effect.
+            </p>
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+              <span className="text-amber-200 text-sm font-medium">Status: Running on port {nodeToEdit.port}</span>
             </div>
           </div>
         )}
+
+        {/* Validation Section - Show validation errors and suggestions for both create and edit modes */}
+        {showValidationErrors && validationErrors.length > 0 && (
+          <div className="mt-6 p-4 bg-red-900 rounded-lg border border-red-700">
+            <h3 className="text-lg font-semibold text-red-100 mb-3 flex items-center">
+              <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
+              Configuration Conflicts Detected
+            </h3>
+            <div className="space-y-2 mb-4">
+              {validationErrors.map((error, index) => (
+                <div key={index} className="text-red-200 text-sm flex items-start">
+                  <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2 mt-1 text-red-400 flex-shrink-0" />
+                  <span>{error.message}</span>
+                </div>
+              ))}
+            </div>
+            
+            {/* Auto-fix suggestions */}
+            {Object.keys(validationSuggestions).length > 0 && (
+              <div className="border-t border-red-700 pt-4">
+                <h4 className="text-red-100 font-medium mb-3">Suggested Solutions:</h4>
+                <div className="space-y-3">
+                  {(validationSuggestions.httpPort || validationSuggestions.transportPort) && (
+                    <div className="bg-red-800 p-3 rounded">
+                      <p className="text-red-100 text-sm mb-2">Auto-fix port conflicts:</p>
+                      <div className="flex items-center space-x-2">
+                        {validationSuggestions.httpPort && (
+                          <span className="text-red-200 text-xs">HTTP: {validationSuggestions.httpPort}</span>
+                        )}
+                        {validationSuggestions.transportPort && (
+                          <span className="text-red-200 text-xs">Transport: {validationSuggestions.transportPort}</span>
+                        )}
+                        <button
+                          onClick={applySuggestions}
+                          disabled={isApplyingSuggestions}
+                          className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs transition duration-150 disabled:opacity-50"
+                        >
+                          {isApplyingSuggestions ? <FontAwesomeIcon icon={faSpinner} spin /> : 'Apply'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {validationSuggestions.nodeName && validationSuggestions.nodeName.length > 0 && (
+                    <div className="bg-red-800 p-3 rounded">
+                      <p className="text-red-100 text-sm mb-2">Suggested node names:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {validationSuggestions.nodeName.map((name, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => applyNodeNameSuggestion(name)}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs transition duration-150"
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Validation Button - Show for both create and edit modes */}
+        <div className="mt-6 p-4 bg-neutral-700 rounded-lg border border-neutral-600">
+          <h3 className="text-lg font-semibold text-white mb-3">
+            <FontAwesomeIcon icon={faCheckCircle} className="mr-2 text-green-400" />
+            Configuration Validation
+          </h3>
+          <p className="text-neutral-300 text-sm mb-4">
+            {mode === 'create' 
+              ? 'Validate your node configuration before creation to check for conflicts with existing nodes.'
+              : 'Validate your changes before updating to check for conflicts with other nodes.'
+            }
+          </p>
+          <button
+            onClick={async () => {
+              const nodeConfig = {
+                name: newNodeName,
+                host: newNodeHost,
+                port: parseInt(newNodePort),
+                transportPort: parseInt(newNodeTransportPort),
+                cluster: newNodeCluster,
+                dataPath: newNodeDataPath,
+                logsPath: newNodeLogsPath,
+                roles: newNodeRoles
+              };
+              await validateNodeConfiguration(nodeConfig);
+            }}
+            disabled={!newNodeName.trim() || isValidating || isApplyingSuggestions}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <FontAwesomeIcon icon={isValidating ? faSpinner : faCheckCircle} className={`mr-2 ${isValidating ? 'fa-spin' : ''}`} />
+            {isValidating ? 'Validating...' : `Validate ${mode === 'create' ? 'Configuration' : 'Changes'}`}
+          </button>
+        </div>
 
         {/* Footer */}
         <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">
@@ -622,7 +670,6 @@ const LocalNodeManager = ({
           <button
             onClick={async () => {
               if (mode === 'create') {
-                // Validate configuration before creating
                 const nodeConfig = {
                   name: newNodeName,
                   host: newNodeHost,
@@ -634,14 +681,30 @@ const LocalNodeManager = ({
                   roles: newNodeRoles
                 };
                 
+                console.log('Creating node with config:', nodeConfig);
+                
+                // Always validate before creating (single source of truth)
                 const isValid = await validateNodeConfiguration(nodeConfig);
-                if (isValid) {
-                  await createLocalNode();
+                console.log('Validation result:', isValid);
+                
+                if (!isValid) {
+                  console.log('Validation failed, stopping node creation');
+                  return; // Stop if validation fails
+                }
+                
+                console.log('Validation passed, proceeding with node creation');
+                
+                try {
+                  await createLocalNode(nodeConfig);
+                  console.log('Node created successfully');
                   onClose();
+                } catch (error) {
+                  console.error('Failed to create node:', error);
+                  // Error will be handled by createLocalNode
                 }
               } else {
-                // For edit mode, call updateLocalNode
-                await updateLocalNode(nodeToEdit.name, {
+                // For edit mode, validate first then call updateLocalNode
+                const nodeConfig = {
                   name: newNodeName,
                   host: newNodeHost,
                   port: parseInt(newNodePort),
@@ -650,15 +713,51 @@ const LocalNodeManager = ({
                   dataPath: newNodeDataPath,
                   logsPath: newNodeLogsPath,
                   roles: newNodeRoles
-                });
-                onClose();
+                };
+                
+                console.log('Updating node with config:', nodeConfig);
+                
+                // Always validate before updating (single source of truth)
+                const isValid = await validateNodeConfiguration(nodeConfig);
+                console.log('Edit validation result:', isValid);
+                
+                if (!isValid) {
+                  console.log('Edit validation failed, stopping node update');
+                  return; // Stop if validation fails
+                }
+                
+                console.log('Edit validation passed, proceeding with node update');
+                
+                try {
+                  await updateLocalNode(nodeToEdit.name, nodeConfig);
+                  console.log('Node updated successfully');
+                  onClose();
+                } catch (error) {
+                  console.error('Failed to update node:', error);
+                  
+                  // Handle validation conflicts from backend
+                  if (error.validationData) {
+                    console.log('Backend validation failed during update:', error.validationData);
+                    setValidationErrors(error.validationData.conflicts || []);
+                    setValidationSuggestions(error.validationData.suggestions || {});
+                    setShowValidationErrors(true);
+                    return; // Don't close the modal, show validation errors
+                  }
+                  
+                  // For other errors, let the hook handle the notification
+                }
               }
             }}
             className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!newNodeName.trim() || isValidating}
+            disabled={
+              !newNodeName.trim() || 
+              isValidating || 
+              isApplyingSuggestions || 
+              (mode === 'edit' && nodeToEdit?.isRunning)
+            }
           >
             <FontAwesomeIcon icon={isValidating ? faSpinner : faServer} className={`mr-2 ${isValidating ? 'fa-spin' : ''}`} />
-            {isValidating ? 'Validating...' : (mode === 'create' ? 'Create Node' : 'Update Node')}
+            {isValidating ? 'Validating...' : isApplyingSuggestions ? 'Applying Changes...' : (mode === 'create' ? 'Create Node' : 'Update Node')}
           </button>
         </div>
       </div>

@@ -64,16 +64,28 @@ export default function AdminDashboard({ onLogout }) {
   const [showNodeDetailsModal, setShowNodeDetailsModal] = useState(false);
   const [selectedNodeForDetails, setSelectedNodeForDetails] = useState(null);
 
+  // === Loading state tracking ===
+  const [isInitializing, setIsInitializing] = useState(true);
+
   // Fetch tasks on mount
   useEffect(() => {
-    fetchAllTasks();
-  }, [fetchAllTasks]);
+    const initializeDashboard = async () => {
+      setIsInitializing(true);
+      try {
+        await Promise.all([
+          fetchAllTasks(),
+          clusterManagement.fetchLocalNodes()
+        ]);
+      } catch (error) {
+        console.error("Failed to initialize dashboard:", error);
+        showNotification("error", "Failed to initialize dashboard", faExclamationTriangle);
+      } finally {
+        setIsInitializing(false);
+      }
+    };
 
-  // Fetch cluster and node data when component mounts
-  useEffect(() => {
-    // Only fetch local nodes - this will also try to get cluster info if available
-    clusterManagement.fetchLocalNodes();
-  }, []); // Empty dependency array to prevent loops
+    initializeDashboard();
+  }, [fetchAllTasks]);
 
   // Fetch additional data when cluster tab is active
   useEffect(() => {
@@ -81,7 +93,7 @@ export default function AdminDashboard({ onLogout }) {
       // Refresh local nodes (which includes cluster info if available)
       clusterManagement.fetchLocalNodes();
     }
-  }, [activeTab, clusterManagement.fetchLocalNodes]); // Rerun when tab changes
+  }, [activeTab]); // Remove clusterManagement.fetchLocalNodes from dependency array to prevent loops
 
   // Helper function to format bytes
   function formatBytes(bytes) {
@@ -112,12 +124,24 @@ export default function AdminDashboard({ onLogout }) {
   };
 
   const handleCreateIndex = async () => {
+    if (!newIndexName.trim()) {
+      showNotification("error", "Index name is required", faExclamationTriangle);
+      return;
+    }
+
+    // Validate index name
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(newIndexName)) {
+      showNotification("error", "Index name must start with a letter or number and contain only lowercase letters, numbers, hyphens, and underscores", faExclamationTriangle);
+      return;
+    }
+
     try {
       await elasticsearchManagement.handleCreateIndex(newIndexName, newIndexShards, newIndexReplicas);
       closeESModal();
       elasticsearchManagement.fetchESData();
     } catch (err) {
       console.error("Failed to create index:", err);
+      // Error already shown by elasticsearchManagement.handleCreateIndex
     }
   };
 
@@ -130,20 +154,46 @@ export default function AdminDashboard({ onLogout }) {
   };
 
   const handleReindex = async () => {
+    if (!reindexSource.trim() || !reindexDest.trim()) {
+      showNotification("error", "Both source and destination indices are required", faExclamationTriangle);
+      return;
+    }
+
+    if (reindexSource === reindexDest) {
+      showNotification("error", "Source and destination indices must be different", faExclamationTriangle);
+      return;
+    }
+
     try {
       await elasticsearchManagement.handleReindexData(reindexSource, reindexDest);
       closeESModal();
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to reindex");
+      showNotification("error", err.response?.data?.error || "Failed to reindex", faExclamationTriangle);
     }
   };
 
-  const handleEditNode = (node) => {
-    setNodeToEdit(node);
-    setShowLocalNodeManager(true);
+  const handleEditNode = async (node) => {
+    if (!node) {
+      showNotification("error", "Invalid node data", faExclamationTriangle);
+      return;
+    }
+    
+    try {
+      // Fetch latest node details before editing
+      const latestNodeDetails = await clusterManagement.getNodeDetails(node.name);
+      setNodeToEdit(latestNodeDetails);
+      setShowLocalNodeManager(true);
+    } catch (error) {
+      console.error("Error fetching node details for editing:", error);
+      showNotification("error", "Failed to fetch node details: " + (error.response?.data?.error || error.message), faExclamationTriangle);
+    }
   };
 
   const handleOpenNodeDetails = (node) => {
+    if (!node) {
+      showNotification("error", "Invalid node data", faExclamationTriangle);
+      return;
+    }
     setSelectedNodeForDetails(node);
     setShowNodeDetailsModal(true);
   };
@@ -154,27 +204,20 @@ export default function AdminDashboard({ onLogout }) {
   };
 
   useEffect(() => {
-    const manageESData = async () => {
-      if (clusterManagement.localNodes.some(node => node.isRunning)) {
-        await elasticsearchManagement.fetchESData();
+    // Node-specific ES data management is now handled in ClusterManagement component
+    // We only need to refresh local nodes data when nodes are available
+    if (activeTab === "cluster" && clusterManagement.localNodes && clusterManagement.localNodes.length > 0) {
+      // Optional: Refresh nodes periodically if needed, but only if there are running nodes
+      const runningNodes = clusterManagement.localNodes.filter(n => n.isRunning);
+      if (runningNodes.length > 0) {
+        const interval = setInterval(() => {
+          clusterManagement.fetchLocalNodes();
+        }, 60000); // Every minute instead of 30 seconds for better performance
         
-        // After fetching, check if the selected index is valid
-        const { esIndices, selectedIndex, handleSelectIndex } = elasticsearchManagement;
-        const selectedIndexExists = esIndices.some(index => index.name === selectedIndex);
-
-        if (!selectedIndexExists && esIndices.length > 0) {
-          // If not, select the first available index
-          handleSelectIndex(esIndices[0].name);
-        }
+        return () => clearInterval(interval);
       }
-    };
-    
-    manageESData();
-
-    // Set up an interval to periodically refresh the data
-    const interval = setInterval(manageESData, 30000);
-    return () => clearInterval(interval);
-  }, [clusterManagement.localNodes]);
+    }
+  }, [clusterManagement.localNodes, activeTab]);
 
   return (
     <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans">
@@ -202,8 +245,18 @@ export default function AdminDashboard({ onLogout }) {
           </button>
         </div>
       )}
-      
-      <div className="max-w-12xl mx-auto px-4 sm:px-6 lg:px-8 py-8 bg-neutral-900 shadow-2xl rounded-xl border border-neutral-700">
+
+      {/* Loading state for initial dashboard load */}
+      {isInitializing ? (
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <FontAwesomeIcon icon={faCircleNotch} className="fa-spin text-4xl text-primary mb-4" />
+            <p className="text-xl text-neutral-300">Initializing Admin Dashboard...</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="max-w-12xl mx-auto px-4 sm:px-6 lg:px-8 py-8 bg-neutral-900 shadow-2xl rounded-xl border border-neutral-700">
         <div className="flex justify-between items-center mb-10 pb-4 border-b border-neutral-700">
           <h1 className="text-5xl font-extrabold text-primary">
             Admin Dashboard
@@ -285,32 +338,31 @@ export default function AdminDashboard({ onLogout }) {
           <ClusterManagement 
             // Local node state
             localNodes={clusterManagement.localNodes}
-            nodeStats={clusterManagement.nodeStats}
-            nodeDisks={clusterManagement.nodeDisks}
-            diskPreferences={clusterManagement.diskPreferences}
+            nodeDisks={{}} // No longer used, but keeping for backward compatibility
+            diskPreferences={{}} // No longer used, but keeping for backward compatibility
             clusterLoading={clusterManagement.clusterLoading}
             nodeActionLoading={clusterManagement.nodeActionLoading}
-            selectedNodeForDisks={clusterManagement.selectedNodeForDisks}
-            setSelectedNodeForDisks={clusterManagement.setSelectedNodeForDisks}
+            selectedNodeForDisks={null} // No longer used
+            setSelectedNodeForDisks={() => {}} // No longer used
             fetchLocalNodes={clusterManagement.fetchLocalNodes}
-            fetchNodeStats={clusterManagement.fetchNodeStats}
-            fetchDiskPreferences={clusterManagement.fetchDiskPreferences}
+            fetchNodeStats={() => {}} // No longer used
+            fetchDiskPreferences={() => {}} // No longer used
             handleStartLocalNode={clusterManagement.handleStartLocalNode}
             handleStopLocalNode={clusterManagement.handleStopLocalNode}
             handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
-            handleSetPreferredDisk={clusterManagement.handleSetPreferredDisk}
-            // ES state
-            esIndices={elasticsearchManagement.esIndices}
-            selectedIndex={elasticsearchManagement.selectedIndex}
-            esHealth={elasticsearchManagement.esHealth}
-            esLoading={elasticsearchManagement.esLoading}
-            fetchESData={elasticsearchManagement.fetchESData}
-            handleCreateIndex={handleCreateIndex}
-            handleDeleteIndex={elasticsearchManagement.handleDeleteIndex}
-            handleSelectIndex={elasticsearchManagement.handleSelectIndex}
-            handleReindexData={handleReindex}
-            handleGetIndexDetails={handleGetIndexDetails}
-            openESModal={openESModal}
+            handleSetPreferredDisk={() => {}} // No longer used
+            // ES state - these are handled by node-specific components now
+            esIndices={[]} // Legacy - now handled per node
+            selectedIndex={null} // Legacy - now handled per node
+            esHealth={null} // Legacy - now handled per node
+            esLoading={false} // Legacy - now handled per node
+            fetchESData={() => {}} // Legacy - now handled per node
+            handleCreateIndex={handleCreateIndex} // Legacy fallback
+            handleDeleteIndex={() => {}} // Legacy - now handled per node
+            handleSelectIndex={() => {}} // Legacy - now handled per node
+            handleReindexData={handleReindex} // Legacy fallback
+            handleGetIndexDetails={handleGetIndexDetails} // Legacy fallback
+            openESModal={openESModal} // Legacy fallback
             // Modal controls
             setShowClusterWizard={setShowClusterWizard}
             setShowLocalNodeManager={setShowLocalNodeManager}
@@ -666,9 +718,11 @@ export default function AdminDashboard({ onLogout }) {
         show={showNodeDetailsModal}
         onClose={handleCloseNodeDetails}
         node={selectedNodeForDetails}
-        nodeDisks={clusterManagement.nodeDisks}
+        nodeDisks={{}} // Legacy - now handled differently
         formatBytes={formatBytes}
       />
+        </>
+      )}
     </div>
   );
 }
