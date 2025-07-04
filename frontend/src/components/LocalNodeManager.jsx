@@ -723,39 +723,7 @@ const LocalNodeManager = ({
           </div>
         )}
 
-        {/* Validation Button - Show for both create and edit modes */}
-        <div className="mt-6 p-4 bg-neutral-700 rounded-lg border border-neutral-600">
-          <h3 className="text-lg font-semibold text-white mb-3">
-            <FontAwesomeIcon icon={faCheckCircle} className="mr-2 text-green-400" />
-            Configuration Validation
-          </h3>
-          <p className="text-neutral-300 text-sm mb-4">
-            {mode === 'create' 
-              ? 'Validate your node configuration before creation to check for conflicts with existing nodes.'
-              : 'Validate your changes before updating to check for conflicts with other nodes.'
-            }
-          </p>
-          <button
-            onClick={async () => {
-              const nodeConfig = {
-                name: newNodeName,
-                host: newNodeHost,
-                port: parseInt(newNodePort),
-                transportPort: parseInt(newNodeTransportPort),
-                cluster: newNodeCluster,
-                dataPath: newNodeDataPath,
-                logsPath: newNodeLogsPath,
-                roles: newNodeRoles
-              };
-              await validateNodeConfiguration(nodeConfig);
-            }}
-            disabled={!newNodeName.trim() || isValidating || isApplyingSuggestions || (mode === 'edit' && nodeToEdit?.isRunning)}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <FontAwesomeIcon icon={isValidating ? faSpinner : faCheckCircle} className={`mr-2 ${isValidating ? 'fa-spin' : ''}`} />
-            {isValidating ? 'Validating...' : `Validate ${mode === 'create' ? 'Configuration' : 'Changes'}`}
-          </button>
-        </div>
+       
 
         {/* Footer */}
         <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">

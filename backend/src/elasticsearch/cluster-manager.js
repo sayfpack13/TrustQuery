@@ -1088,6 +1088,22 @@ REM Start Elasticsearch
         await fs.copyFile(oldPaths.servicePath, newPaths.servicePath);
       }
       
+      // Copy jvm.options if it exists
+      const oldJvmPath = path.join(path.dirname(oldPaths.configPath), 'jvm.options');
+      const newJvmPath = path.join(path.dirname(newPaths.configPath), 'jvm.options');
+      const jvmExists = await fs.access(oldJvmPath).then(() => true).catch(() => false);
+      if (jvmExists) {
+        await fs.copyFile(oldJvmPath, newJvmPath);
+      }
+      
+      // Copy log4j2.properties if it exists
+      const oldLog4j2Path = path.join(path.dirname(oldPaths.configPath), 'log4j2.properties');
+      const newLog4j2Path = path.join(path.dirname(newPaths.configPath), 'log4j2.properties');
+      const log4j2Exists = await fs.access(oldLog4j2Path).then(() => true).catch(() => false);
+      if (log4j2Exists) {
+        await fs.copyFile(oldLog4j2Path, newLog4j2Path);
+      }
+      
       // Move/copy data if requested
       if (preserveData) {
         const dataExists = await fs.access(oldPaths.dataPath).then(() => true).catch(() => false);
@@ -1124,23 +1140,31 @@ REM Start Elasticsearch
       // Update config file with new paths
       const updatedConfig = {
         name: currentConfig.node?.name || nodeName,
-        cluster: currentConfig.cluster?.name || currentMetadata.cluster || 'elasticsearch',
+        clusterName: currentConfig.cluster?.name || currentMetadata.cluster || 'trustquery-cluster',
         host: currentMetadata.host || 'localhost',
         port: currentMetadata.port || 9200,
         transportPort: currentMetadata.transportPort || 9300,
+        dataPath: newPaths.dataPath,
+        logsPath: newPaths.logsPath,
         roles: currentMetadata.roles || {
           master: true,
           data: true,
           ingest: true
-        },
-        path: {
-          data: newPaths.dataPath,
-          logs: newPaths.logsPath
         }
       };
       
       const configContent = this.generateNodeConfig(updatedConfig);
       await fs.writeFile(newPaths.configPath, configContent);
+      
+      // Generate and write JVM options file
+      const jvmOptions = this.generateJVMOptions();
+      const jvmPath = path.join(path.dirname(newPaths.configPath), 'jvm.options');
+      await fs.writeFile(jvmPath, jvmOptions);
+      
+      // Generate and write log4j2.properties file
+      const log4j2Config = this.generateLog4j2Config(newPaths.logsPath);
+      const log4j2Path = path.join(path.dirname(newPaths.configPath), 'log4j2.properties');
+      await fs.writeFile(log4j2Path, log4j2Config);
       
       // Update service file with new paths
       const serviceContent = this.generateServiceScript(updatedConfig.name, path.dirname(newPaths.configPath), updatedConfig.port);
@@ -1213,6 +1237,41 @@ REM Start Elasticsearch
       await fs.mkdir(newPaths.dataPath, { recursive: true });
       await fs.mkdir(newPaths.logsPath, { recursive: true });
       
+      // Copy existing config files from source (will be overwritten with updated content)
+      if (sourceMetadata.configPath) {
+        const sourceConfigExists = await fs.access(sourceMetadata.configPath).then(() => true).catch(() => false);
+        if (sourceConfigExists) {
+          await fs.copyFile(sourceMetadata.configPath, newPaths.configPath);
+        }
+      }
+      
+      if (sourceMetadata.servicePath) {
+        const sourceServiceExists = await fs.access(sourceMetadata.servicePath).then(() => true).catch(() => false);
+        if (sourceServiceExists) {
+          await fs.copyFile(sourceMetadata.servicePath, newPaths.servicePath);
+        }
+      }
+      
+      // Copy jvm.options if it exists in source
+      if (sourceMetadata.configPath) {
+        const sourceJvmPath = path.join(path.dirname(sourceMetadata.configPath), 'jvm.options');
+        const newJvmPath = path.join(path.dirname(newPaths.configPath), 'jvm.options');
+        const sourceJvmExists = await fs.access(sourceJvmPath).then(() => true).catch(() => false);
+        if (sourceJvmExists) {
+          await fs.copyFile(sourceJvmPath, newJvmPath);
+        }
+      }
+      
+      // Copy log4j2.properties if it exists in source
+      if (sourceMetadata.configPath) {
+        const sourceLog4j2Path = path.join(path.dirname(sourceMetadata.configPath), 'log4j2.properties');
+        const newLog4j2Path = path.join(path.dirname(newPaths.configPath), 'log4j2.properties');
+        const sourceLog4j2Exists = await fs.access(sourceLog4j2Path).then(() => true).catch(() => false);
+        if (sourceLog4j2Exists) {
+          await fs.copyFile(sourceLog4j2Path, newLog4j2Path);
+        }
+      }
+      
       // Generate new ports for the copied node
       const existingMetadata = require('../config').getConfig('nodeMetadata') || {};
       const usedPorts = new Set();
@@ -1230,24 +1289,32 @@ REM Start Elasticsearch
       // Create new config with updated settings
       const newConfig = {
         name: newNodeName,
-        cluster: sourceConfig.cluster?.name || sourceMetadata.cluster || 'elasticsearch',
+        clusterName: sourceConfig.cluster?.name || sourceMetadata.cluster || 'trustquery-cluster',
         host: sourceMetadata.host || 'localhost',
         port: newHttpPort,
         transportPort: newTransportPort,
+        dataPath: newPaths.dataPath,
+        logsPath: newPaths.logsPath,
         roles: sourceMetadata.roles || {
           master: true,
           data: true,
           ingest: true
-        },
-        path: {
-          data: newPaths.dataPath,
-          logs: newPaths.logsPath
         }
       };
       
       // Write new config file
       const configContent = this.generateNodeConfig(newConfig);
       await fs.writeFile(newPaths.configPath, configContent);
+      
+      // Generate and write JVM options file
+      const jvmOptions = this.generateJVMOptions();
+      const jvmPath = path.join(path.dirname(newPaths.configPath), 'jvm.options');
+      await fs.writeFile(jvmPath, jvmOptions);
+      
+      // Generate and write log4j2.properties file
+      const log4j2Config = this.generateLog4j2Config(newPaths.logsPath);
+      const log4j2Path = path.join(path.dirname(newPaths.configPath), 'log4j2.properties');
+      await fs.writeFile(log4j2Path, log4j2Config);
       
       // Write new service file
       const serviceContent = this.generateServiceScript(newConfig.name, path.dirname(newPaths.configPath), newConfig.port);
@@ -1275,7 +1342,7 @@ REM Start Elasticsearch
         servicePath: newPaths.servicePath,
         dataPath: newPaths.dataPath,
         logsPath: newPaths.logsPath,
-        cluster: newConfig.cluster,
+        cluster: newConfig.clusterName,
         host: newConfig.host,
         port: newHttpPort,
         transportPort: newTransportPort,
