@@ -6,33 +6,26 @@ const CONFIG_FILE = path.join(__dirname, "../../config.json");
 
 // Default configuration
 const DEFAULT_CONFIG = {
-  selectedIndex: "accounts",
-  searchIndices: ["accounts"], // Default search indices
+  // Multi-index search configuration - this is what matters for search functionality
+  searchIndices: [], // Indices selected for search across all nodes
+  
+  // Node management
   elasticsearchNodes: ["http://localhost:9200"],
-  writeNode: "http://localhost:9200", // Dedicated write node
-  nodeAttributes: {
-    defaultDiskType: "ssd",
-    defaultZone: "zone1"
-  },
   nodeMetadata: {}, // Store detailed node configuration
-  diskPreferences: {}, // Node disk preferences
+  
+  // Search and parsing settings
   batchSize: 1000,
   minVisibleChars: 2,
   maskingRatio: 0.2,
   usernameMaskingRatio: 0.4,
+  
   // Admin UI settings
   adminSettings: {
-    showRawLineByDefault: false
+    showRawLineByDefault: false,
+    indicesCacheDurationMinutes: 15 // How long to cache indices data
   },
-  // Elasticsearch configuration file paths and settings
-  elasticsearchConfig: {
-    configFilePath: "C:\\elasticsearch\\config\\elasticsearch.yml", // Default Windows path
-    dataPath: "C:\\elasticsearch\\data",
-    logsPath: "C:\\elasticsearch\\logs",
-    jvmOptionsPath: "C:\\elasticsearch\\config\\jvm.options",
-    autoBackup: true,
-    restartCommand: "net restart elasticsearch"
-  },
+  
+  // Task management
   autoRefreshInterval: 30000,
   maxTaskHistory: 100
 };

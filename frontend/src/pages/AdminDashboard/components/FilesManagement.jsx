@@ -12,6 +12,7 @@ import {
   faInfoCircle,
   faExclamationTriangle,
   faSpinner,
+  faCheckCircle,
 } from "@fortawesome/free-solid-svg-icons";
 
 export default function FilesManagement({ 
@@ -53,7 +54,7 @@ export default function FilesManagement({
       setParsedFiles(parsedRes.data.files || []);
       setPendingFiles(pendingRes.data.files || []);
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to fetch files data");
+      showNotification("error", err.response?.data?.error || "Failed to fetch files data", faTimes);
     } finally {
       setLoading(false);
     }
@@ -114,7 +115,7 @@ export default function FilesManagement({
       setNodeIndices(response.data || []);
     } catch (error) {
       console.error(`Failed to load indices for node ${node.name}:`, error);
-      showNotification("error", `Failed to load indices for node ${node.name}: ${error.response?.data?.error || error.message}`);
+      showNotification("error", `Failed to load indices for node ${node.name}: ${error.response?.data?.error || error.message}`, faTimes);
       setNodeIndices([]);
     } finally {
       setLoadingNodeIndices(false);
@@ -142,13 +143,13 @@ export default function FilesManagement({
       });
 
       if (response.data.success) {
-        showNotification("success", "Files uploaded successfully!");
+        showNotification("success", "Files uploaded successfully!", faCheckCircle);
         setUploadFiles([]);
         setUploadPercentage(0);
         fetchFilesData();
       }
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Upload failed");
+      showNotification("error", err.response?.data?.error || "Upload failed", faTimes);
       setUploadPercentage(0);
     } finally {
       setLoading(false);
@@ -157,7 +158,7 @@ export default function FilesManagement({
 
   const handleParseAll = async () => {
     if (unparsedFiles.length === 0) {
-      showNotification("info", "No unparsed files to process.");
+      showNotification("info", "No unparsed files to process.", faInfoCircle);
       return;
     }
 
@@ -224,17 +225,17 @@ export default function FilesManagement({
         fetchFilesData();
       }
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to start parsing task");
+      showNotification("error", err.response?.data?.error || "Failed to start parsing task", faTimes);
     }
   };
 
   const handleMoveToUnparsed = async (filename) => {
     try {
       await axiosClient.post("/api/admin/move-to-unparsed", { filename });
-      showNotification("success", `Moved '${filename}' to unparsed folder.`);
+      showNotification("success", `Moved '${filename}' to unparsed folder.`, faCheckCircle);
       fetchFilesData();
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to move file");
+      showNotification("error", err.response?.data?.error || "Failed to move file", faTimes);
     }
   };
 
@@ -247,10 +248,10 @@ export default function FilesManagement({
       await axiosClient.delete("/api/admin/pending-files", {
         data: { filename },
       });
-      showNotification("success", `Deleted '${filename}' successfully.`);
+      showNotification("success", `Deleted '${filename}' successfully.`, faCheckCircle);
       fetchFilesData();
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to delete file");
+      showNotification("error", err.response?.data?.error || "Failed to delete file", faTimes);
     }
   };
 
@@ -263,10 +264,10 @@ export default function FilesManagement({
       await axiosClient.delete("/api/admin/files", {
         data: { filename },
       });
-      showNotification("success", `Deleted '${filename}' successfully.`);
+      showNotification("success", `Deleted '${filename}' successfully.`, faCheckCircle);
       fetchFilesData();
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to delete file");
+      showNotification("error", err.response?.data?.error || "Failed to delete file", faTimes);
     }
   };
 
@@ -279,10 +280,10 @@ export default function FilesManagement({
       await axiosClient.delete("/api/admin/parsed-files", {
         data: { filename },
       });
-      showNotification("success", `Deleted '${filename}' successfully.`);
+      showNotification("success", `Deleted '${filename}' successfully.`, faCheckCircle);
       fetchFilesData();
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to delete file");
+      showNotification("error", err.response?.data?.error || "Failed to delete file", faTimes);
     }
   };
 

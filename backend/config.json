@@ -1,17 +1,11 @@
 {
-  "selectedIndex": "accounts",
   "searchIndices": [
-    "accounts"
+    "test2"
   ],
   "elasticsearchNodes": [
     "http://localhost:9201",
     "http://localhost:9200"
   ],
-  "writeNode": null,
-  "nodeAttributes": {
-    "defaultDiskType": "ssd",
-    "defaultZone": "zone1"
-  },
   "nodeMetadata": {
     "http://localhost:9201": {
       "name": "test-1",
@@ -46,7 +40,6 @@
       }
     }
   },
-  "diskPreferences": {},
   "batchSize": 1000,
   "minVisibleChars": 2,
   "maskingRatio": 0.2,
@@ -54,6 +47,15 @@
   "adminSettings": {
     "showRawLineByDefault": false
   },
+  "autoRefreshInterval": 30000,
+  "maxTaskHistory": 100,
+  "selectedIndex": "accounts",
+  "writeNode": null,
+  "nodeAttributes": {
+    "defaultDiskType": "ssd",
+    "defaultZone": "zone1"
+  },
+  "diskPreferences": {},
   "elasticsearchConfig": {
     "configFilePath": "C:\\elasticsearch\\config\\elasticsearch.yml",
     "dataPath": "C:\\elasticsearch\\data",
@@ -62,6 +64,19 @@
     "autoBackup": true,
     "restartCommand": "net restart elasticsearch"
   },
-  "autoRefreshInterval": 30000,
-  "maxTaskHistory": 100
+  "cachedIndicesByNodes": {
+    "test-1": {
+      "nodeUrl": "http://localhost:9201",
+      "isRunning": false,
+      "indices": [],
+      "error": "fetch failed"
+    },
+    "test": {
+      "nodeUrl": "http://localhost:9200",
+      "isRunning": false,
+      "indices": [],
+      "error": "fetch failed"
+    }
+  },
+  "indicesCacheTimestamp": 1751663563404
 }

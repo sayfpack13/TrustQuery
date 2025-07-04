@@ -938,12 +938,32 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
     const { searchIndices, minVisibleChars, maskingRatio, usernameMaskingRatio, batchSize, adminSettings } = req.body;
 
     const updates = {};
+    
+    // Handle direct config updates
     if (searchIndices !== undefined) updates.searchIndices = searchIndices;
     if (minVisibleChars !== undefined) updates.minVisibleChars = minVisibleChars;
     if (maskingRatio !== undefined) updates.maskingRatio = maskingRatio;
     if (usernameMaskingRatio !== undefined) updates.usernameMaskingRatio = usernameMaskingRatio;
     if (batchSize !== undefined) updates.batchSize = batchSize;
-    if (adminSettings !== undefined) updates.adminSettings = { ...getConfig('adminSettings'), ...adminSettings };
+    
+    // Handle adminSettings - if sent as complete object, merge individual fields
+    if (adminSettings !== undefined) {
+      const currentAdminSettings = getConfig('adminSettings') || {};
+      
+      // If adminSettings contains system settings that should be at root level
+      if (adminSettings.minVisibleChars !== undefined) updates.minVisibleChars = adminSettings.minVisibleChars;
+      if (adminSettings.maskingRatio !== undefined) updates.maskingRatio = adminSettings.maskingRatio;
+      if (adminSettings.usernameMaskingRatio !== undefined) updates.usernameMaskingRatio = adminSettings.usernameMaskingRatio;
+      if (adminSettings.batchSize !== undefined) updates.batchSize = adminSettings.batchSize;
+      
+      // UI-specific settings go in adminSettings
+      const uiSettings = {};
+      if (adminSettings.showRawLineByDefault !== undefined) uiSettings.showRawLineByDefault = adminSettings.showRawLineByDefault;
+      
+      if (Object.keys(uiSettings).length > 0) {
+        updates.adminSettings = { ...currentAdminSettings, ...uiSettings };
+      }
+    }
 
     await setConfig(updates);
 
@@ -966,12 +986,27 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
       return res.status(400).json({ error: "Indices must be an array" });
     }
 
-    // Verify all indices exist
-    const es = getCurrentES();
+    // Validate that indices exist in our cached data
+    const config = getConfig();
+    const cachedIndices = config.cachedIndicesByNodes || {};
+    const allAvailableIndices = [];
+    
+    // Collect all available indices from all nodes
+    Object.values(cachedIndices).forEach(nodeData => {
+      if (nodeData.indices && Array.isArray(nodeData.indices)) {
+        nodeData.indices.forEach(idx => {
+          allAvailableIndices.push(idx.index);
+        });
+      }
+    });
+
+    // Check if all requested indices exist
     for (const index of indices) {
-      const exists = await es.indices.exists({ index });
-      if (!exists) {
-        return res.status(400).json({ error: `Index '${index}' does not exist` });
+      if (!allAvailableIndices.includes(index)) {
+        return res.status(400).json({ 
+          error: `Index '${index}' does not exist in any configured node`,
+          availableIndices: allAvailableIndices
+        });
       }
     }
 
@@ -979,7 +1014,8 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
 
     res.json({
       message: "Search indices updated successfully",
-      searchIndices: getConfig('searchIndices')
+      searchIndices: indices,
+      config: getConfig()
     });
   } catch (error) {
     console.error("Error updating search indices:", error);
@@ -1275,5 +1311,177 @@ app.get("/api/indices/:indexName/details", verifyJwt, async (req, res) => {
 app.get("/api/indices/:indexName/documents", verifyJwt, async (req, res) => {
   const { indexName } = req.params;
   const { from = 0, size = 10 } = req.query;
-  // ... existing code ...
+
+  try {
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.status(503).json({ error: "Elasticsearch not available" });
+    }
+
+    const es = getCurrentES();
+    const response = await es.search({
+      index: indexName,
+      from: from,
+      size: size,
+      body: {
+        query: { match_all: {} }
+      },
+    });
+
+    const total = response.hits.total.value;
+    const results = response.hits.hits.map((hit) => {
+      // Assuming the document structure is known and consistent
+      return { id: hit._id, ...hit._source };
+    });
+
+    res.json({ results, total });
+  } catch (error) {
+    console.error("Error fetching documents:", error);
+    res.status(500).json({ error: "Failed to fetch documents" });
+  }
+});
+
+// GET indices grouped by nodes (cached)
+app.get("/api/admin/indices-by-nodes", verifyJwt, async (req, res) => {
+  try {
+    const { force = false } = req.query;
+    const config = getConfig();
+    const nodes = config.elasticsearchNodes || [];
+    const nodeMetadata = config.nodeMetadata || {};
+    
+    // Check if we have cached data and it's recent (unless force refresh)
+    const cachedIndices = config.cachedIndicesByNodes || {};
+    const cacheTimestamp = config.indicesCacheTimestamp || 0;
+    const cacheDurationMinutes = config.adminSettings?.indicesCacheDurationMinutes || 15;
+    const cacheMaxAge = cacheDurationMinutes * 60 * 1000; // Convert to milliseconds
+    const now = Date.now();
+    
+    if (!force && cachedIndices && Object.keys(cachedIndices).length > 0 && 
+        (now - cacheTimestamp) < cacheMaxAge) {
+      return res.json({
+        indicesByNodes: cachedIndices,
+        cached: true,
+        cacheAge: Math.floor((now - cacheTimestamp) / 1000)
+      });
+    }
+
+    const indicesByNodes = {};
+    
+    for (const nodeUrl of nodes) {
+      const nodeInfo = nodeMetadata[nodeUrl] || { name: nodeUrl, host: nodeUrl };
+      const nodeName = nodeInfo.name;
+      
+      try {
+        // Check if node is running by making a health check
+        const healthResponse = await fetch(`${nodeUrl}/_cluster/health`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 5000
+        });
+        
+        if (!healthResponse.ok) {
+          indicesByNodes[nodeName] = {
+            nodeUrl,
+            isRunning: false,
+            indices: [],
+            error: `Node not responding (${healthResponse.status})`
+          };
+          continue;
+        }
+
+        // Fetch indices for this node
+        const indicesResponse = await fetch(`${nodeUrl}/_cat/indices?format=json&h=index,health,status,docs.count,store.size,uuid`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000
+        });
+
+        if (indicesResponse.ok) {
+          const indices = await indicesResponse.json();
+          indicesByNodes[nodeName] = {
+            nodeUrl,
+            isRunning: true,
+            indices: indices.map(idx => ({
+              ...idx,
+              node: nodeName,
+              nodeUrl: nodeUrl
+            })),
+            error: null
+          };
+        } else {
+          indicesByNodes[nodeName] = {
+            nodeUrl,
+            isRunning: true,
+            indices: [],
+            error: `Failed to fetch indices (${indicesResponse.status})`
+          };
+        }
+      } catch (error) {
+        console.error(`Error fetching indices for node ${nodeName}:`, error);
+        indicesByNodes[nodeName] = {
+          nodeUrl,
+          isRunning: false,
+          indices: [],
+          error: error.message
+        };
+      }
+    }
+
+    // Cache the results
+    await setConfig({
+      cachedIndicesByNodes: indicesByNodes,
+      indicesCacheTimestamp: now
+    });
+
+    res.json({
+      indicesByNodes,
+      cached: false,
+      totalNodes: nodes.length,
+      runningNodes: Object.values(indicesByNodes).filter(n => n.isRunning).length
+    });
+
+  } catch (error) {
+    console.error("Error fetching indices by nodes:", error);
+    res.status(500).json({ error: "Failed to fetch indices data" });
+  }
+});
+
+// POST clear indices cache
+app.post("/api/admin/indices-by-nodes/refresh", verifyJwt, async (req, res) => {
+  try {
+    // Clear cache
+    await setConfig({
+      cachedIndicesByNodes: {},
+      indicesCacheTimestamp: 0
+    });
+    
+    res.json({ message: "Indices cache cleared. Next request will fetch fresh data." });
+  } catch (error) {
+    console.error("Error clearing indices cache:", error);
+    res.status(500).json({ error: "Failed to clear cache" });
+  }
+});
+
+// GET indices cache status
+app.get("/api/admin/indices-cache-status", verifyJwt, async (req, res) => {
+  try {
+    const config = getConfig();
+    const cacheTimestamp = config.indicesCacheTimestamp || 0;
+    const cacheDurationMinutes = config.adminSettings?.indicesCacheDurationMinutes || 15;
+    const cacheMaxAge = cacheDurationMinutes * 60 * 1000;
+    const now = Date.now();
+    const ageSeconds = Math.floor((now - cacheTimestamp) / 1000);
+    const remainingSeconds = Math.max(0, Math.floor((cacheMaxAge - (now - cacheTimestamp)) / 1000));
+    
+    res.json({
+      hasCachedData: !!config.cachedIndicesByNodes && Object.keys(config.cachedIndicesByNodes).length > 0,
+      cacheAgeSeconds: ageSeconds,
+      cacheRemainingSeconds: remainingSeconds,
+      cacheDurationMinutes: cacheDurationMinutes,
+      cacheExpired: (now - cacheTimestamp) > cacheMaxAge
+    });
+  } catch (error) {
+    console.error("Error getting cache status:", error);
+    res.status(500).json({ error: "Failed to get cache status" });
+  }
 });

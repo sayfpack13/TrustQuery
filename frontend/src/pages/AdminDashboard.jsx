@@ -5,6 +5,9 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faCircleNotch,
   faExclamationTriangle,
+  faCheckCircle,
+  faInfoCircle,
+  faTimes,
 } from "@fortawesome/free-solid-svg-icons";
 import ClusterSetupWizard from "../components/ClusterSetupWizard";
 import LocalNodeManager from "../components/LocalNodeManager";
@@ -242,7 +245,7 @@ export default function AdminDashboard({ onLogout }) {
           }`}
         >
           <FontAwesomeIcon
-            icon={notification.icon}
+            icon={notification.icon || faInfoCircle}
             className={`${notification.isLoading ? "fa-spin" : ""} text-xl`}
           />
           <p className="font-semibold">{notification.message}</p>
@@ -390,9 +393,6 @@ export default function AdminDashboard({ onLogout }) {
         {activeTab === "configuration" && (
           <ConfigurationManagement 
             showNotification={showNotification}
-            esIndices={elasticsearchManagement.esIndices}
-            availableSearchIndices={elasticsearchManagement.availableSearchIndices}
-            setAvailableSearchIndices={elasticsearchManagement.setAvailableSearchIndices}
           />
         )}
 

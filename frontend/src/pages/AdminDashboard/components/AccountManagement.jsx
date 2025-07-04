@@ -7,6 +7,8 @@ import {
   faEdit,
   faTrash,
   faCircleNotch,
+  faCheckCircle,
+  faTimes,
 } from "@fortawesome/free-solid-svg-icons";
 
 export default function AccountManagement({ 
@@ -63,7 +65,7 @@ export default function AccountManagement({
       setShowEditModal(false);
       setCurrentEditingAccount(null);
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to fetch accounts");
+      showNotification("error", err.response?.data?.error || "Failed to fetch accounts", faTimes);
     } finally {
       setLoading(false);
     }
@@ -132,10 +134,10 @@ export default function AccountManagement({
     setEditLoading(true);
     try {
       await axiosClient.put(`/api/admin/accounts/${currentEditingAccount.id}`, editFormData);
-      showNotification("success", "Account updated successfully!");
+      showNotification("success", "Account updated successfully!", faCheckCircle);
       fetchAccounts(); // Refresh the data
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to update account");
+      showNotification("error", err.response?.data?.error || "Failed to update account", faTimes);
     } finally {
       setEditLoading(false);
     }
@@ -156,10 +158,10 @@ export default function AccountManagement({
 
     try {
       await axiosClient.delete(`/api/admin/accounts/${accountId}`);
-      showNotification("success", "Account deleted successfully!");
+      showNotification("success", "Account deleted successfully!", faCheckCircle);
       fetchAccounts(); // Refresh the data
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to delete account");
+      showNotification("error", err.response?.data?.error || "Failed to delete account", faTimes);
     }
   };
 
@@ -176,10 +178,10 @@ export default function AccountManagement({
         axiosClient.delete(`/api/admin/accounts/${account.id}`)
       );
       await Promise.all(deletePromises);
-      showNotification("success", `${selected.length} account(s) deleted successfully!`);
+      showNotification("success", `${selected.length} account(s) deleted successfully!`, faCheckCircle);
       fetchAccounts(); // Refresh the data
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to delete selected accounts");
+      showNotification("error", err.response?.data?.error || "Failed to delete selected accounts", faTimes);
     }
   };
 
