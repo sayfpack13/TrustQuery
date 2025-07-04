@@ -1043,7 +1043,394 @@ REM Start Elasticsearch
     }
   }
 
-  // ...existing code...
+  /**
+   * Move a node to a new location
+   */
+  async moveNode(nodeName, newBasePath, preserveData = true) {
+    try {
+      console.log(`🚚 Moving node "${nodeName}" to: ${newBasePath}`);
+      
+      // Get current node config and metadata
+      const currentConfig = await this.getNodeConfig(nodeName);
+      const currentMetadata = this.getNodeMetadata(nodeName);
+      
+      const fs = require('fs').promises;
+      const path = require('path');
+      
+      // Define old and new paths
+      const oldPaths = {
+        configPath: currentMetadata.configPath,
+        servicePath: currentMetadata.servicePath,
+        dataPath: currentMetadata.dataPath,
+        logsPath: currentMetadata.logsPath
+      };
+      
+      const newPaths = {
+        configPath: path.join(newBasePath, 'config', 'elasticsearch.yml'),
+        servicePath: path.join(newBasePath, 'config', 'start-node.bat'),
+        dataPath: path.join(newBasePath, 'data'),
+        logsPath: path.join(newBasePath, 'logs')
+      };
+      
+      // Create new directory structure
+      await fs.mkdir(path.join(newBasePath, 'config'), { recursive: true });
+      await fs.mkdir(newPaths.dataPath, { recursive: true });
+      await fs.mkdir(newPaths.logsPath, { recursive: true });
+      
+      // Move/copy config files
+      const configExists = await fs.access(oldPaths.configPath).then(() => true).catch(() => false);
+      if (configExists) {
+        await fs.copyFile(oldPaths.configPath, newPaths.configPath);
+      }
+      
+      const serviceExists = await fs.access(oldPaths.servicePath).then(() => true).catch(() => false);
+      if (serviceExists) {
+        await fs.copyFile(oldPaths.servicePath, newPaths.servicePath);
+      }
+      
+      // Move/copy data if requested
+      if (preserveData) {
+        const dataExists = await fs.access(oldPaths.dataPath).then(() => true).catch(() => false);
+        if (dataExists) {
+          const dataFiles = await fs.readdir(oldPaths.dataPath).catch(() => []);
+          for (const file of dataFiles) {
+            const srcPath = path.join(oldPaths.dataPath, file);
+            const destPath = path.join(newPaths.dataPath, file);
+            const stat = await fs.lstat(srcPath);
+            if (stat.isDirectory()) {
+              await this.copyDirectory(srcPath, destPath);
+            } else {
+              await fs.copyFile(srcPath, destPath);
+            }
+          }
+        }
+        
+        const logsExists = await fs.access(oldPaths.logsPath).then(() => true).catch(() => false);
+        if (logsExists) {
+          const logFiles = await fs.readdir(oldPaths.logsPath).catch(() => []);
+          for (const file of logFiles) {
+            const srcPath = path.join(oldPaths.logsPath, file);
+            const destPath = path.join(newPaths.logsPath, file);
+            const stat = await fs.lstat(srcPath);
+            if (stat.isDirectory()) {
+              await this.copyDirectory(srcPath, destPath);
+            } else {
+              await fs.copyFile(srcPath, destPath);
+            }
+          }
+        }
+      }
+      
+      // Update config file with new paths
+      const updatedConfig = {
+        name: currentConfig.node?.name || nodeName,
+        cluster: currentConfig.cluster?.name || currentMetadata.cluster || 'elasticsearch',
+        host: currentMetadata.host || 'localhost',
+        port: currentMetadata.port || 9200,
+        transportPort: currentMetadata.transportPort || 9300,
+        roles: currentMetadata.roles || {
+          master: true,
+          data: true,
+          ingest: true
+        },
+        path: {
+          data: newPaths.dataPath,
+          logs: newPaths.logsPath
+        }
+      };
+      
+      const configContent = this.generateNodeConfig(updatedConfig);
+      await fs.writeFile(newPaths.configPath, configContent);
+      
+      // Update service file with new paths
+      const serviceContent = this.generateServiceScript(updatedConfig.name, path.dirname(newPaths.configPath), updatedConfig.port);
+      await fs.writeFile(newPaths.servicePath, serviceContent);
+      
+      // Remove old directories if move was successful
+      try {
+        if (preserveData) {
+          // Remove old data and logs
+          await fs.rm(oldPaths.dataPath, { recursive: true, force: true });
+          await fs.rm(oldPaths.logsPath, { recursive: true, force: true });
+        }
+        // Remove old config directory
+        const oldConfigDir = path.dirname(oldPaths.configPath);
+        await fs.rm(oldConfigDir, { recursive: true, force: true });
+        
+        // Remove old base directory if empty
+        const oldBaseDir = path.dirname(oldConfigDir);
+        try {
+          const remainingFiles = await fs.readdir(oldBaseDir);
+          if (remainingFiles.length === 0) {
+            await fs.rmdir(oldBaseDir);
+          }
+        } catch (e) {
+          // Directory not empty or doesn't exist, that's fine
+        }
+      } catch (cleanupError) {
+        console.warn(`⚠️ Could not fully clean up old paths:`, cleanupError.message);
+      }
+      
+      console.log(`✅ Node "${nodeName}" moved successfully to: ${newBasePath}`);
+      
+      return {
+        newConfigPath: newPaths.configPath,
+        newServicePath: newPaths.servicePath,
+        newDataPath: newPaths.dataPath,
+        newLogsPath: newPaths.logsPath
+      };
+      
+    } catch (error) {
+      console.error(`❌ Failed to move node ${nodeName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Copy a node to a new location with a new name
+   */
+  async copyNode(sourceNodeName, newNodeName, newBasePath, copyData = false) {
+    try {
+      console.log(`📋 Copying node "${sourceNodeName}" to "${newNodeName}" at: ${newBasePath}`);
+      
+      // Get source node config and metadata
+      const sourceConfig = await this.getNodeConfig(sourceNodeName);
+      const sourceMetadata = this.getNodeMetadata(sourceNodeName);
+      
+      const fs = require('fs').promises;
+      const path = require('path');
+      
+      // Define new paths
+      const newPaths = {
+        configPath: path.join(newBasePath, 'config', 'elasticsearch.yml'),
+        servicePath: path.join(newBasePath, 'config', 'start-node.bat'),
+        dataPath: path.join(newBasePath, 'data'),
+        logsPath: path.join(newBasePath, 'logs')
+      };
+      
+      // Create new directory structure
+      await fs.mkdir(path.join(newBasePath, 'config'), { recursive: true });
+      await fs.mkdir(newPaths.dataPath, { recursive: true });
+      await fs.mkdir(newPaths.logsPath, { recursive: true });
+      
+      // Generate new ports for the copied node
+      const existingMetadata = require('../config').getConfig('nodeMetadata') || {};
+      const usedPorts = new Set();
+      Object.values(existingMetadata).forEach(meta => {
+        if (meta.port) usedPorts.add(parseInt(meta.port));
+        if (meta.transportPort) usedPorts.add(parseInt(meta.transportPort));
+      });
+      
+      let newHttpPort = sourceConfig.http.port + 1;
+      while (usedPorts.has(newHttpPort)) newHttpPort++;
+      
+      let newTransportPort = sourceConfig.transport.port + 1;
+      while (usedPorts.has(newTransportPort)) newTransportPort++;
+      
+      // Create new config with updated settings
+      const newConfig = {
+        name: newNodeName,
+        cluster: sourceConfig.cluster?.name || sourceMetadata.cluster || 'elasticsearch',
+        host: sourceMetadata.host || 'localhost',
+        port: newHttpPort,
+        transportPort: newTransportPort,
+        roles: sourceMetadata.roles || {
+          master: true,
+          data: true,
+          ingest: true
+        },
+        path: {
+          data: newPaths.dataPath,
+          logs: newPaths.logsPath
+        }
+      };
+      
+      // Write new config file
+      const configContent = this.generateNodeConfig(newConfig);
+      await fs.writeFile(newPaths.configPath, configContent);
+      
+      // Write new service file
+      const serviceContent = this.generateServiceScript(newConfig.name, path.dirname(newPaths.configPath), newConfig.port);
+      await fs.writeFile(newPaths.servicePath, serviceContent);
+      
+      // Copy data if requested
+      if (copyData) {
+        const sourceDataExists = await fs.access(sourceMetadata.dataPath).then(() => true).catch(() => false);
+        if (sourceDataExists) {
+          await this.copyDirectory(sourceMetadata.dataPath, newPaths.dataPath);
+        }
+        
+        const sourceLogsExists = await fs.access(sourceMetadata.logsPath).then(() => true).catch(() => false);
+        if (sourceLogsExists) {
+          await this.copyDirectory(sourceMetadata.logsPath, newPaths.logsPath);
+        }
+      }
+      
+      console.log(`✅ Node "${sourceNodeName}" copied successfully to "${newNodeName}"`);
+      
+      return {
+        name: newNodeName,
+        nodeUrl: `http://${newConfig.host}:${newHttpPort}`,
+        configPath: newPaths.configPath,
+        servicePath: newPaths.servicePath,
+        dataPath: newPaths.dataPath,
+        logsPath: newPaths.logsPath,
+        cluster: newConfig.cluster,
+        host: newConfig.host,
+        port: newHttpPort,
+        transportPort: newTransportPort,
+        roles: newConfig.roles
+      };
+      
+    } catch (error) {
+      console.error(`❌ Failed to copy node ${sourceNodeName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Helper method to recursively copy directories
+   */
+  async copyDirectory(src, dest) {
+    const fs = require('fs').promises;
+    const path = require('path');
+    
+    await fs.mkdir(dest, { recursive: true });
+    const entries = await fs.readdir(src, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+      
+      if (entry.isDirectory()) {
+        await this.copyDirectory(srcPath, destPath);
+      } else {
+        await fs.copyFile(srcPath, destPath);
+      }
+    }
+  }
+
+  /**
+   * Verify and clean up node metadata on server startup
+   * Removes metadata for nodes whose directories no longer exist
+   */
+  async verifyNodeMetadata() {
+    try {
+      console.log('🔍 Verifying node metadata against filesystem...');
+      
+      const { getConfig, setConfig } = require('../config');
+      const nodeMetadata = getConfig('nodeMetadata') || {};
+      const elasticsearchNodes = getConfig('elasticsearchNodes') || [];
+      
+      let metadataChanged = false;
+      let nodesChanged = false;
+      const removedNodes = [];
+      
+      // Check each node in metadata
+      for (const [nodeUrl, metadata] of Object.entries(nodeMetadata)) {
+        if (!metadata || !metadata.name) continue;
+        
+        const nodeName = metadata.name;
+        let nodeExists = false;
+        
+        // Check if the node directory structure exists
+        if (metadata.configPath) {
+          try {
+            const fs = require('fs').promises;
+            const path = require('path');
+            
+            // Check if the main node directory exists (parent of config path)
+            const nodeDir = path.dirname(path.dirname(metadata.configPath)); // Go up from config/elasticsearch.yml to node root
+            await fs.access(nodeDir);
+            
+            // Also check if config file exists
+            await fs.access(metadata.configPath);
+            nodeExists = true;
+            
+            console.log(`✅ Node "${nodeName}" directory verified: ${nodeDir}`);
+          } catch (error) {
+            console.log(`❌ Node "${nodeName}" directory not found or inaccessible`);
+            nodeExists = false;
+          }
+        }
+        
+        if (!nodeExists) {
+          console.log(`🧹 Removing metadata for missing node: ${nodeName}`);
+          delete nodeMetadata[nodeUrl];
+          metadataChanged = true;
+          removedNodes.push(nodeName);
+          
+          // Also remove from elasticsearchNodes array
+          const nodeIndex = elasticsearchNodes.indexOf(nodeUrl);
+          if (nodeIndex > -1) {
+            elasticsearchNodes.splice(nodeIndex, 1);
+            nodesChanged = true;
+            console.log(`🧹 Removed node URL from elasticsearchNodes: ${nodeUrl}`);
+          }
+        }
+      }
+      
+      // Scan the base nodes directory for any existing nodes not in metadata
+      const baseNodesPath = 'C:\\elasticsearch\\nodes';
+      try {
+        const fs = require('fs').promises;
+        const path = require('path');
+        
+        const dirExists = await fs.access(baseNodesPath).then(() => true).catch(() => false);
+        if (dirExists) {
+          const entries = await fs.readdir(baseNodesPath, { withFileTypes: true });
+          const nodeDirs = entries.filter(entry => entry.isDirectory()).map(entry => entry.name);
+          
+          console.log(`🔍 Found ${nodeDirs.length} directories in ${baseNodesPath}:`, nodeDirs);
+          
+          // Check if any of these directories have valid node configurations
+          for (const dirName of nodeDirs) {
+            const nodeDir = path.join(baseNodesPath, dirName);
+            const configPath = path.join(nodeDir, 'config', 'elasticsearch.yml');
+            
+            // Check if this node is already in metadata
+            const existsInMetadata = Object.values(nodeMetadata).some(meta => 
+              meta.name === dirName || meta.configPath === configPath
+            );
+            
+            if (!existsInMetadata) {
+              // Check if it has a valid config file
+              const configExists = await fs.access(configPath).then(() => true).catch(() => false);
+              if (configExists) {
+                console.log(`⚠️  Found orphaned node directory with config: ${dirName}`);
+                console.log(`   Config file: ${configPath}`);
+                console.log(`   This node exists on disk but not in metadata. It may have been manually created or metadata was corrupted.`);
+                console.log(`   You may want to recreate this node through the UI or manually clean up the directory.`);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.log(`ℹ️  Could not scan base nodes directory (${baseNodesPath}):`, error.message);
+      }
+      
+      // Save changes if any were made
+      if (metadataChanged) {
+        await setConfig('nodeMetadata', nodeMetadata);
+        console.log(`✅ Updated node metadata (removed ${removedNodes.length} missing nodes)`);
+      }
+      
+      if (nodesChanged) {
+        await setConfig('elasticsearchNodes', elasticsearchNodes);
+        console.log(`✅ Updated elasticsearchNodes array`);
+      }
+      
+      if (removedNodes.length > 0) {
+        console.log(`🧹 Cleanup summary: Removed metadata for nodes: ${removedNodes.join(', ')}`);
+      } else {
+        console.log(`✅ All node metadata verified - no cleanup needed`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Error during node metadata verification:', error);
+      // Don't throw - this shouldn't prevent server startup
+    }
+  }
 }
 
 module.exports = new ElasticsearchClusterManager();

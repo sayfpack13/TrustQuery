@@ -966,4 +966,154 @@ router.get("/nodes/:nodeName", verifyJwt, async (req, res) => {
   }
 });
 
+// Move node to a new location
+router.post('/nodes/:nodeName/move', verifyJwt, async (req, res) => {
+  try {
+    const { nodeName } = req.params;
+    const { newPath, preserveData } = req.body;
+
+    if (!newPath || typeof newPath !== 'string') {
+      return res.status(400).json({ error: "New path is required" });
+    }
+
+    console.log(`🚚 Moving node "${nodeName}" to: ${newPath}`);
+    
+    // Ensure node is stopped before moving
+    const isRunning = await clusterManager.isNodeRunning(nodeName);
+    if (isRunning) {
+      return res.status(409).json({ 
+        error: "Cannot move a running node. Please stop the node first.",
+        reason: 'node_running'
+      });
+    }
+
+    // Check if destination exists and handle conflicts
+    const fs = require('fs').promises;
+    const path = require('path');
+    
+    const destinationExists = await fs.access(newPath).then(() => true).catch(() => false);
+    if (destinationExists) {
+      return res.status(409).json({
+        error: `Destination path "${newPath}" already exists`,
+        reason: 'destination_exists'
+      });
+    }
+
+    const moveResult = await clusterManager.moveNode(nodeName, newPath, preserveData);
+    
+    // Update metadata
+    const nodeMetadata = getConfig('nodeMetadata') || {};
+    const currentMetadata = Object.values(nodeMetadata).find(m => m.name === nodeName);
+    
+    if (currentMetadata) {
+      const nodeUrl = Object.keys(nodeMetadata).find(url => nodeMetadata[url].name === nodeName);
+      if (nodeUrl) {
+        nodeMetadata[nodeUrl] = {
+          ...currentMetadata,
+          dataPath: moveResult.newDataPath,
+          logsPath: moveResult.newLogsPath,
+          configPath: moveResult.newConfigPath,
+          servicePath: moveResult.newServicePath
+        };
+        await setConfig('nodeMetadata', nodeMetadata);
+      }
+    }
+
+    res.json({
+      message: `Node "${nodeName}" moved successfully to ${newPath}`,
+      newPaths: moveResult
+    });
+
+  } catch (error) {
+    console.error(`Error moving node ${req.params.nodeName}:`, error);
+    res.status(500).json({ error: "Failed to move node: " + error.message });
+  }
+});
+
+// Copy node to a new location with a new name
+router.post('/nodes/:nodeName/copy', verifyJwt, async (req, res) => {
+  try {
+    const { nodeName } = req.params;
+    const { newNodeName, newPath, copyData } = req.body;
+
+    if (!newNodeName || typeof newNodeName !== 'string') {
+      return res.status(400).json({ error: "New node name is required" });
+    }
+
+    if (!newPath || typeof newPath !== 'string') {
+      return res.status(400).json({ error: "New path is required" });
+    }
+
+    console.log(`📋 Copying node "${nodeName}" to "${newNodeName}" at: ${newPath}`);
+
+    // Check if new node name already exists
+    const existingMetadata = getConfig('nodeMetadata') || {};
+    const nodeExists = Object.values(existingMetadata).some(m => m.name === newNodeName);
+    if (nodeExists) {
+      return res.status(409).json({
+        error: `Node with name "${newNodeName}" already exists`,
+        reason: 'node_name_exists'
+      });
+    }
+
+    // Check if destination exists
+    const fs = require('fs').promises;
+    const destinationExists = await fs.access(newPath).then(() => true).catch(() => false);
+    if (destinationExists) {
+      return res.status(409).json({
+        error: `Destination path "${newPath}" already exists`,
+        reason: 'destination_exists'
+      });
+    }
+
+    const copyResult = await clusterManager.copyNode(nodeName, newNodeName, newPath, copyData);
+    
+    // Add new node to configuration
+    const currentNodes = getConfig('elasticsearchNodes') || [];
+    const newNodeUrl = copyResult.nodeUrl;
+    const updatedNodes = [...currentNodes, newNodeUrl];
+    await setConfig('elasticsearchNodes', updatedNodes);
+
+    // Store new node metadata
+    const currentMetadata = getConfig('nodeMetadata') || {};
+    currentMetadata[newNodeUrl] = {
+      name: newNodeName,
+      configPath: copyResult.configPath,
+      servicePath: copyResult.servicePath,
+      dataPath: copyResult.dataPath,
+      logsPath: copyResult.logsPath,
+      cluster: copyResult.cluster,
+      host: copyResult.host,
+      port: copyResult.port,
+      transportPort: copyResult.transportPort,
+      roles: copyResult.roles
+    };
+    await setConfig('nodeMetadata', currentMetadata);
+
+    res.json({
+      message: `Node "${nodeName}" copied successfully to "${newNodeName}"`,
+      newNode: copyResult
+    });
+
+  } catch (error) {
+    console.error(`Error copying node ${req.params.nodeName}:`, error);
+    res.status(500).json({ error: "Failed to copy node: " + error.message });
+  }
+});
+
+// Manual node metadata verification endpoint (for testing/manual cleanup)
+router.post('/nodes/verify-metadata', verifyJwt, async (req, res) => {
+  try {
+    console.log('🔍 Manual node metadata verification requested');
+    await clusterManager.verifyNodeMetadata();
+    res.json({ 
+      message: 'Node metadata verification completed successfully',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error during manual metadata verification:', error);
+    res.status(500).json({ error: "Failed to verify node metadata: " + error.message });
+  }
+});
+
 module.exports = router;

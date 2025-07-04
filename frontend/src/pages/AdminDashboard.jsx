@@ -377,6 +377,7 @@ export default function AdminDashboard({ onLogout }) {
             formatBytes={formatBytes}
             onEditNode={handleEditNode}
             onOpenNodeDetails={handleOpenNodeDetails}
+            showNotification={showNotification}
           />
         )}
 

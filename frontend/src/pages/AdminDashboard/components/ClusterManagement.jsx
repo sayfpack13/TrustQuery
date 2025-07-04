@@ -57,6 +57,7 @@ export default function ClusterManagement({
   onEditNode,
   nodeActionLoading,
   onOpenNodeDetails,
+  showNotification,
 }) {
   const getNodeStats = (nodeName) => {
     return null; // Stats are no longer fetched this way
@@ -89,6 +90,27 @@ export default function ClusterManagement({
                 className={`mr-2 ${clusterLoading ? 'fa-spin' : ''}`} 
               />
               Refresh
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  showNotification('info', 'Verifying node metadata...', faCircleNotch);
+                  const response = await axiosClient.post('/api/admin/cluster-advanced/nodes/verify-metadata');
+                  console.log('Metadata verification completed:', response.data);
+                  showNotification('success', 'Node metadata verification completed successfully', faCog);
+                  // Refresh the nodes list after verification
+                  await fetchLocalNodes();
+                } catch (error) {
+                  console.error('Failed to verify metadata:', error);
+                  showNotification('error', `Failed to verify metadata: ${error.response?.data?.error || error.message}`, faExclamationCircle);
+                }
+              }}
+              className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-opacity-75"
+              disabled={clusterLoading}
+              title="Verify and clean up node metadata"
+            >
+              <FontAwesomeIcon icon={faCog} className="mr-2" />
+              Verify Metadata
             </button>
           </div>
         </div>

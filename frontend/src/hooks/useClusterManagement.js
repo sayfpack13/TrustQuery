@@ -265,6 +265,53 @@ export const useClusterManagement = (showNotification) => {
     }
   }, []);
 
+  // Move node to a new location
+  const moveNode = useCallback(async (nodeName, newPath, preserveData = true) => {
+    try {
+      showNotificationRef.current('info', `Moving node "${nodeName}"...`, faCircleNotch);
+      
+      const response = await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/move`, {
+        newPath,
+        preserveData
+      });
+      
+      // Refresh the local nodes list to reflect the change
+      await fetchLocalNodes();
+      
+      showNotificationRef.current('success', response.data.message, faCheckCircle);
+      return response.data;
+    } catch (error) {
+      console.error(`Error moving node ${nodeName}:`, error);
+      const errorMessage = error.response?.data?.error || error.message;
+      showNotificationRef.current('error', `Failed to move node: ${errorMessage}`, faExclamationTriangle);
+      throw error;
+    }
+  }, [fetchLocalNodes]);
+
+  // Copy node to a new location with a new name
+  const copyNode = useCallback(async (nodeName, newNodeName, newPath, copyData = false) => {
+    try {
+      showNotificationRef.current('info', `Copying node "${nodeName}" to "${newNodeName}"...`, faCircleNotch);
+      
+      const response = await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/copy`, {
+        newNodeName,
+        newPath,
+        copyData
+      });
+      
+      // Refresh the local nodes list to reflect the new node
+      await fetchLocalNodes();
+      
+      showNotificationRef.current('success', response.data.message, faCheckCircle);
+      return response.data;
+    } catch (error) {
+      console.error(`Error copying node ${nodeName}:`, error);
+      const errorMessage = error.response?.data?.error || error.message;
+      showNotificationRef.current('error', `Failed to copy node: ${errorMessage}`, faExclamationTriangle);
+      throw error;
+    }
+  }, [fetchLocalNodes]);
+
   return {
     localNodes,
     clusterLoading,
@@ -295,6 +342,8 @@ export const useClusterManagement = (showNotification) => {
     setNewNodeRoles,
     clusters,
     createCluster,
-    resetNodeForm
+    resetNodeForm,
+    moveNode,
+    copyNode
   };
 };

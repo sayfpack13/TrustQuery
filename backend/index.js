@@ -87,6 +87,10 @@ function getCurrentES() {
 async function initializeServer() {
   await loadCentralizedConfig();
   
+  // Verify and clean up node metadata
+  const clusterManager = require('./src/elasticsearch/cluster-manager');
+  await clusterManager.verifyNodeMetadata();
+  
   // Start the server
   app.listen(PORT, () => {
     console.log(`✅ Server running on: http://localhost:${PORT}`);

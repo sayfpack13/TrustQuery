@@ -11,7 +11,11 @@ import {
   faCog,
   faExclamationTriangle,
   faCheckCircle,
-  faSpinner
+  faSpinner,
+  faCopy,
+  faArrowRight,
+  faFolderOpen,
+  faEdit
 } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../api/axiosClient';
 
@@ -33,6 +37,17 @@ const LocalNodeManager = ({
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [isApplyingSuggestions, setIsApplyingSuggestions] = useState(false);
   const [lastValidatedConfig, setLastValidatedConfig] = useState(null); // Track successful validation
+  
+  // Move/Copy state
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [showCopyModal, setShowCopyModal] = useState(false);
+  const [moveTargetPath, setMoveTargetPath] = useState('');
+  const [copyTargetPath, setCopyTargetPath] = useState('');
+  const [copyNodeName, setCopyNodeName] = useState('');
+  const [preserveData, setPreserveData] = useState(true);
+  const [copyData, setCopyData] = useState(false);
+  const [isMoving, setIsMoving] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
 
   const updatePathsForNewName = (newName, oldName, currentDataPath, currentLogsPath, setDataPath, setLogsPath) => {
     const defaultDataPath = (name) => `C:\\elasticsearch\\nodes\\${name}\\data`;
@@ -81,7 +96,9 @@ const LocalNodeManager = ({
     clusters,
     createLocalNode,
     createCluster,
-    updateLocalNode
+    updateLocalNode,
+    moveNode,
+    copyNode
   } = clusterManagement;
 
   useEffect(() => {
@@ -140,6 +157,17 @@ const LocalNodeManager = ({
       setShowValidationErrors(false);
       setIsValidating(false);
       setIsApplyingSuggestions(false);
+      
+      // Reset move/copy modal state
+      setShowMoveModal(false);
+      setShowCopyModal(false);
+      setMoveTargetPath('');
+      setCopyTargetPath('');
+      setCopyNodeName('');
+      setPreserveData(true);
+      setCopyData(false);
+      setIsMoving(false);
+      setIsCopying(false);
     }
   }, [isOpen]);
 
@@ -497,60 +525,103 @@ const LocalNodeManager = ({
 
           {/* Advanced Configuration */}
           <div className="mt-4 space-y-4 p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-medium text-white">Node Location & Data Paths</h4>
+              {mode === 'edit' && (
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => {
+                      const defaultPath = `C:\\elasticsearch\\nodes\\${nodeToEdit?.name}-moved`;
+                      setMoveTargetPath(defaultPath);
+                      setShowMoveModal(true);
+                    }}
+                    disabled={nodeToEdit?.isRunning}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={nodeToEdit?.isRunning ? "Stop the node to move it" : "Move node to new location"}
+                  >
+                    <FontAwesomeIcon icon={faArrowRight} className="mr-1" />
+                    Move Node
+                  </button>
+                  <button
+                    onClick={() => {
+                      const defaultPath = `C:\\elasticsearch\\nodes\\${nodeToEdit?.name}-copy`;
+                      const defaultName = `${nodeToEdit?.name}-copy`;
+                      setCopyTargetPath(defaultPath);
+                      setCopyNodeName(defaultName);
+                      setShowCopyModal(true);
+                    }}
+                    className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm transition duration-150"
+                    title="Create a copy of this node"
+                  >
+                    <FontAwesomeIcon icon={faCopy} className="mr-1" />
+                    Copy Node
+                  </button>
+                </div>
+              )}
+            </div>
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-neutral-300 mb-2">
                   <FontAwesomeIcon icon={faFolder} className="mr-2" />
                   Data Path
-                  {validationErrors.some(e => e.type === 'data_path') && (
-                    <span className="ml-2 text-red-400 text-xs">
-                      <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
-                      Path conflict
+                  {mode === 'edit' && (
+                    <span className="ml-2 text-amber-400 text-xs">
+                      <FontAwesomeIcon icon={faEdit} className="mr-1" />
+                      Use Move/Copy buttons to change paths
                     </span>
                   )}
                 </label>
                 <input
                   type="text"
                   value={newNodeDataPath}
-                  onChange={(e) => setNewNodeDataPath(e.target.value)}
+                  onChange={mode === 'create' ? (e) => setNewNodeDataPath(e.target.value) : undefined}
                   placeholder="C:\\elasticsearch\\nodes\\node-name\\data"
-                  disabled={mode === 'edit' && nodeToEdit?.isRunning}
-                  className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none focus:ring-2 ${
-                    (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
-                  } ${
-                    validationErrors.some(e => e.type === 'data_path')
-                    ? 'border-red-500 focus:ring-red-500'
-                    : 'border-neutral-700 focus:ring-blue-500'
+                  disabled={mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
+                  className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
+                    mode === 'edit' 
+                      ? 'cursor-not-allowed opacity-70 border-neutral-600' 
+                      : 'focus:ring-2 border-neutral-700 focus:ring-blue-500'
                   }`}
+                  title={mode === 'edit' ? "Path editing disabled - use Move Node or Copy Node buttons instead" : undefined}
                 />
-                <p className="text-neutral-400 text-xs mt-1">Where node data will be stored</p>
+                <p className="text-neutral-400 text-xs mt-1">
+                  {mode === 'edit' 
+                    ? "Current data location (use Move/Copy to change)" 
+                    : "Where node data will be stored"
+                  }
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-neutral-300 mb-2">
                   <FontAwesomeIcon icon={faFolder} className="mr-2" />
                   Logs Path
-                  {validationErrors.some(e => e.type === 'logs_path') && (
-                    <span className="ml-2 text-red-400 text-xs">
-                      <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
-                      Path conflict
+                  {mode === 'edit' && (
+                    <span className="ml-2 text-amber-400 text-xs">
+                      <FontAwesomeIcon icon={faEdit} className="mr-1" />
+                      Use Move/Copy buttons to change paths
                     </span>
                   )}
                 </label>
                 <input
                   type="text"
                   value={newNodeLogsPath}
-                  onChange={(e) => setNewNodeLogsPath(e.target.value)}
+                  onChange={mode === 'create' ? (e) => setNewNodeLogsPath(e.target.value) : undefined}
                   placeholder="C:\\elasticsearch\\nodes\\node-name\\logs"
-                  disabled={mode === 'edit' && nodeToEdit?.isRunning}
-                  className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none focus:ring-2 ${
-                    (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
-                  } ${
-                    validationErrors.some(e => e.type === 'logs_path')
-                    ? 'border-red-500 focus:ring-red-500'
-                    : 'border-neutral-700 focus:ring-blue-500'
+                  disabled={mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
+                  className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
+                    mode === 'edit' 
+                      ? 'cursor-not-allowed opacity-70 border-neutral-600' 
+                      : 'focus:ring-2 border-neutral-700 focus:ring-blue-500'
                   }`}
+                  title={mode === 'edit' ? "Path editing disabled - use Move Node or Copy Node buttons instead" : undefined}
                 />
-                <p className="text-neutral-400 text-xs mt-1">Where node logs will be stored</p>
+                <p className="text-neutral-400 text-xs mt-1">
+                  {mode === 'edit' 
+                    ? "Current logs location (use Move/Copy to change)" 
+                    : "Where node logs will be stored"
+                  }
+                </p>
               </div>
             </div>
           </div>
@@ -788,6 +859,238 @@ const LocalNodeManager = ({
           </button>
         </div>
       </div>
+
+      {/* Move Node Modal */}
+      {showMoveModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[80] p-4">
+          <div className="bg-neutral-800 rounded-xl shadow-2xl w-full max-w-2xl border border-neutral-700">
+            <div className="flex justify-between items-center p-6 border-b border-neutral-700">
+              <h3 className="text-xl font-bold text-white flex items-center">
+                <FontAwesomeIcon icon={faArrowRight} className="mr-3 text-blue-400" />
+                Move Node: {nodeToEdit?.name}
+              </h3>
+              <button
+                onClick={() => setShowMoveModal(false)}
+                className="text-neutral-400 hover:text-white transition-colors text-xl"
+              >
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="p-4 bg-blue-900 rounded-lg border border-blue-700">
+                <div className="flex items-start space-x-3">
+                  <FontAwesomeIcon icon={faInfoCircle} className="text-blue-400 mt-1" />
+                  <div>
+                    <h4 className="text-blue-200 font-medium mb-2">Moving Node</h4>
+                    <p className="text-blue-200 text-sm">
+                      This will move the entire node directory structure to a new location. 
+                      The node configuration will be updated to reflect the new paths.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                  <FontAwesomeIcon icon={faFolderOpen} className="mr-2" />
+                  New Base Path *
+                </label>
+                <input
+                  type="text"
+                  value={moveTargetPath}
+                  onChange={(e) => setMoveTargetPath(e.target.value)}
+                  placeholder="C:\\elasticsearch\\nodes\\new-location"
+                  className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-neutral-400 text-xs mt-1">
+                  Full path where the node directory will be moved
+                </p>
+              </div>
+
+              <div>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={preserveData}
+                    onChange={(e) => setPreserveData(e.target.checked)}
+                    className="form-checkbox text-blue-600 bg-neutral-900 border-neutral-700 rounded focus:ring-blue-500"
+                  />
+                  <span className="text-neutral-300">Preserve existing data</span>
+                </label>
+                <p className="text-neutral-400 text-xs mt-1 ml-6">
+                  If unchecked, only configuration files will be moved (data will be lost)
+                </p>
+              </div>
+
+              {nodeToEdit?.isRunning && (
+                <div className="p-4 bg-amber-900 rounded-lg border border-amber-700">
+                  <div className="flex items-start space-x-3">
+                    <FontAwesomeIcon icon={faExclamationTriangle} className="text-amber-400 mt-1" />
+                    <div>
+                      <h4 className="text-amber-200 font-medium mb-1">Node is Running</h4>
+                      <p className="text-amber-200 text-sm">
+                        The node must be stopped before it can be moved. Please stop the node first.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">
+              <button
+                onClick={() => setShowMoveModal(false)}
+                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!moveTargetPath.trim()) {
+                    return;
+                  }
+                  
+                  setIsMoving(true);
+                  try {
+                    await moveNode(nodeToEdit.name, moveTargetPath, preserveData);
+                    setShowMoveModal(false);
+                    setMoveTargetPath('');
+                    onClose(); // Close the main modal too
+                  } catch (error) {
+                    // Error handling is done in the hook
+                  } finally {
+                    setIsMoving(false);
+                  }
+                }}
+                disabled={!moveTargetPath.trim() || isMoving || nodeToEdit?.isRunning}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FontAwesomeIcon icon={isMoving ? faSpinner : faArrowRight} className={`mr-2 ${isMoving ? 'fa-spin' : ''}`} />
+                {isMoving ? 'Moving...' : 'Move Node'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Copy Node Modal */}
+      {showCopyModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[80] p-4">
+          <div className="bg-neutral-800 rounded-xl shadow-2xl w-full max-w-2xl border border-neutral-700">
+            <div className="flex justify-between items-center p-6 border-b border-neutral-700">
+              <h3 className="text-xl font-bold text-white flex items-center">
+                <FontAwesomeIcon icon={faCopy} className="mr-3 text-green-400" />
+                Copy Node: {nodeToEdit?.name}
+              </h3>
+              <button
+                onClick={() => setShowCopyModal(false)}
+                className="text-neutral-400 hover:text-white transition-colors text-xl"
+              >
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="p-4 bg-green-900 rounded-lg border border-green-700">
+                <div className="flex items-start space-x-3">
+                  <FontAwesomeIcon icon={faInfoCircle} className="text-green-400 mt-1" />
+                  <div>
+                    <h4 className="text-green-200 font-medium mb-2">Copying Node</h4>
+                    <p className="text-green-200 text-sm">
+                      This will create a complete copy of the node with a new name and location. 
+                      You can choose whether to copy the data or start with a fresh data directory.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                  <FontAwesomeIcon icon={faServer} className="mr-2" />
+                  New Node Name *
+                </label>
+                <input
+                  type="text"
+                  value={copyNodeName}
+                  onChange={(e) => setCopyNodeName(e.target.value)}
+                  placeholder="e.g., node-1-copy, backup-node"
+                  className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                <p className="text-neutral-400 text-xs mt-1">
+                  Unique name for the new node copy
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                  <FontAwesomeIcon icon={faFolderOpen} className="mr-2" />
+                  New Base Path *
+                </label>
+                <input
+                  type="text"
+                  value={copyTargetPath}
+                  onChange={(e) => setCopyTargetPath(e.target.value)}
+                  placeholder="C:\\elasticsearch\\nodes\\new-node-copy"
+                  className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+                <p className="text-neutral-400 text-xs mt-1">
+                  Full path where the new node will be created
+                </p>
+              </div>
+
+              <div>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={copyData}
+                    onChange={(e) => setCopyData(e.target.checked)}
+                    className="form-checkbox text-green-600 bg-neutral-900 border-neutral-700 rounded focus:ring-green-500"
+                  />
+                  <span className="text-neutral-300">Copy existing data</span>
+                </label>
+                <p className="text-neutral-400 text-xs mt-1 ml-6">
+                  If unchecked, the new node will start with an empty data directory
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">
+              <button
+                onClick={() => setShowCopyModal(false)}
+                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!copyNodeName.trim() || !copyTargetPath.trim()) {
+                    return;
+                  }
+                  
+                  setIsCopying(true);
+                  try {
+                    await copyNode(nodeToEdit.name, copyNodeName, copyTargetPath, copyData);
+                    setShowCopyModal(false);
+                    setCopyNodeName('');
+                    setCopyTargetPath('');
+                    onClose(); // Close the main modal too
+                  } catch (error) {
+                    // Error handling is done in the hook
+                  } finally {
+                    setIsCopying(false);
+                  }
+                }}
+                disabled={!copyNodeName.trim() || !copyTargetPath.trim() || isCopying}
+                className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FontAwesomeIcon icon={isCopying ? faSpinner : faCopy} className={`mr-2 ${isCopying ? 'fa-spin' : ''}`} />
+                {isCopying ? 'Copying...' : 'Copy Node'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
