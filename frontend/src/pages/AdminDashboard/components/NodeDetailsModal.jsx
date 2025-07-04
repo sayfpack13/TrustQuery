@@ -18,6 +18,11 @@ export default function NodeDetailsModal({ show, onClose, node }) {
   const [newIndexShards, setNewIndexShards] = useState('1');
   const [newIndexReplicas, setNewIndexReplicas] = useState('0');
   
+  // Disk usage state
+  const [diskStats, setDiskStats] = useState(null);
+  const [diskStatsLoading, setDiskStatsLoading] = useState(false);
+  const [diskStatsError, setDiskStatsError] = useState(null);
+  
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
 
@@ -47,6 +52,27 @@ export default function NodeDetailsModal({ show, onClose, node }) {
     }
   };
 
+  const fetchDiskStats = async () => {
+    if (node && node.isRunning) {
+      setDiskStatsLoading(true);
+      setDiskStatsError(null);
+      
+      try {
+        const response = await axiosClient.get(`/api/admin/cluster-advanced/nodes/${node.name}/stats`);
+        setDiskStats(response.data);
+      } catch (error) {
+        console.error("Failed to load disk stats", error);
+        setDiskStatsError(error.response?.data?.error || 'Failed to load disk statistics');
+        setDiskStats(null);
+      } finally {
+        setDiskStatsLoading(false);
+      }
+    } else {
+      setDiskStats(null);
+      setDiskStatsError(null);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'configuration' && node) {
       const fetchConfig = async () => {
@@ -63,6 +89,8 @@ export default function NodeDetailsModal({ show, onClose, node }) {
       fetchConfig();
     } else if (activeTab === 'indices' && node) {
       fetchNodeIndices();
+    } else if (activeTab === 'overview' && node) {
+      fetchDiskStats();
     }
   }, [activeTab, node]);
 
@@ -85,6 +113,8 @@ export default function NodeDetailsModal({ show, onClose, node }) {
       setIndexToDelete(null);
       setIndicesError(null);
       setIsDeletingIndex(null);
+      setDiskStats(null);
+      setDiskStatsError(null);
     }
   }, [show]);
 
@@ -173,7 +203,53 @@ export default function NodeDetailsModal({ show, onClose, node }) {
                 <FontAwesomeIcon icon={faHdd} className="mr-2" />
                 Disk Usage
               </h4>
-              <p className="text-neutral-400">Disk usage information is not available in this view.</p>
+              {!node.isRunning ? (
+                <div className="p-4 bg-amber-600 rounded-lg border border-amber-500">
+                  <p className="text-amber-100 text-sm">Node must be running to view disk statistics.</p>
+                </div>
+              ) : diskStatsLoading ? (
+                <div className="flex items-center text-neutral-400">
+                  <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+                  Loading disk statistics...
+                </div>
+              ) : diskStatsError ? (
+                <div className="p-4 bg-red-600 rounded-lg border border-red-500">
+                  <p className="text-red-100 text-sm">{diskStatsError}</p>
+                  <button
+                    onClick={fetchDiskStats}
+                    className="mt-2 bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : diskStats && diskStats.diskInfo && diskStats.diskInfo.length > 0 ? (
+                <div className="space-y-3">
+                  {diskStats.diskInfo.map((disk, index) => (
+                    <div key={index} className="bg-neutral-700 p-4 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-medium text-white">{disk.path}</span>
+                        <span className="text-sm text-neutral-300">{disk.usedPercent}% used</span>
+                      </div>
+                      <div className="w-full bg-neutral-800 rounded-full h-2">
+                        <div 
+                          className={`h-2 rounded-full ${
+                            disk.usedPercent > 90 ? 'bg-red-500' :
+                            disk.usedPercent > 75 ? 'bg-yellow-500' : 'bg-green-500'
+                          }`}
+                          style={{ width: `${disk.usedPercent}%` }}
+                        ></div>
+                      </div>
+                      <div className="flex justify-between text-xs text-neutral-400 mt-1">
+                        <span>Used: {(disk.used / (1024**3)).toFixed(1)} GB</span>
+                        <span>Free: {(disk.free / (1024**3)).toFixed(1)} GB</span>
+                        <span>Total: {(disk.total / (1024**3)).toFixed(1)} GB</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-neutral-400">No disk usage information available.</p>
+              )}
             </div>
           </div>
         );
