@@ -78,6 +78,19 @@ async function saveConfig() {
   }
 }
 
+// Helper to format bytes into a human-readable string
+function formatBytes(bytes, decimals = 2) {
+    if (!+bytes) return '0 Bytes'
+
+    const k = 1024
+    const dm = decimals < 0 ? 0 : decimals
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`
+}
+
 // Get configuration value
 function getConfig(key) {
   return key ? config[key] : config;
@@ -140,17 +153,11 @@ app.use(cors());
 app.use(express.json());
 
 // Import route modules
-const clusterRoutes = require('./src/routes/cluster');
 const clusterAdvancedRoutes = require('./src/routes/cluster-advanced');
-const nodeRoutes = require('./src/routes/nodes');
-const diskRoutes = require('./src/routes/disks');
 const esConfigRoutes = require('./src/routes/elasticsearch-config');
 
 // Add route middleware
-app.use('/api/admin/cluster', clusterRoutes);
 app.use('/api/admin/cluster-advanced', clusterAdvancedRoutes);
-app.use('/api/admin/nodes', nodeRoutes);
-app.use('/api/admin/disks', diskRoutes);
 app.use('/api/admin/es/config', esConfigRoutes);
 
 // Initialize Elasticsearch client with configuration
@@ -165,74 +172,14 @@ function getCurrentES() {
 async function initializeServer() {
   await loadConfig();
   
-  // Initialize Elasticsearch clients
-  initializeElasticsearchClients();
-
-  // Start the server first
+  // Start the server
   app.listen(PORT, () => {
     console.log(`✅ Server running on: http://localhost:${PORT}`);
   });
-  
-  try {
-    console.log('🔍 Connecting to Elasticsearch...');
-    const es = getCurrentES();
-    await es.ping();
-    console.log('✅ Elasticsearch connected');
-
-    // Initialize default index if connected
-    const indexExists = await es.indices.exists({ index: "accounts" });
-    if (!indexExists) {
-      const es = getCurrentES();
-      await es.indices.create({
-        index: "accounts",
-        body: {
-          settings: {
-            analysis: {
-              analyzer: {
-                autocomplete_analyzer: {
-                  tokenizer: "autocomplete_tokenizer",
-                  filter: ["lowercase"]
-                }
-              },
-              tokenizer: {
-                autocomplete_tokenizer: {
-                  type: "edge_ngram",
-                  min_gram: 2,
-                  max_gram: 10,
-                }
-              }
-            }
-          },
-          mappings: {
-            properties: {
-              raw_line: {
-                type: "text",
-                fields: {
-                  autocomplete: {
-                    type: "text",
-                    analyzer: "autocomplete_analyzer"
-                  }
-                }
-              },
-            },
-          },
-        },
-      });
-      console.log("✅ Default 'accounts' index created");
-    }
-  } catch (error) {
-    console.warn('⚠️  Elasticsearch not available - some features will be limited');
-  }
-
-
 }
 
 // Start the server after initialization is complete
-initializeServer().then(() => {
-  app.listen(PORT, () => {
-    console.log(`✅ Server running on: http://localhost:${PORT}`);
-  });
-}).catch(error => {
+initializeServer().catch(error => {
     console.error("❌ Failed to initialize server:", error);
     process.exit(1);
 });
@@ -1154,7 +1101,7 @@ function formatIndexName(name) {
 
 // ==================== ELASTICSEARCH MANAGEMENT ENDPOINTS ====================
 
-// GET all Elasticsearch indices with stats
+// GET all Elasticsearch indices with basic info
 app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
   try {
     const esAvailable = await isElasticsearchAvailable();
@@ -1166,39 +1113,26 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
       });
     }
 
-    // Get basic index information
     const es = getCurrentES();
-    const indices = await es.cat.indices({ format: "json", h: "index,docs.count,store.size,status,health" });
-
-    // Get detailed stats for each index
-    const stats = await es.indices.stats({ metric: ["store", "docs"] });
-
-    // Get index settings and mappings
-    const settings = await es.indices.getSettings();
-    const mappings = await es.indices.getMapping();
-
-    const indexList = indices.map(index => {
-      const indexName = index.index;
-      const indexStats = stats.indices[indexName];
-      const indexSettings = settings[indexName];
-
-      return {
-        name: indexName,
-        status: index.status,
-        health: index.health,
-        docCount: parseInt(index['docs.count']) || 0,
-        storeSize: index['store.size'] || '0b',
-        storeSizeBytes: indexStats?.total?.store?.size_in_bytes || 0,
-        shards: indexStats?.total?.docs ? Object.keys(indexStats.indices || {}).length : 1,
-        createdAt: indexSettings?.settings?.index?.creation_date ?
-          new Date(parseInt(indexSettings.settings.index.creation_date)).toISOString() : null,
-        uuid: indexSettings?.settings?.index?.uuid || null,
-        isSelected: indexName === getSelectedIndex()
-      };
+    // Use cat.indices to get a lightweight list of indices
+    const indicesResponse = await es.cat.indices({
+      format: "json",
+      h: "health,status,index,uuid,pri,rep,docs.count,store.size",
+      s: "index:asc" // Sort by index name
     });
 
+    const indices = indicesResponse.map(index => ({
+      name: index.index,
+        health: index.health,
+      status: index.status,
+      uuid: index.uuid,
+        docCount: parseInt(index['docs.count']) || 0,
+        storeSize: index['store.size'] || '0b',
+      isSelected: index.index === getSelectedIndex()
+    }));
+
     res.json({
-      indices: indexList.sort((a, b) => a.name.localeCompare(b.name)),
+      indices: indices,
       selectedIndex: getSelectedIndex()
     });
   } catch (error) {
@@ -1207,76 +1141,8 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
   }
 });
 
-// POST create new Elasticsearch index
-app.post("/api/admin/es/indices", verifyJwt, async (req, res) => {
-  const { indexName, shards, replicas } = req.body;
-
-  if (!indexName || typeof indexName !== 'string') {
-    return res.status(400).json({ error: "Index name is required" });
-  }
-
-  // Validate shards and replicas
-  const numShards = parseInt(shards) || 1;
-  const numReplicas = parseInt(replicas) || 0;
-
-  if (numShards < 1 || numShards > 1000) {
-    return res.status(400).json({ error: "Number of shards must be between 1 and 1000" });
-  }
-
-  if (numReplicas < 0 || numReplicas > 100) {
-    return res.status(400).json({ error: "Number of replicas must be between 0 and 100" });
-  }
-
-  const formattedName = formatIndexName(indexName);
-
-  if (formattedName.length === 0) {
-    return res.status(400).json({ error: "Invalid index name" });
-  }
-
-  const taskId = createTask("Create Index", "creating", formattedName);
-  res.json({ taskId });
-
-  (async () => {
-    try {
-      // Check if index already exists
-      const es = getCurrentES();
-      const exists = await es.indices.exists({ index: formattedName });
-      if (exists) {
-        updateTask(taskId, {
-          status: "error",
-          error: `Index '${formattedName}' already exists`,
-          completed: true,
-        });
-        return;
-      }
-
-      // Create the index with proper mapping and shard/replica settings
-      await es.indices.create({
-        index: formattedName,
-        body: createIndexMapping(numShards, numReplicas)
-      });
-
-      updateTask(taskId, {
-        status: "completed",
-        progress: 1,
-        total: 1,
-        completed: true,
-        message: `Index '${formattedName}' created successfully with ${numShards} shard(s) and ${numReplicas} replica(s)`
-      });
-      console.log(`Task ${taskId} completed: Index '${formattedName}' created with ${numShards} shards and ${numReplicas} replicas.`);
-    } catch (error) {
-      console.error(`Create index task ${taskId} failed:`, error);
-      updateTask(taskId, {
-        status: "error",
-        error: error.message,
-        completed: true,
-      });
-    }
-  })();
-});
-
 // DELETE Elasticsearch index
-app.delete("/api/admin/es/indices/:indexName", verifyJwt, async (req, res) => {
+app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
   const { indexName } = req.params;
 
   // Prevent deletion of system indices and current selected index being used
@@ -1295,6 +1161,14 @@ app.delete("/api/admin/es/indices/:indexName", verifyJwt, async (req, res) => {
     try {
       // Check if index exists
       const es = getCurrentES();
+      if (!es) {
+          updateTask(taskId, {
+            status: "error",
+            error: "Elasticsearch client not available. Is a node running?",
+            completed: true,
+          });
+          return;
+      }
       const exists = await es.indices.exists({ index: indexName });
       if (!exists) {
         updateTask(taskId, {
@@ -1413,429 +1287,51 @@ app.get("/api/admin/es/health", verifyJwt, async (req, res) => {
   }
 });
 
-// GET index mapping and settings details
-app.get("/api/admin/es/indices/:indexName/details", verifyJwt, async (req, res) => {
+// Route to get details for a specific index
+app.get("/api/indices/:indexName/details", verifyJwt, async (req, res) => {
   const { indexName } = req.params;
+  const client = getCurrentES();
+  if (!client) {
+    return res.status(503).json({ error: "Elasticsearch client not available." });
+  }
 
   try {
-    const es = getCurrentES();
-    const [mapping, settings, stats] = await Promise.all([
-      es.indices.getMapping({ index: indexName }),
-      es.indices.getSettings({ index: indexName }),
-      es.indices.stats({ index: indexName })
+    // Fetch all details in parallel for efficiency
+    const [settingsResponse, mappingsResponse, statsResponse] = await Promise.all([
+      client.indices.getSettings({ index: indexName }),
+      client.indices.getMapping({ index: indexName }),
+      client.indices.stats({ index: indexName })
     ]);
 
-    const indexMapping = mapping[indexName];
-    const indexSettings = settings[indexName];
-    const indexStats = stats.indices[indexName];
+    // Safely access stats to prevent crashes on unhealthy indices
+    const stats = statsResponse.indices[indexName];
+    const docsCount = stats && stats.total && stats.total.docs ? stats.total.docs.count : 0;
+    const storeSize = stats && stats.total && stats.total.store ? stats.total.store.size_in_bytes : 0;
 
-    res.json({
-      name: indexName,
-      mapping: indexMapping.mappings,
-      settings: indexSettings.settings,
+    const details = {
+      settings: settingsResponse[indexName].settings,
+      mappings: mappingsResponse[indexName].mappings,
       stats: {
-        docs: indexStats.total.docs,
-        store: indexStats.total.store,
-        indexing: indexStats.total.indexing,
-        search: indexStats.total.search
+        docs: {
+          count: docsCount
+        },
+        store: {
+          size_in_bytes: storeSize
+        }
       }
-    });
+    };
+
+    res.json(details);
   } catch (error) {
     console.error(`Error fetching details for index ${indexName}:`, error);
-    res.status(500).json({ error: "Failed to fetch index details" });
-  }
+    // Return a generic error to the client
+    res.status(500).json({ error: `Failed to fetch details for index ${indexName}` });
+      }
 });
 
-// POST reindex data from one index to another
-app.post("/api/admin/es/reindex", verifyJwt, async (req, res) => {
-  const { sourceIndex, destIndex } = req.body;
-
-  if (!sourceIndex || !destIndex) {
-    return res.status(400).json({ error: "Source and destination indices are required" });
-  }
-
-  const taskId = createTask("Reindex Data", "initializing");
-  res.json({ taskId });
-
-  (async () => {
-    try {
-      const es = getCurrentES();
-      // Check if source exists
-      const sourceExists = await es.indices.exists({ index: sourceIndex });
-      if (!sourceExists) {
-        updateTask(taskId, {
-          status: "error",
-          error: `Source index '${sourceIndex}' does not exist`,
-          completed: true,
-        });
-        return;
-      }
-
-      // Create destination index if it doesn't exist
-      const destExists = await es.indices.exists({ index: destIndex });
-      if (!destExists) {
-        await es.indices.create({
-          index: destIndex,
-          body: createIndexMapping()
-        });
-      }
-
-      updateTask(taskId, {
-        status: "reindexing",
-        message: `Reindexing from '${sourceIndex}' to '${destIndex}'...`
-      });
-
-      // Perform reindex operation
-      const response = await es.reindex({
-        body: {
-          source: { index: sourceIndex },
-          dest: { index: destIndex }
-        },
-        wait_for_completion: true,
-        refresh: true
-      });
-
-      updateTask(taskId, {
-        status: "completed",
-        progress: response.total || 1,
-        total: response.total || 1,
-        completed: true,
-        message: `Reindexed ${response.total || 0} documents from '${sourceIndex}' to '${destIndex}'`
-      });
-      console.log(`Task ${taskId} completed: Reindexed ${response.total || 0} documents.`);
-    } catch (error) {
-      console.error(`Reindex task ${taskId} failed:`, error);
-      updateTask(taskId, {
-        status: "error",
-        error: error.message,
-        completed: true,
-      });
-    }
-  })();
-});
-
-// Helper function to format bytes
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-// New endpoint to get available indices for search
-app.get("/api/search/indices", async (req, res) => {
-  try {
-    const esAvailable = await isElasticsearchAvailable();
-    if (!esAvailable) {
-      return res.json({
-        indices: [],
-        selectedIndex: getSelectedIndex(),
-        message: "Elasticsearch not available"
-      });
-    }
-
-    const es = getCurrentES();
-    const allIndices = await es.cat.indices({ format: "json", h: "index,docs.count,store.size" });
-    const availableIndices = allIndices
-      .filter(idx => !idx.index.startsWith('.') && !idx.index.startsWith('kibana'))
-      .map(idx => ({
-        name: idx.index,
-        docCount: parseInt(idx['docs.count']) || 0,
-        storeSize: idx['store.size'] || '0b'
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    res.json({
-      indices: availableIndices,
-      selectedIndex: getSelectedIndex()
-    });
-  } catch (error) {
-    console.error("Error fetching search indices:", error);
-    res.status(500).json({ error: "Failed to fetch available indices" });
-  }
-});
-
-// ==================== END ELASTICSEARCH MANAGEMENT ====================
-
-// backend/index.js
-app.get("/api/total-accounts", async (req, res) => {
-  try {
-    const esAvailable = await isElasticsearchAvailable();
-    if (!esAvailable) {
-      return res.json({
-        totalAccounts: 0,
-        message: "Elasticsearch not available"
-      });
-    }
-
-    // Use configured search indices instead of selected index for operations
-    const searchIndices = getConfig('searchIndices');
-
-    if (!searchIndices || searchIndices.length === 0) {
-      return res.json({ totalAccounts: 0 });
-    }
-
-    const es = getCurrentES();
-    // Filter to only existing indices
-    const existingIndices = [];
-    for (const index of searchIndices) {
-      const exists = await es.indices.exists({ index });
-      if (exists) {
-        existingIndices.push(index);
-      }
-    }
-
-    if (existingIndices.length === 0) {
-      return res.json({ totalAccounts: 0 });
-    }
-
-    // Count records across all configured search indices
-    const response = await es.count({ index: existingIndices.join(',') });
-    res.json({
-      totalAccounts: response.count,
-      searchIndices: existingIndices // Include which indices were counted
-    });
-  } catch (error) {
-    console.error("Error fetching total accounts:", error);
-    res.status(500).json({ message: "Error fetching total accounts." });
-  }
-});
-
-/**
- * Helper function to parse a raw line into URL, Username, and Password components.
- * This logic is adapted from the original parser.js.
- * @param {string} line - The raw line string from the database.
- * @returns {{url: string, username: string, password: string}} Parsed components.
- */
-function parseLineForDisplay(line) {
-  let url = "", username = "", password = "";
-
-  let clean = line.trim();
-  while (clean.endsWith(":")) clean = clean.slice(0, -1);
-
-  if (!clean) return { url: "", username: "", password: "" };
-  if (clean.includes(" - ") || clean.includes(" ")) {
-    return { url: clean, username: "", password: "" };
-  }
-
-  // PASSWORD-FIRST STRATEGY
-  let parts;
-
-  if (clean.includes("::")) {
-    parts = clean.split("::");
-
-    const passwordSide = parts.pop(); // Get right side after `::`
-    const leftSide = parts.join("::"); // Remaining part before `::`
-
-    const rightParts = passwordSide.split(":");
-    password = rightParts.pop(); // Final value = password
-
-    if (rightParts.length > 0) {
-      username = rightParts.join(":");
-    }
-
-    const leftParts = leftSide.split(":");
-    url = leftParts.join(":"); // Whatever remains is considered URL
-
-  } else {
-    parts = clean.split(":");
-
-    password = parts.pop(); // Last part = password
-    if (parts.length > 0) {
-      username = parts.pop(); // Second-last = username (if exists)
-      if (parts.length > 0) {
-        url = parts.join(":"); // Rest = URL
-      }
-    }
-  }
-
-  // Prevent malformed usernames
-  if (username.includes("//") || username.startsWith("http")) {
-    return { url: clean, username: "", password: "" };
-  }
-
-  return { url, username, password };
-}
-
-
-
-// Public /search endpoint - Enhanced with multi-index support
-app.get("/api/search", async (req, res) => {
-  const q = req.query.q;
-  const page = parseInt(req.query.page) || 1;
-  const size = parseInt(req.query.size) || 20;
-  const from = (page - 1) * size;
-  const searchIndices = req.query.indices; // New parameter for multiple indices
-
-  if (!q) return res.json({ results: [], total: 0 });
-
-  // Check if Elasticsearch is available
-  const esAvailable = await isElasticsearchAvailable();
-  if (!esAvailable) {
-    return res.status(503).json({
-      message: "Search service temporarily unavailable. Please make sure Elasticsearch is running.",
-      results: [],
-      total: 0
-    });
-  }
-
-  let isAdmin = false;
-  const authHeader = req.headers.authorization;
-  if (authHeader) {
-    const token = authHeader.split(" ")[1];
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, SECRET_KEY);
-        if (decoded && decoded.username === ADMIN_USER) {
-          isAdmin = true;
-        }
-      } catch (err) {
-        isAdmin = false;
-      }
-    }
-  }
-
-  try {
-    const es = getCurrentES();
-    // Determine which indices to search
-    let indexToSearch;
-    if (searchIndices) {
-      // Parse indices parameter (can be comma-separated string or array)
-      let indicesToSearch;
-      if (typeof searchIndices === 'string') {
-        indicesToSearch = searchIndices.split(',').map(idx => idx.trim()).filter(idx => idx.length > 0);
-      } else if (Array.isArray(searchIndices)) {
-        indicesToSearch = searchIndices.filter(idx => typeof idx === 'string' && idx.trim().length > 0);
-      } else {
-        indicesToSearch = getConfig('searchIndices'); // Use configured search indices
-      }
-
-      if (indicesToSearch.length === 0) {
-        indicesToSearch = getConfig('searchIndices'); // Fallback to configured search indices
-      }
-
-      // Verify all requested indices exist
-      for (const index of indicesToSearch) {
-        const exists = await es.indices.exists({ index });
-        if (!exists) {
-          return res.status(400).json({
-            error: `Index '${index}' does not exist`,
-            availableIndices: []
-          });
-        }
-      }
-
-      indexToSearch = indicesToSearch.join(',');
-    } else {
-      // Default to configured search indices if no indices specified
-      indexToSearch = getConfig('searchIndices').join(',');
-    }
-
-    const response = await es.search({
-      index: indexToSearch,
-      from: from,
-      size: size,
-      body: {
-        query: {
-          bool: {
-            should: [
-              {
-                // Search using the autocomplete field for raw_line
-                match: {
-                  "raw_line.autocomplete": {
-                    query: q.toLowerCase(),
-                    operator: "and"
-                  }
-                }
-              },
-              {
-                // Broader search on the raw_line text field
-                match_phrase_prefix: {
-                  raw_line: q.toLowerCase()
-                }
-              }
-            ],
-            minimum_should_match: 1
-          }
-        },
-        // Add source index to results for multi-index search
-        _source: ["raw_line"],
-        // Sort by relevance score, then by index name for consistency
-        sort: [
-          "_score",
-          { "_index": { "order": "asc" } }
-        ]
-      }
-    });
-
-    const hits = response.hits.hits;
-    const total = response.hits.total.value;
-    const searchedIndices = indexToSearch.split(',');
-
-    const results = hits.map((hit) => {
-      const parsedAccount = parseLineForDisplay(hit._source.raw_line);
-      let account = {
-        id: hit._id,
-        url: parsedAccount.url,
-        username: parsedAccount.username,
-        password: parsedAccount.password,
-        sourceIndex: hit._index // Add source index information
-      };
-
-      // Add raw_line based only for admin
-      const showRawLineByDefault = getConfig('adminSettings')?.showRawLineByDefault || false;
-      if (isAdmin && showRawLineByDefault) {
-        account.raw_line = hit._source.raw_line;
-      }
-
-      if (!isAdmin) {
-        // If not an admin, mask the password
-        if (account.password) {
-          const passwordLength = account.password.length;
-          if (passwordLength <= 4) { // For short passwords, mask completely
-            account.password = "*".repeat(passwordLength);
-          } else {
-            // Show 20% of characters at the start and end, with a minimum of 2
-            const visibleChars = Math.max(getConfig('minVisibleChars'), Math.floor(passwordLength * getConfig('maskingRatio')));
-            const maskedMiddle = "*".repeat(passwordLength - 2 * visibleChars);
-            account.password =
-              account.password.substring(0, visibleChars) +
-              maskedMiddle +
-              account.password.substring(passwordLength - visibleChars);
-          }
-        } else {
-          account.password = ""; // Handle empty passwords
-        }
-
-        if (account.username) {
-          const usernameLength = account.username.length;
-          if (usernameLength <= 4) {
-            account.username = "*".repeat(usernameLength); // Mask completely with asterisks
-          } else {
-            // Show 20% of characters at the start and end, with a minimum of 2
-            const visibleChars = Math.max(getConfig('minVisibleChars'), Math.floor(usernameLength * getConfig('usernameMaskingRatio')));
-            const maskedMiddle = "*".repeat(usernameLength - 2 * visibleChars);
-            account.username =
-              account.username.substring(0, visibleChars) +
-              maskedMiddle +
-              account.username.substring(usernameLength - visibleChars);
-          }
-        } else {
-          account.username = "";
-        }
-      }
-      return account;
-    });
-
-    res.json({
-      results,
-      total,
-      searchedIndices: searchedIndices,
-      selectedIndex: getSelectedIndex() // For reference
-    });
-  } catch (error) {
-    console.error("Search error:", error);
-    res.status(500).json({ message: "Error searching records." });
-  }
+// Get documents from a specific index with pagination
+app.get("/api/indices/:indexName/documents", verifyJwt, async (req, res) => {
+  const { indexName } = req.params;
+  const { from = 0, size = 10 } = req.query;
+  // ... existing code ...
 });

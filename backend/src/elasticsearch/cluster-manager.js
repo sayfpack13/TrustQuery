@@ -92,9 +92,10 @@ path.logs: ${nodeConfig.logsPath}
 # Node roles
 node.roles: [${this.formatNodeRoles(nodeConfig.roles)}]
 
+# Custom attribute for shard allocation
+node.attr.custom_id: ${nodeConfig.name}
+
 # Discovery settings
-discovery.seed_hosts: ${JSON.stringify(nodeConfig.seedHosts || ['localhost:9300'])}
-cluster.initial_master_nodes: ${JSON.stringify(nodeConfig.initialMasterNodes || [nodeConfig.name])}
 discovery.type: single-node
 
 # Memory settings
@@ -105,11 +106,6 @@ xpack.security.enabled: false
 xpack.security.transport.ssl.enabled: false
 xpack.security.http.ssl.enabled: false
 
-# Disable deprecated analytics to clean up logs
-xpack.analytics.enabled: false
-
-# Monitoring
-xpack.monitoring.collection.enabled: true
 `;
 
     return config;
@@ -186,6 +182,22 @@ xpack.monitoring.collection.enabled: true
       await fs.writeFile(servicePath, serviceScript);
 
       console.log(`✅ Created node configuration: ${name}`);
+
+      const nodeUrl = `http://${host}:${port}`;
+      const newNodeMetadata = {
+        [nodeUrl]: {
+          name,
+          dataPath,
+          logsPath,
+          clusterName,
+          port
+        }
+      };
+
+      // Save metadata to config
+      const currentConfig = getConfig();
+      const updatedMetadata = { ...currentConfig.nodeMetadata, ...newNodeMetadata };
+      setConfig('nodeMetadata', updatedMetadata);
       
       return {
         name,
@@ -195,7 +207,7 @@ xpack.monitoring.collection.enabled: true
         logsPath,
         port,
         transportPort,
-        nodeUrl: `http://${host}:${port}`
+        nodeUrl
       };
     } catch (error) {
       console.error(`❌ Failed to create node ${nodeConfig.name}:`, error);
@@ -321,32 +333,34 @@ REM Start Elasticsearch
    */
   async startNode(nodeName) {
     try {
-        const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
-        const servicePath = path.join(nodeConfigDir, 'start-node.bat');
-        await fs.access(servicePath);
+      const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
+      const servicePath = path.join(nodeConfigDir, 'start-node.bat');
+      await fs.access(servicePath);
+      
+        // Get node config early to have access to paths
+        const nodeConfig = await this.getNodeConfig(nodeName);
 
-        // Create a log file for startup output
-        const logDir = path.join(this.baseElasticsearchPath, 'data', nodeName, 'logs');
+        // Create a log file for startup output in the correct logs directory
+        const logDir = (await this.getNodeMetadata(nodeName)).logsPath;
         await fs.mkdir(logDir, { recursive: true });
         const startupLogPath = path.join(logDir, 'startup.log');
         const output = await fs.open(startupLogPath, 'a');
 
         // This simpler spawn is more reliable on Windows
         const child = spawn(servicePath, [], {
-            detached: true,
+        detached: true,
             stdio: ['ignore', output, output], // Redirect stdout and stderr to the log file
             shell: true,
             windowsHide: true,
-        });
-        child.unref();
-
+      });
+      child.unref();
+      
         console.log(`🚀 Start command issued for ${nodeName}. Tailing startup log at: ${startupLogPath}`);
 
         // Small delay to allow the process to initialize
         await new Promise(resolve => setTimeout(resolve, 5000)); 
 
         // Find the real PID by polling the port
-        const nodeConfig = await this.getNodeConfig(nodeName);
         const port = nodeConfig.http.port;
         if (!port) {
             throw new Error(`Could not determine port for node ${nodeName}.`);
@@ -357,6 +371,11 @@ REM Start Elasticsearch
             const pidFilePath = path.join(nodeConfigDir, 'pid.json');
             await fs.writeFile(pidFilePath, JSON.stringify({ pid }), 'utf8');
             console.log(`✅ Started Elasticsearch node: ${nodeName} with PID: ${pid} on port ${port}`);
+            
+            // Re-initialize clients so the app can connect
+            const { initializeElasticsearchClients } = require('./client');
+            initializeElasticsearchClients();
+
             // Close the file handle
             await output.close();
             return { success: true, pid };
@@ -367,15 +386,15 @@ REM Start Elasticsearch
             const startupLog = await fs.readFile(startupLogPath, 'utf8').catch(() => "Could not read startup.log.");
 
             // Also, try to read the actual Elasticsearch log file for more detailed errors.
-            const esLogPath = path.join(this.baseElasticsearchPath, 'data', nodeName, 'logs', 'elasticsearch.log');
+            const esLogPath = path.join(nodeConfig.path.logs, 'elasticsearch.log');
             const esLog = await fs.readFile(esLogPath, 'utf8').catch(() => "Could not read elasticsearch.log.");
 
             throw new Error(`Failed to confirm node start for ${nodeName}. Could not find process on port ${port}.\n\nStartup Log:\n${startupLog}\n\nElasticsearch Log:\n${esLog}`);
         }
 
     } catch (error) {
-        console.error(`❌ Failed to start node ${nodeName}:`, error);
-        throw error;
+      console.error(`❌ Failed to start node ${nodeName}:`, error);
+      throw error;
     }
   }
 
@@ -396,12 +415,12 @@ REM Start Elasticsearch
             detached: true,
             stdio: 'ignore'
           }).unref();
-        }
-        
+      }
+      
         // Clean up the PID file
         await fs.unlink(pidFilePath);
-        console.log(`🛑 Stopped Elasticsearch node: ${nodeName}`);
-        return { success: true };
+      console.log(`🛑 Stopped Elasticsearch node: ${nodeName}`);
+      return { success: true };
 
       } catch (error) {
         if (error.code === 'ENOENT') {
@@ -443,7 +462,11 @@ REM Start Elasticsearch
         },
         transport: {
           port: flatConfig['transport.port'] || '9300'
-        }
+        },
+        path: {
+          data: flatConfig['path.data'],
+          logs: flatConfig['path.logs']
+          }
       };
       return nestedConfig;
 
@@ -456,7 +479,8 @@ REM Start Elasticsearch
           node: { name: nodeName },
           network: { host: 'localhost' },
           http: { port: '9200' },
-          transport: { port: '9300' }
+          transport: { port: '9300' },
+          path: { data: '', logs: '' }
         };
       }
       throw error;
@@ -482,8 +506,8 @@ REM Start Elasticsearch
                 const definitiveNodeName = config.node.name;
                 
                 const metadata = this.getNodeMetadata(definitiveNodeName);
-
-                nodes.push({
+        
+        nodes.push({
                     name: definitiveNodeName,
                     cluster: config.cluster.name,
                     host: config.network.host,
@@ -491,19 +515,19 @@ REM Start Elasticsearch
                     transportPort: config.transport.port,
                     roles: config.node.roles || { master: true, data: true, ingest: true },
                     isRunning: await this.isNodeRunning(definitiveNodeName),
-                    dataPath: metadata.dataPath,
-                    logsPath: metadata.logsPath,
-                });
-            }
+          dataPath: metadata.dataPath,
+          logsPath: metadata.logsPath,
+        });
+      }
         }
-        return nodes;
+      return nodes;
     } catch (error) {
         if (error.code === 'ENOENT') {
             console.warn(`Config directory not found at ${configDir}, returning no nodes.`);
             return [];
         }
-        console.error('❌ Failed to list nodes:', error);
-        return [];
+      console.error('❌ Failed to list nodes:', error);
+      return [];
     }
   }
 
@@ -513,12 +537,14 @@ REM Start Elasticsearch
   getNodeMetadata(nodeName) {
     const config = getConfig();
     const nodeMetadata = config.nodeMetadata || {};
-    for (const [, metadata] of Object.entries(nodeMetadata)) {
-        if (metadata.name === nodeName) {
-            return metadata;
-        }
+    // Find the metadata by iterating through the values
+    const metadata = Object.values(nodeMetadata).find(m => m.name === nodeName);
+
+    if (metadata) {
+        return metadata;
     }
-    // Return default paths if not in metadata
+    
+    // Return default paths if not in metadata, with the correct structure
     return {
         dataPath: path.join(this.baseElasticsearchPath, nodeName, 'data'),
         logsPath: path.join(this.baseElasticsearchPath, nodeName, 'logs'),
@@ -526,90 +552,98 @@ REM Start Elasticsearch
   }
 
   /**
+   * Get the content of a node's configuration file.
+   */
+  async getNodeConfigContent(nodeName) {
+    const configPath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'elasticsearch.yml');
+    try {
+      const configContent = await fs.readFile(configPath, 'utf8');
+      return configContent;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        throw new Error(`Configuration file not found for node ${nodeName}.`);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Remove a node configuration
    */
   async removeNode(nodeName) {
     try {
-      // Stop the node first (if it's running)
+      // Stop the node first
       try {
         await this.stopNode(nodeName);
       } catch (stopError) {
         console.warn(`⚠️ Could not stop node ${nodeName} (it may not be running):`, stopError.message);
       }
       
-      // Get node metadata to see if this node was created through cluster manager
-      const { getConfig } = require('../config');
-      const nodeMetadata = getConfig('nodeMetadata') || {};
-      let hasMetadata = false;
-      let nodeUrl = null;
+      const { getConfig, setConfig } = require('../config');
+      const config = getConfig();
+      const nodeMetadata = config.nodeMetadata || {};
       
-      // Find node metadata by name
-      for (const [url, metadata] of Object.entries(nodeMetadata)) {
-        if (metadata.name === nodeName) {
-          hasMetadata = true;
-          nodeUrl = url;
-          break;
-        }
-      }
+      // Find metadata by node name to get data/log paths
+      const metadata = Object.values(nodeMetadata).find(m => m.name === nodeName);
       
-      if (hasMetadata && nodeUrl && nodeMetadata[nodeUrl]) {
-        const metadata = nodeMetadata[nodeUrl];
-        console.log(`🔍 Found metadata for node ${nodeName}, attempting to clean up associated directories...`);
+      if (metadata) {
+        console.log(`🔍 Found metadata for node ${nodeName}, removing data and logs directories...`);
         
-        // Try to remove data directory if specified
-        if (metadata.dataPath) {
-          try {
-            await fs.access(metadata.dataPath);
-            await fs.rmdir(metadata.dataPath, { recursive: true });
-            console.log(`🗑️ Removed node data directory: ${metadata.dataPath}`);
+        // Remove data and logs directories specifically
+        for (const dirPath of [metadata.dataPath, metadata.logsPath]) {
+          if (dirPath) {
+            try {
+              await fs.rm(dirPath, { recursive: true, force: true });
+              console.log(`🗑️ Removed directory: ${dirPath}`);
           } catch (dirError) {
-            if (dirError.code === 'ENOENT') {
-              console.warn(`⚠️ Node data directory not found: ${metadata.dataPath} (already deleted)`);
-            } else {
-              console.warn(`⚠️ Could not remove node data directory: ${dirError.message}`);
+              if (dirError.code !== 'ENOENT') {
+                console.warn(`⚠️ Could not remove directory ${dirPath}: ${dirError.message}`);
+              }
             }
           }
         }
         
-        // Try to remove logs directory if specified
-        if (metadata.logsPath) {
+        // Attempt to remove the parent directory, e.g., C:\elasticsearch\test, if it's now empty.
+        const parentDir = path.dirname(metadata.dataPath);
           try {
-            await fs.access(metadata.logsPath);
-            await fs.rmdir(metadata.logsPath, { recursive: true });
-            console.log(`🗑️ Removed node logs directory: ${metadata.logsPath}`);
-          } catch (dirError) {
-            if (dirError.code === 'ENOENT') {
-              console.warn(`⚠️ Node logs directory not found: ${metadata.logsPath} (already deleted)`);
-            } else {
-              console.warn(`⚠️ Could not remove node logs directory: ${dirError.message}`);
+            const files = await fs.readdir(parentDir);
+            if (files.length === 0) {
+                await fs.rmdir(parentDir);
+                console.log(`🗑️ Removed empty parent directory: ${parentDir}`);
             }
-          }
+        } catch (e) {
+            // Ignore if it fails (e.g., not empty, permissions, etc.)
         }
+
       } else {
-        console.warn(`⚠️ No metadata found for node ${nodeName}. This node may not have been created through cluster manager.`);
+        console.warn(`⚠️ No metadata found for node ${nodeName}. File system cleanup may be partial.`);
       }
       
-      // Remove node configuration directory (if it exists)
+      // Always attempt to remove the configuration directory
       const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
       try {
-        await fs.access(nodeConfigDir);
-        await fs.rmdir(nodeConfigDir, { recursive: true });
+        await fs.rm(nodeConfigDir, { recursive: true, force: true });
         console.log(`🗑️ Removed node configuration directory: ${nodeConfigDir}`);
       } catch (dirError) {
-        if (dirError.code === 'ENOENT') {
-          console.warn(`⚠️ Node configuration directory not found: ${nodeConfigDir} (this is OK for nodes not created through cluster manager)`);
-        } else {
+        if (dirError.code !== 'ENOENT') {
           console.warn(`⚠️ Could not remove node configuration directory:`, dirError.message);
         }
+      }
+      
+      // Clean up the metadata from the config file
+      const nodeUrlToDelete = Object.keys(nodeMetadata).find(url => nodeMetadata[url].name === nodeName);
+      if (nodeUrlToDelete) {
+        const newMeta = { ...config.nodeMetadata };
+        delete newMeta[nodeUrlToDelete];
+        await setConfig('nodeMetadata', newMeta);
+        console.log(`✅ Removed metadata for ${nodeName} from configuration.`);
       }
       
       console.log(`✅ Node ${nodeName} removal completed`);
       return { success: true };
     } catch (error) {
       console.error(`❌ Failed to remove node ${nodeName}:`, error);
-      // Don't throw the error - we want config cleanup to continue even if physical deletion fails
-      console.warn(`⚠️ Continuing with config cleanup despite filesystem errors...`);
-      return { success: true, warnings: [error.message] };
+      throw error;
     }
   }
 
@@ -650,9 +684,9 @@ REM Start Elasticsearch
     try {
         const pidData = await fs.readFile(pidFilePath, 'utf8');
         const { pid } = JSON.parse(pidData);
-
+      
         if (!pid) return false;
-
+      
         // Check if process with PID is running (Windows specific)
         const command = `tasklist /FI "PID eq ${pid}"`;
         const result = execSync(command, { encoding: 'utf8' });
@@ -674,10 +708,10 @@ REM Start Elasticsearch
     while (Date.now() - startTime < timeout) {
         try {
             const output = execSync(command, { encoding: 'utf8', stdio: 'pipe' });
-            const lines = output.trim().split(/\\r?\\n/);
+            const lines = output.trim().split(/\r?\n/);
 
             for (const line of lines) {
-                const parts = line.trim().split(/\\s+/);
+                const parts = line.trim().split(/\s+/);
                 if (parts.length < 5) continue;
 
                 // On Windows, the columns are Proto, Local Address, Foreign Address, State, PID

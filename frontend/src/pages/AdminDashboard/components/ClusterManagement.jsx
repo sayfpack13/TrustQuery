@@ -10,12 +10,19 @@ import {
   faPlus,
   faPlay,
   faTrash,
+  faHdd,
+  faMemory,
+  faMicrochip,
+  faSpinner,
+  faCircle,
+  faExclamationCircle,
+  faPencilAlt,
 } from "@fortawesome/free-solid-svg-icons";
+import NodeDetailsModal from "./NodeDetailsModal";
 
 export default function ClusterManagement({
   // Local node state
   localNodes,
-  nodeStats,
   nodeDisks,
   diskPreferences,
   clusterLoading,
@@ -48,7 +55,12 @@ export default function ClusterManagement({
   formatBytes,
   onEditNode,
   nodeActionLoading,
+  onOpenNodeDetails,
 }) {
+  const getNodeStats = (nodeName) => {
+    return null; // Stats are no longer fetched this way
+  };
+
   return (
     <>
 
@@ -155,50 +167,6 @@ export default function ClusterManagement({
           </div>
         ) : (
           <div className="space-y-8">
-            {/* Local Node Management Header */}
-            <div className="p-6 bg-blue-800 rounded-lg border border-blue-600">
-              <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
-                <FontAwesomeIcon icon={faInfoCircle} className="mr-2 text-blue-400" />
-                Local Node Management System
-              </h3>
-              <div className="space-y-3">
-                <p className="text-blue-200 text-sm">
-                  TrustQuery manages Elasticsearch nodes locally. Create, configure, and control individual nodes without requiring external cluster setup.
-                  {localNodes.length > 0 && (
-                    <span className="ml-1">
-                      You have <span className="font-semibold">{localNodes.length} configured node(s)</span>: 
-                      <span className="font-semibold text-green-300 ml-1">{localNodes.filter(n => n.isRunning).length} running</span>, 
-                      <span className="font-semibold text-red-300 ml-1">{localNodes.filter(n => !n.isRunning).length} stopped</span>.
-                    </span>
-                  )}
-                </p>
-                <div className="bg-blue-900 bg-opacity-50 p-3 rounded-lg">
-                  <p className="text-blue-100 text-sm">
-                    <strong>Benefits:</strong> Each node runs independently with its own configuration, data paths, and settings. 
-                    Perfect for development, testing, or distributed setups without complex cluster coordination.
-                  </p>
-                </div>
-                <div className="flex space-x-3">
-                  <button
-                    onClick={fetchLocalNodes}
-                    className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm transition duration-150 ease-in-out"
-                  >
-                    <FontAwesomeIcon icon={faCircleNotch} className="mr-2" />
-                    Refresh Status
-                  </button>
-                  {localNodes.length === 0 && (
-                    <button
-                      onClick={() => setShowLocalNodeManager(true)}
-                      className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm transition duration-150 ease-in-out"
-                    >
-                      <FontAwesomeIcon icon={faServer} className="mr-2" />
-                      Create First Node
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
             {/* Local Nodes Management */}
             <div className="p-6 bg-neutral-700 rounded-lg">
               <h3 className="text-xl font-semibold text-white mb-4">Node Management</h3>
@@ -222,156 +190,98 @@ export default function ClusterManagement({
                   </button>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-neutral-100 bg-neutral-600 rounded-lg">
-                    <thead className="bg-neutral-500">
-                      <tr>
-                        <th className="text-left py-3 px-4 font-semibold">Node Info</th>
-                        <th className="text-left py-3 px-4 font-semibold">Cluster</th>
-                        <th className="text-left py-3 px-4 font-semibold">Status</th>
-                        <th className="text-left py-3 px-4 font-semibold">Network</th>
-                        <th className="text-left py-3 px-4 font-semibold">Disk Usage</th>
-                        <th className="text-left py-3 px-4 font-semibold">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {localNodes.map((localNode) => {
-                        const nodeDisksData = localNode.isRunning && nodeDisks[localNode.name] ? nodeDisks[localNode.name] : [];
-                        const totalDisk = nodeDisksData.reduce((acc, disk) => acc + disk.total, 0);
-                        const usedDisk = nodeDisksData.reduce((acc, disk) => acc + disk.used, 0);
-                        const diskUsagePercent = totalDisk > 0 ? ((usedDisk / totalDisk) * 100).toFixed(1) : 0;
-                        const isNodeLoading = nodeActionLoading.includes(localNode.name);
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+                  {localNodes.map((node) => {
+                    const isLoading = nodeActionLoading.includes(node.name);
                         
                         return (
-                          <tr key={localNode.name} className="border-b border-neutral-500 hover:bg-neutral-500 transition-colors">
-                            {/* Node Info */}
-                            <td className="py-3 px-4">
+                      <div
+                        key={node.name}
+                        className="bg-neutral-800 rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 ease-in-out"
+                      >
+                        <div className="p-6">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-4">
+                              <div className="bg-primary p-3 rounded-full">
+                                <FontAwesomeIcon icon={faServer} className="text-white text-xl" />
+                              </div>
                               <div>
-                                <span className="font-medium text-white">{localNode.name}</span>
+                                <h3 className="text-lg font-bold text-white">{node.name}</h3>
                                 <div className="text-sm text-neutral-400">
-                                  {localNode.roles && (
-                                    <div className="flex space-x-1 mt-1">
-                                      {localNode.roles.master && <span className="px-2 py-0.5 bg-purple-600 text-white text-xs rounded">Master</span>}
-                                      {localNode.roles.data && <span className="px-2 py-0.5 bg-blue-600 text-white text-xs rounded">Data</span>}
-                                      {localNode.roles.ingest && <span className="px-2 py-0.5 bg-green-600 text-white text-xs rounded">Ingest</span>}
+                                  {node.description || `Node running at ${node.host}:${node.port}`}
                                     </div>
-                                  )}
+                                <div className="text-xs text-neutral-500 mt-1">
+                                  Cluster: {node.cluster}
                                 </div>
                               </div>
-                            </td>
+                            </div>
+                          </div>
                             
-                            {/* Cluster */}
-                            <td className="py-3 px-4">
-                              <span className="px-3 py-1 bg-neutral-700 text-neutral-200 text-sm rounded-full">
-                                {localNode.cluster || 'trustquery-cluster'}
-                              </span>
-                            </td>
-                            
-                            {/* Status */}
-                            <td className="py-3 px-4">
+                          {/* Node Status */}
+                          <div className="mt-4 pt-4 border-t border-neutral-700">
+                            <div className="flex justify-between items-center">
                               <div className="flex items-center space-x-2">
-                                {localNode.isRunning ? (
-                                  <>
-                                    <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                                    <span className="text-green-400 font-medium">Running</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                                    <span className="text-red-400 font-medium">Stopped</span>
-                                  </>
-                                )}
+                                <FontAwesomeIcon
+                                  icon={faCircle}
+                                  className={`${
+                                    node.isRunning ? "text-green-500" : "text-red-500"
+                                  } text-xs`}
+                                />
+                                <span className="text-sm font-semibold">
+                                  {node.isRunning ? "Running" : "Stopped"}
+                                </span>
                               </div>
-                            </td>
-                            
-                            {/* Network */}
-                            <td className="py-3 px-4">
-                              <div className="space-y-1">
-                                <div className="text-sm text-neutral-300">
-                                  {localNode.host}:{localNode.port}
-                                </div>
-                                <div className="text-xs text-neutral-400">
-                                  Transport: {localNode.transportPort || 'N/A'}
-                                </div>
-                              </div>
-                            </td>
-                            
-                            {/* Disk Usage */}
-                            <td className="py-3 px-4 text-neutral-300">
-                              {localNode.isRunning && totalDisk > 0 ? (
-                                <div>
-                                  <span className={`font-medium ${diskUsagePercent > 90 ? 'text-red-400' : diskUsagePercent > 70 ? 'text-yellow-400' : 'text-green-400'}`}>
-                                    {diskUsagePercent}%
-                                  </span>
-                                  <div className="text-sm text-neutral-400">
-                                    {formatBytes(usedDisk)} / {formatBytes(totalDisk)}
                                   </div>
                                 </div>
-                              ) : (
-                                <span className="text-neutral-500">-</span>
-                              )}
-                            </td>
                             
                             {/* Actions */}
-                            <td className="py-3 px-4">
-                              <div className="flex flex-wrap gap-2">
-                                {localNode.isRunning ? (
-                                  <button
-                                    onClick={() => handleStopLocalNode(localNode.name)}
-                                    disabled={isNodeLoading}
-                                    className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                                    title="Stop node"
-                                  >
-                                    <FontAwesomeIcon icon={isNodeLoading ? faCircleNotch : faStop} className={isNodeLoading ? 'fa-spin' : ''} />
-                                    {isNodeLoading ? 'Stopping...' : 'Stop'}
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => handleStartLocalNode(localNode.name)}
-                                    disabled={isNodeLoading}
-                                    className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                                    title="Start node"
-                                  >
-                                    <FontAwesomeIcon icon={isNodeLoading ? faCircleNotch : faPlay} className={isNodeLoading ? 'fa-spin' : ''} />
-                                    {isNodeLoading ? 'Starting...' : 'Start'}
-                                  </button>
-                                )}
-                                
+                          <div className="mt-6 flex items-center justify-between space-x-2">
+                            <div className="flex space-x-2">
+                              {node.isRunning ? (
                                 <button
-                                  onClick={() => onEditNode(localNode)}
-                                  disabled={isNodeLoading}
-                                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-md text-sm transition duration-150"
-                                  title="Edit Node Configuration"
+                                  onClick={() => handleStopLocalNode(node.name)}
+                                  disabled={isLoading}
+                                  className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:bg-neutral-600 disabled:cursor-not-allowed flex items-center justify-center"
                                 >
-                                  <FontAwesomeIcon icon={faCog} />
+                                  {isLoading ? <FontAwesomeIcon icon={faSpinner} spin /> : 'Stop'}
                                 </button>
-                                
-                                {localNode.isRunning && (
-                                  <button
-                                    onClick={() => setSelectedNodeForDisks(selectedNodeForDisks === localNode.name ? "" : localNode.name)}
-                                    className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                                    title="View disk information"
-                                  >
-                                    <FontAwesomeIcon icon={faFileAlt} className="mr-1" />
-                                    {selectedNodeForDisks === localNode.name ? 'Hide' : 'View'} Disks
-                                  </button>
-                                )}
-                                
+                              ) : (
                                 <button
-                                  onClick={() => handleDeleteLocalNode(localNode.name)}
-                                  disabled={isNodeLoading}
-                                  className="bg-gray-600 hover:bg-gray-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
-                                  title="Delete node configuration"
+                                  onClick={() => handleStartLocalNode(node.name)}
+                                  disabled={isLoading}
+                                  className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:bg-neutral-600 disabled:cursor-not-allowed flex items-center justify-center"
                                 >
-                                  <FontAwesomeIcon icon={faTrash} />
+                                  {isLoading ? <FontAwesomeIcon icon={faSpinner} spin /> : 'Start'}
                                 </button>
+                              )}
+                              <button
+                                onClick={() => onOpenNodeDetails(node)}
+                                className="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                              >
+                                Manage
+                              </button>
+                            </div>
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => onEditNode(node)}
+                                className="text-neutral-400 hover:text-white transition-colors"
+                                aria-label="Edit Node"
+                              >
+                                <FontAwesomeIcon icon={faPencilAlt} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteLocalNode(node.name)}
+                                className="text-neutral-400 hover:text-red-500 transition-colors"
+                                aria-label="Delete Node"
+                              >
+                                <FontAwesomeIcon icon={faTrash} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                               </div>
-                            </td>
-                          </tr>
                         );
                       })}
-                    </tbody>
-                  </table>
                 </div>
               )}
             </div>
@@ -452,20 +362,6 @@ export default function ClusterManagement({
             Elasticsearch Management
           </h2>
           <div className="flex space-x-3">
-            <button
-              onClick={() => openESModal("create")}
-              className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={isAnyTaskRunning || esLoading}
-            >
-              Create Index
-            </button>
-            <button
-              onClick={() => openESModal("reindex")}
-              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={isAnyTaskRunning || esLoading}
-            >
-              Reindex Data
-            </button>
             <button
               onClick={fetchESData}
               className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
@@ -553,25 +449,18 @@ export default function ClusterManagement({
                 </tr>
               </thead>
               <tbody>
-                {esIndices.map((index) => (
-                  <tr key={index.index} className="border-b border-neutral-500 hover:bg-neutral-500 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-medium">{index.index}</span>
-                        {selectedIndex === index.index && (
-                          <span className="px-2 py-1 bg-primary text-white text-xs rounded-full">
-                            SELECTED
-                          </span>
-                        )}
-                      </div>
+                {esIndices.map((index, idx) => (
+                  <tr key={idx} className="bg-neutral-800 border-b border-neutral-700 hover:bg-neutral-600">
+                    <th scope="row" className="px-6 py-4 font-medium text-white whitespace-nowrap">
+                      {index.name || 'Unknown'}
+                    </th>
+                    <td className="px-6 py-4">
+                      {index.docCount || 0}
                     </td>
-                    <td className="py-3 px-4 text-neutral-300">
-                      {index['docs.count']?.toLocaleString() || '0'}
+                    <td className="px-6 py-4">
+                      {index.storeSize || 'Unknown'}
                     </td>
-                    <td className="py-3 px-4 text-neutral-300">
-                      {index['store.size'] || 'Unknown'}
-                    </td>
-                    <td className="py-3 px-4">
+                    <td className="px-6 py-4">
                       <span className={`px-2 py-1 rounded text-xs ${
                         index.health === 'green' ? 'bg-green-600' :
                         index.health === 'yellow' ? 'bg-yellow-600' : 'bg-red-600'
@@ -579,24 +468,24 @@ export default function ClusterManagement({
                         {index.health?.toUpperCase() || 'UNKNOWN'}
                       </span>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="px-6 py-4">
                       <div className="flex flex-wrap gap-2">
-                        {selectedIndex !== index.index && (
+                        {selectedIndex !== index.name && (
                           <button
-                            onClick={() => handleSelectIndex(index.index)}
+                            onClick={() => handleSelectIndex(index.name)}
                             className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
                           >
                             Select
                           </button>
                         )}
                         <button
-                          onClick={() => handleGetIndexDetails(index.index)}
+                          onClick={() => handleGetIndexDetails(index.name)}
                           className="bg-gray-600 hover:bg-gray-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
                         >
                           Details
                         </button>
                         <button
-                          onClick={() => openESModal("delete", { indexName: index.index })}
+                          onClick={() => openESModal("delete", { indexName: index.name })}
                           className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out"
                           disabled={isAnyTaskRunning}
                         >

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import axiosClient from '../api/axiosClient';
-import { faExclamationTriangle, faCheckCircle, faInfoCircle, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
+import { faExclamationTriangle, faCheckCircle, faInfoCircle, faCircleNotch, faHourglassStart } from '@fortawesome/free-solid-svg-icons';
 
 export const useElasticsearchManagement = (showNotification, fetchAllTasks) => {
   const [esIndices, setEsIndices] = useState([]);
@@ -36,39 +36,62 @@ export const useElasticsearchManagement = (showNotification, fetchAllTasks) => {
     }
   }, [showNotification]);
 
-  const handleCreateIndex = async () => {
-    if (!newIndexName.trim()) {
+  const handleCreateIndex = async (indexName, shards, replicas) => {
+    if (!indexName.trim()) {
       showNotification("error", "Index name is required", faExclamationTriangle);
       return;
     }
 
-    const shards = parseInt(newIndexShards) || 1;
-    const replicas = parseInt(newIndexReplicas) || 0;
+    const numShards = parseInt(shards) || 1;
+    const numReplicas = parseInt(replicas) || 0;
 
-    if (shards < 1 || shards > 1000) {
+    if (numShards < 1 || numShards > 1000) {
       showNotification("error", "Number of shards must be between 1 and 1000", faExclamationTriangle);
       return;
     }
 
-    if (replicas < 0 || replicas > 100) {
+    if (numReplicas < 0 || numReplicas > 100) {
       showNotification("error", "Number of replicas must be between 0 and 100", faExclamationTriangle);
       return;
     }
 
     try {
+      setEsLoading(true);
       const response = await axiosClient.post("/api/admin/es/indices", {
-        indexName: newIndexName.trim(),
-        shards: shards,
-        replicas: replicas
+        indexName,
+        shards: numShards,
+        replicas: numReplicas,
+      });
+      
+      const { taskId } = response.data;
+      showNotification("info", `Index creation for '${indexName}' started...`, faHourglassStart);
+
+      // Poll for task completion
+      await new Promise((resolve, reject) => {
+        const interval = setInterval(async () => {
+          try {
+            const taskRes = await axiosClient.get(`/api/admin/tasks/${taskId}`);
+            if (taskRes.data.completed) {
+              clearInterval(interval);
+              if (taskRes.data.status === 'success') {
+                resolve();
+              } else {
+                reject(new Error(taskRes.data.error || 'Index creation failed.'));
+              }
+            }
+          } catch (err) {
+            clearInterval(interval);
+            reject(err);
+          }
+        }, 2000);
       });
 
-      if (response.data.taskId) {
-        fetchAllTasks();
-        closeESModal();
-        showNotification("info", `Index creation started for "${newIndexName.trim()}" with ${shards} shard(s) and ${replicas} replica(s)`, faInfoCircle, true);
-      }
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to create index", faExclamationTriangle);
+      showNotification("success", `Index '${indexName}' created successfully.`, faCheckCircle);
+    } catch (error) {
+      showNotification("error", error.message || error.response?.data?.error || "Failed to start index creation", faExclamationTriangle);
+      throw error; // Re-throw to be caught by the component
+    } finally {
+      setEsLoading(false);
     }
   };
 
@@ -83,7 +106,7 @@ export const useElasticsearchManagement = (showNotification, fetchAllTasks) => {
     }
 
     try {
-      const response = await axiosClient.delete(`/api/admin/es/indices/${indexName}`);
+      const response = await axiosClient.delete(`/api/indices/${indexName}`);
 
       if (response.data.taskId) {
         fetchAllTasks();
@@ -132,14 +155,13 @@ export const useElasticsearchManagement = (showNotification, fetchAllTasks) => {
   };
 
   const fetchIndexDetails = async (indexName) => {
+    if (!indexName) return null;
     try {
-      setEsLoading(true);
-      const response = await axiosClient.get(`/api/admin/es/indices/${indexName}/details`);
-      setIndexDetails(response.data);
-    } catch (err) {
-      showNotification("error", "Failed to fetch index details", faExclamationTriangle);
-    } finally {
-      setEsLoading(false);
+      const response = await axiosClient.get(`/api/indices/${indexName}/details`);
+      return response.data;
+    } catch (error) {
+      console.error("Error fetching index details:", error);
+      throw error;
     }
   };
 

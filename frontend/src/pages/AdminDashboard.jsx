@@ -18,6 +18,7 @@ import ClusterManagement from "./AdminDashboard/components/ClusterManagement";
 import ConfigurationManagement from "./AdminDashboard/components/ConfigurationManagement";
 import AccountManagement from "./AdminDashboard/components/AccountManagement";
 import TaskDetails from "./AdminDashboard/components/TaskDetails";
+import NodeDetailsModal from "./AdminDashboard/components/NodeDetailsModal";
 
 export default function AdminDashboard({ onLogout }) {
   // Use shared dashboard hooks
@@ -60,6 +61,8 @@ export default function AdminDashboard({ onLogout }) {
   const [showAddNodeModal, setShowAddNodeModal] = useState(false);
   const [showLocalNodeManager, setShowLocalNodeManager] = useState(false);
   const [nodeToEdit, setNodeToEdit] = useState(null);
+  const [showNodeDetailsModal, setShowNodeDetailsModal] = useState(false);
+  const [selectedNodeForDetails, setSelectedNodeForDetails] = useState(null);
 
   // Fetch tasks on mount
   useEffect(() => {
@@ -77,10 +80,8 @@ export default function AdminDashboard({ onLogout }) {
     if (activeTab === "cluster") {
       // Refresh local nodes (which includes cluster info if available)
       clusterManagement.fetchLocalNodes();
-      clusterManagement.fetchNodeStats();
-      clusterManagement.fetchDiskPreferences();
     }
-  }, [activeTab]); // Only depend on activeTab to prevent loops
+  }, [activeTab, clusterManagement.fetchLocalNodes]); // Rerun when tab changes
 
   // Helper function to format bytes
   function formatBytes(bytes) {
@@ -112,10 +113,19 @@ export default function AdminDashboard({ onLogout }) {
 
   const handleCreateIndex = async () => {
     try {
-      await elasticsearchManagement.handleCreateIndex(newIndexName, parseInt(newIndexShards), parseInt(newIndexReplicas));
+      await elasticsearchManagement.handleCreateIndex(newIndexName, newIndexShards, newIndexReplicas);
       closeESModal();
+      elasticsearchManagement.fetchESData();
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to create index");
+      console.error("Failed to create index:", err);
+    }
+  };
+
+  const handleGetIndexDetails = async (indexName) => {
+    const details = await elasticsearchManagement.fetchIndexDetails(indexName);
+    if (details) {
+      setIndexDetails(details);
+      openESModal('details', { indexName });
     }
   };
 
@@ -133,14 +143,38 @@ export default function AdminDashboard({ onLogout }) {
     setShowLocalNodeManager(true);
   };
 
+  const handleOpenNodeDetails = (node) => {
+    setSelectedNodeForDetails(node);
+    setShowNodeDetailsModal(true);
+  };
+
+  const handleCloseNodeDetails = () => {
+    setSelectedNodeForDetails(null);
+    setShowNodeDetailsModal(false);
+  };
+
   useEffect(() => {
-    // Only fetch cluster stats if there is at least one running node
-    if (clusterManagement.localNodes.some(node => node.isRunning)) {
-      elasticsearchManagement.fetchESData();
-      const interval = setInterval(elasticsearchManagement.fetchESData, 30000);
-      return () => clearInterval(interval);
-    }
-  }, [clusterManagement.localNodes, elasticsearchManagement.fetchESData]);
+    const manageESData = async () => {
+      if (clusterManagement.localNodes.some(node => node.isRunning)) {
+        await elasticsearchManagement.fetchESData();
+        
+        // After fetching, check if the selected index is valid
+        const { esIndices, selectedIndex, handleSelectIndex } = elasticsearchManagement;
+        const selectedIndexExists = esIndices.some(index => index.name === selectedIndex);
+
+        if (!selectedIndexExists && esIndices.length > 0) {
+          // If not, select the first available index
+          handleSelectIndex(esIndices[0].name);
+        }
+      }
+    };
+    
+    manageESData();
+
+    // Set up an interval to periodically refresh the data
+    const interval = setInterval(manageESData, 30000);
+    return () => clearInterval(interval);
+  }, [clusterManagement.localNodes]);
 
   return (
     <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans">
@@ -255,6 +289,7 @@ export default function AdminDashboard({ onLogout }) {
             nodeDisks={clusterManagement.nodeDisks}
             diskPreferences={clusterManagement.diskPreferences}
             clusterLoading={clusterManagement.clusterLoading}
+            nodeActionLoading={clusterManagement.nodeActionLoading}
             selectedNodeForDisks={clusterManagement.selectedNodeForDisks}
             setSelectedNodeForDisks={clusterManagement.setSelectedNodeForDisks}
             fetchLocalNodes={clusterManagement.fetchLocalNodes}
@@ -270,11 +305,11 @@ export default function AdminDashboard({ onLogout }) {
             esHealth={elasticsearchManagement.esHealth}
             esLoading={elasticsearchManagement.esLoading}
             fetchESData={elasticsearchManagement.fetchESData}
-            handleCreateIndex={elasticsearchManagement.handleCreateIndex}
+            handleCreateIndex={handleCreateIndex}
             handleDeleteIndex={elasticsearchManagement.handleDeleteIndex}
             handleSelectIndex={elasticsearchManagement.handleSelectIndex}
-            handleReindexData={elasticsearchManagement.handleReindexData}
-            handleGetIndexDetails={elasticsearchManagement.handleGetIndexDetails}
+            handleReindexData={handleReindex}
+            handleGetIndexDetails={handleGetIndexDetails}
             openESModal={openESModal}
             // Modal controls
             setShowClusterWizard={setShowClusterWizard}
@@ -283,7 +318,7 @@ export default function AdminDashboard({ onLogout }) {
             isAnyTaskRunning={isAnyTaskRunning}
             formatBytes={formatBytes}
             onEditNode={handleEditNode}
-            nodeActionLoading={clusterManagement.nodeActionLoading || []}
+            onOpenNodeDetails={handleOpenNodeDetails}
           />
         )}
 
@@ -330,8 +365,6 @@ export default function AdminDashboard({ onLogout }) {
             setShowClusterWizard(false);
             // Refresh local nodes (which includes cluster info if available)
             clusterManagement.fetchLocalNodes();
-            clusterManagement.fetchNodeStats();
-            clusterManagement.fetchDiskPreferences();
           }}
         />
       )}
@@ -507,6 +540,52 @@ export default function AdminDashboard({ onLogout }) {
               </div>
             )}
 
+            {/* Details Modal */}
+            {esModalType === "details" && indexDetails && (
+              <div>
+                <div className="border-b border-neutral-700 mb-4">
+                  <nav className="flex space-x-4">
+                    {['Settings', 'Mappings', 'Stats'].map(tabName => (
+                      <button
+                        key={tabName}
+                        onClick={() => setEsModalData({ ...esModalData, activeDetailsTab: tabName.toLowerCase() })}
+                        className={`py-2 px-4 font-medium text-sm transition-colors ${
+                          (esModalData.activeDetailsTab || 'settings') === tabName.toLowerCase()
+                            ? 'border-b-2 border-primary text-primary'
+                            : 'border-transparent text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        {tabName}
+                      </button>
+                    ))}
+                  </nav>
+                </div>
+
+                <div className="space-y-4 text-neutral-300">
+                  {/* Settings Tab */}
+                  {(esModalData.activeDetailsTab || 'settings') === 'settings' && (
+                    <SettingsDisplay settings={indexDetails.settings} />
+                  )}
+                  {/* Mappings Tab */}
+                  {(esModalData.activeDetailsTab || 'settings') === 'mappings' && (
+                    <MappingsDisplay mappings={indexDetails.mappings} />
+                  )}
+                  {/* Stats Tab */}
+                  {(esModalData.activeDetailsTab || 'settings') === 'stats' && (
+                    <StatsDisplay stats={indexDetails.stats} />
+                  )}
+                </div>
+                <div className="flex justify-end mt-6">
+                  <button
+                    onClick={closeESModal}
+                    className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Reindex Modal */}
             {esModalType === "reindex" && (
               <div className="space-y-4">
@@ -573,6 +652,125 @@ export default function AdminDashboard({ onLogout }) {
           </div>
         </div>
       )}
+
+      <NodeDetailsModal 
+        show={showNodeDetailsModal}
+        onClose={handleCloseNodeDetails}
+        node={selectedNodeForDetails}
+        nodeDisks={clusterManagement.nodeDisks}
+        formatBytes={formatBytes}
+      />
     </div>
   );
 }
+
+// Helper component for displaying settings in a structured way
+const SettingsDisplay = ({ settings }) => {
+  const renderValue = (value) => {
+    if (typeof value === 'object' && value !== null) {
+      return (
+        <pre className="bg-neutral-700 p-2 rounded-md text-sm">
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      );
+    }
+    return <span className="font-mono">{String(value)}</span>;
+  };
+
+  return (
+    <div className="bg-neutral-900 p-4 rounded-lg space-y-2">
+      {Object.entries(settings.index).map(([key, value]) => (
+        <div key={key} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start py-2 border-b border-neutral-800">
+          <span className="font-semibold text-neutral-400 capitalize">{key.replace(/_/g, ' ')}</span>
+          <div className="text-white col-span-2 bg-neutral-800 p-2 rounded-md text-sm">
+            {renderValue(value)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// Helper component for displaying mappings
+const MappingsDisplay = ({ mappings }) => {
+  if (!mappings || !mappings.properties || Object.keys(mappings.properties).length === 0) {
+    return (
+      <div className="bg-neutral-900 p-4 rounded-lg text-center text-neutral-400">
+        No explicit mappings defined for this index.
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-neutral-900 p-4 rounded-lg space-y-4">
+      {Object.entries(mappings.properties).map(([fieldName, fieldDetails]) => (
+        <div key={fieldName} className="bg-neutral-800 p-4 rounded-lg">
+          <h5 className="font-bold text-lg text-primary mb-2">{fieldName}</h5>
+          <div className="pl-4 border-l-2 border-neutral-600 space-y-2">
+            <div className="flex justify-between">
+              <span className="font-semibold text-neutral-300">Type:</span>
+              <span className="font-mono bg-blue-900 text-blue-300 px-2 py-1 rounded-md text-sm">{fieldDetails.type}</span>
+            </div>
+            {fieldDetails.fields && (
+              <div>
+                <p className="font-semibold mt-2 text-neutral-300">Sub-fields:</p>
+                <div className="pl-4 mt-2 space-y-2">
+                  {Object.entries(fieldDetails.fields).map(([subFieldName, subFieldDetails]) => (
+                    <div key={subFieldName} className="bg-neutral-700 p-2 rounded-md">
+                      <p className="font-semibold text-neutral-400">{subFieldName}</p>
+                      <div className="flex justify-between text-sm">
+                        <span className="font-semibold">Type:</span>
+                        <span>{subFieldDetails.type}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="font-semibold">Analyzer:</span>
+                        <span>{subFieldDetails.analyzer}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// Helper component for displaying stats
+const StatsDisplay = ({ stats }) => {
+  const renderStats = (statsObj) => {
+    return Object.entries(statsObj).map(([statName, statValue]) => {
+      if (typeof statValue === 'object' && statValue !== null) {
+        return (
+          <div key={statName} className="col-span-1 md:col-span-2">
+            <h6 className="font-semibold text-neutral-300 capitalize mt-2">{statName.replace(/_/g, ' ')}</h6>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 pl-4 border-l-2 border-neutral-700">
+              {renderStats(statValue)}
+            </div>
+          </div>
+        );
+      }
+      return (
+        <div key={statName} className="flex justify-between border-b border-neutral-800 py-1">
+          <span className="font-semibold text-neutral-400 capitalize">{statName.replace(/_/g, ' ')}</span>
+          <span className="text-white font-mono">{statValue.toLocaleString()}</span>
+        </div>
+      );
+    });
+  };
+
+  return (
+    <div className="bg-neutral-900 p-4 rounded-lg space-y-6">
+      {Object.entries(stats).map(([category, categoryStats]) => (
+        <div key={category}>
+          <h5 className="font-bold text-lg text-primary capitalize mb-2">{category}</h5>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 pl-4">
+            {renderStats(categoryStats)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};

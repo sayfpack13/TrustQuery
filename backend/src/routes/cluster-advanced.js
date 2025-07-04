@@ -528,4 +528,87 @@ router.get("/local-nodes", verifyJwt, async (req, res) => {
   }
 });
 
+// GET the content of a node's configuration file
+router.get("/:nodeName/config", verifyJwt, async (req, res) => {
+  const { nodeName } = req.params;
+  try {
+    const configContent = await clusterManager.getNodeConfigContent(nodeName);
+    res.type('text/plain'); // Set content type to plain text
+    res.send(configContent);
+  } catch (error) {
+    console.error(`Error fetching config for node ${nodeName}:`, error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET the list of indices for a specific node
+router.get("/:nodeName/indices", verifyJwt, async (req, res) => {
+  const { nodeName } = req.params;
+  try {
+    const nodeConfig = await clusterManager.getNodeConfig(nodeName);
+    if (!nodeConfig || !nodeConfig.http || !nodeConfig.network) {
+      return res.status(404).json({ error: `Configuration for node ${nodeName} not found.` });
+    }
+
+    const nodeUrl = `http://${nodeConfig.network.host}:${nodeConfig.http.port}`;
+    const { getSingleNodeClient } = require('../elasticsearch/client');
+    const nodeClient = getSingleNodeClient(nodeUrl);
+
+    const indicesResponse = await nodeClient.cat.indices({
+      format: "json",
+      h: "index,status,health,docs.count,store.size,creation.date.string,uuid",
+      s: "index:asc"
+    });
+
+    const { formatBytes } = require('../utils/format');
+    const formattedIndices = indicesResponse.map((index) => ({
+      ...index,
+      docCount: parseInt(index['docs.count'], 10) || 0,
+    }));
+
+    res.json(formattedIndices);
+  } catch (error) {
+    console.error(`Error fetching indices for node ${nodeName}:`, error);
+    res.status(500).json({ error: "Failed to fetch indices: " + error.message });
+  }
+});
+
+// Create an index on a specific node
+router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
+  const { nodeName } = req.params;
+  const { indexName, shards, replicas } = req.body;
+
+  if (!indexName) {
+    return res.status(400).json({ error: "Index name is required." });
+  }
+
+  try {
+    const nodeConfig = await clusterManager.getNodeConfig(nodeName);
+    if (!nodeConfig) {
+      return res.status(404).json({ error: `Node '${nodeName}' not found.` });
+    }
+    
+    const nodeUrl = `http://${nodeConfig.network.host}:${nodeConfig.http.port}`;
+    const { getSingleNodeClient } = require('../elasticsearch/client');
+    const nodeClient = getSingleNodeClient(nodeUrl);
+
+    await nodeClient.indices.create({
+      index: indexName,
+      wait_for_active_shards: '1',
+      body: {
+        settings: {
+          "index.routing.allocation.require.custom_id": nodeName,
+          number_of_shards: shards || 1,
+          number_of_replicas: replicas || 0,
+        },
+      },
+    });
+
+    res.status(201).json({ message: `Index '${indexName}' created successfully on node '${nodeName}'.` });
+  } catch (error) {
+    console.error(`Error creating index on node ${nodeName}:`, error);
+    res.status(500).json({ error: "Failed to create index.", details: error.message });
+  }
+});
+
 module.exports = router;

@@ -4,6 +4,9 @@ const { getConfig } = require("../config");
 
 let es;
 let esWrite;
+let writeClient;
+let esAvailable = false;
+const singleNodeClients = {}; // Cache for single-node clients
 
 function initializeElasticsearchClients() {
   // Main client for reading/searching - connects to all nodes
@@ -36,6 +39,24 @@ function initializeElasticsearchClients() {
       esWrite = es;
     }
   }
+
+  esAvailable = true;
+}
+
+function getSingleNodeClient(nodeUrl) {
+  if (singleNodeClients[nodeUrl]) {
+    return singleNodeClients[nodeUrl];
+  }
+
+  const client = new Client({
+    node: nodeUrl,
+    requestTimeout: 30000,
+    sniffOnStart: false,
+    sniffOnConnectionFault: false
+  });
+
+  singleNodeClients[nodeUrl] = client;
+  return client;
 }
 
 // Helper function to check if Elasticsearch is available
@@ -104,10 +125,11 @@ function formatIndexName(name) {
 
 module.exports = {
   initializeElasticsearchClients,
+  getSingleNodeClient,
+  getES: () => es,
+  getWriteES: () => esWrite,
   isElasticsearchAvailable,
   formatBytes,
   createIndexMapping,
-  formatIndexName,
-  getES: () => es,
-  getESWrite: () => esWrite
+  formatIndexName
 };
