@@ -11,72 +11,9 @@ const { randomUUID } = require("crypto");
 const cors = require("cors");
 
 // Configuration management
-const CONFIG_FILE = path.join(__dirname, "config.json");
+const { loadConfig: loadCentralizedConfig, getConfig, setConfig, saveConfig } = require("./src/config");
 
-// Default configuration
-const DEFAULT_CONFIG = {
-  selectedIndex: "accounts",
-  searchIndices: ["accounts"], // Default search indices
-  elasticsearchNodes: ["http://localhost:9200"],
-  writeNode: "http://localhost:9200", // Dedicated write node
-  nodeAttributes: {
-    defaultDiskType: "ssd",
-    defaultZone: "zone1"
-  },
-  diskPreferences: {}, // Node disk preferences
-  batchSize: 1000,
-  minVisibleChars: 2,
-  maskingRatio: 0.2,
-  usernameMaskingRatio: 0.4,
-  // Admin UI settings
-  adminSettings: {
-    showRawLineByDefault: false
-  },
-  // Elasticsearch configuration file paths and settings
-  elasticsearchConfig: {
-    configFilePath: "C:\\elasticsearch\\config\\elasticsearch.yml",
-    dataPath: "C:\\elasticsearch\\data",
-    logsPath: "C:\\elasticsearch\\logs",
-    jvmOptionsPath: "C:\\elasticsearch\\config\\jvm.options",
-    autoBackup: true,
-    restartCommand: "net restart elasticsearch"
-  },
-  autoRefreshInterval: 30000,
-  maxTaskHistory: 100
-};
-
-// Configuration state
-let config = { ...DEFAULT_CONFIG };
-
-// Load configuration from file
-async function loadConfig() {
-  try {
-    const configData = await fs.readFile(CONFIG_FILE, 'utf8');
-    const loadedConfig = JSON.parse(configData);
-    config = { ...DEFAULT_CONFIG, ...loadedConfig };
-    console.log("✅ Configuration loaded from file");
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      console.log("📝 No config file found, creating default configuration");
-      await saveConfig();
-    } else {
-      console.error("❌ Error loading config:", error);
-      config = { ...DEFAULT_CONFIG };
-    }
-  }
-}
-
-// Save configuration to file
-async function saveConfig() {
-  try {
-    console.log(`💾 Saving configuration to ${CONFIG_FILE}...`);
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2));
-    console.log("✅ Configuration saved to file");
-  } catch (error) {
-    console.error("❌ Error saving config:", error);
-    throw error; // Re-throw to let caller handle the error
-  }
-}
+// Configuration state will be managed by centralized config module
 
 // Helper to format bytes into a human-readable string
 function formatBytes(bytes, decimals = 2) {
@@ -89,28 +26,6 @@ function formatBytes(bytes, decimals = 2) {
     const i = Math.floor(Math.log(bytes) / Math.log(k))
 
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`
-}
-
-// Get configuration value
-function getConfig(key) {
-  return key ? config[key] : config;
-}
-
-// Set configuration value
-async function setConfig(key, value) {
-  try {
-    if (typeof key === 'object') {
-      // Update multiple values
-      config = { ...config, ...key };
-    } else {
-      // Update single value
-      config[key] = value;
-    }
-    await saveConfig();
-  } catch (error) {
-    console.error("❌ Error setting config:", error);
-    throw error; // Re-throw to let caller handle the error
-  }
 }
 
 const app = express();
@@ -170,7 +85,7 @@ function getCurrentES() {
 
 // Initialize server and Elasticsearch
 async function initializeServer() {
-  await loadConfig();
+  await loadCentralizedConfig();
   
   // Start the server
   app.listen(PORT, () => {

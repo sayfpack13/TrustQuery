@@ -35,8 +35,8 @@ const LocalNodeManager = ({
   const [lastValidatedConfig, setLastValidatedConfig] = useState(null); // Track successful validation
 
   const updatePathsForNewName = (newName, oldName, currentDataPath, currentLogsPath, setDataPath, setLogsPath) => {
-    const defaultDataPath = (name) => `C:\\elasticsearch\\${name}\\data`;
-    const defaultLogsPath = (name) => `C:\\elasticsearch\\${name}\\logs`;
+    const defaultDataPath = (name) => `C:\\elasticsearch\\nodes\\${name}\\data`;
+    const defaultLogsPath = (name) => `C:\\elasticsearch\\nodes\\${name}\\logs`;
 
     if (oldName !== newName) {
         // Update data path if it's empty or was the default for the old name
@@ -91,8 +91,8 @@ const LocalNodeManager = ({
       setNewNodePort(nodeToEdit.port || '9200');
       setNewNodeTransportPort(nodeToEdit.transportPort || '9300');
       setNewNodeCluster(nodeToEdit.cluster || 'trustquery-cluster');
-      setNewNodeDataPath(nodeToEdit.dataPath || `C:\\elasticsearch\\${nodeToEdit.name}\\data`);
-      setNewNodeLogsPath(nodeToEdit.logsPath || `C:\\elasticsearch\\${nodeToEdit.name}\\logs`);
+      setNewNodeDataPath(nodeToEdit.dataPath || `C:\\elasticsearch\\nodes\\${nodeToEdit.name}\\data`);
+      setNewNodeLogsPath(nodeToEdit.logsPath || `C:\\elasticsearch\\nodes\\${nodeToEdit.name}\\logs`);
       // Assuming roles are part of the node object, otherwise they need to be fetched
       setNewNodeRoles(nodeToEdit.roles || {
         master: true,
@@ -336,7 +336,10 @@ const LocalNodeManager = ({
                 value={newNodeName}
                 onChange={handleNodeNameChange}
                 placeholder="e.g., node-1, data-node-01"
+                disabled={mode === 'edit' && nodeToEdit?.isRunning}
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
+                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                } ${
                   validationErrors.some(e => e.type === 'node_name') 
                     ? 'border-red-500 focus:ring-red-500' 
                     : 'border-neutral-700 focus:ring-blue-500'
@@ -355,7 +358,10 @@ const LocalNodeManager = ({
                 <select
                   value={newNodeCluster}
                   onChange={(e) => handleClusterChange(e.target.value)}
-                  className="flex-1 p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                  className={`flex-1 p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                 >
                   {(clusters || []).map(cluster => (
                     <option key={cluster} value={cluster}>{cluster}</option>
@@ -363,7 +369,10 @@ const LocalNodeManager = ({
                 </select>
                 <button
                   onClick={() => setShowNewCluster(!showNewCluster)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-md transition duration-150"
+                  disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                  className={`bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-md transition duration-150 ${
+                    (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                   title="Create new cluster"
                 >
                   <FontAwesomeIcon icon={faPlus} />
@@ -401,7 +410,10 @@ const LocalNodeManager = ({
                 value={newNodeHost}
                 onChange={(e) => setNewNodeHost(e.target.value)}
                 placeholder="localhost"
-                className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                className={`w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               />
             </div>
             <div>
@@ -419,7 +431,10 @@ const LocalNodeManager = ({
                 value={newNodePort}
                 onChange={(e) => setNewNodePort(e.target.value)}
                 placeholder="9200"
+                disabled={mode === 'edit' && nodeToEdit?.isRunning}
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
+                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                } ${
                   validationErrors.some(e => e.type === 'http_port') 
                     ? 'border-red-500 focus:ring-red-500' 
                     : 'border-neutral-700 focus:ring-blue-500'
@@ -441,7 +456,10 @@ const LocalNodeManager = ({
                 value={newNodeTransportPort}
                 onChange={(e) => setNewNodeTransportPort(e.target.value)}
                 placeholder="9300"
+                disabled={mode === 'edit' && nodeToEdit?.isRunning}
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
+                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                } ${
                   validationErrors.some(e => e.type === 'transport_port') 
                     ? 'border-red-500 focus:ring-red-500' 
                     : 'border-neutral-700 focus:ring-blue-500'
@@ -458,12 +476,15 @@ const LocalNodeManager = ({
             </label>
             <div className="grid grid-cols-3 gap-4">
               {Object.entries(newNodeRoles).map(([role, enabled]) => (
-                <label key={role} className="flex items-center space-x-2 cursor-pointer">
+                <label key={role} className={`flex items-center space-x-2 ${
+                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                }`}>
                   <input
                     type="checkbox"
                     checked={enabled}
                     onChange={() => handleRoleChange(role)}
-                    className="form-checkbox text-blue-600 bg-neutral-900 border-neutral-700 rounded focus:ring-blue-500"
+                    disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                    className="form-checkbox text-blue-600 bg-neutral-900 border-neutral-700 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <span className="text-neutral-300 capitalize">{role}</span>
                 </label>
@@ -492,8 +513,11 @@ const LocalNodeManager = ({
                   type="text"
                   value={newNodeDataPath}
                   onChange={(e) => setNewNodeDataPath(e.target.value)}
-                  placeholder="C:\\elasticsearch\\node-name\\data"
+                  placeholder="C:\\elasticsearch\\nodes\\node-name\\data"
+                  disabled={mode === 'edit' && nodeToEdit?.isRunning}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none focus:ring-2 ${
+                    (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                  } ${
                     validationErrors.some(e => e.type === 'data_path')
                     ? 'border-red-500 focus:ring-red-500'
                     : 'border-neutral-700 focus:ring-blue-500'
@@ -516,8 +540,11 @@ const LocalNodeManager = ({
                   type="text"
                   value={newNodeLogsPath}
                   onChange={(e) => setNewNodeLogsPath(e.target.value)}
-                  placeholder="C:\\elasticsearch\\node-name\\logs"
+                  placeholder="C:\\elasticsearch\\nodes\\node-name\\logs"
+                  disabled={mode === 'edit' && nodeToEdit?.isRunning}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none focus:ring-2 ${
+                    (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                  } ${
                     validationErrors.some(e => e.type === 'logs_path')
                     ? 'border-red-500 focus:ring-red-500'
                     : 'border-neutral-700 focus:ring-blue-500'
@@ -552,7 +579,7 @@ const LocalNodeManager = ({
               Node is Currently Running
             </h3>
             <p className="text-amber-200 text-sm mb-3">
-              Configuration changes are disabled while the node is running. Stop the node first to make changes, or the changes will require a restart to take effect.
+              All configuration fields are disabled while the node is running. Stop the node first to make any changes to its configuration. Changes to a running node would require a restart to take effect anyway.
             </p>
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
@@ -651,7 +678,7 @@ const LocalNodeManager = ({
               };
               await validateNodeConfiguration(nodeConfig);
             }}
-            disabled={!newNodeName.trim() || isValidating || isApplyingSuggestions}
+            disabled={!newNodeName.trim() || isValidating || isApplyingSuggestions || (mode === 'edit' && nodeToEdit?.isRunning)}
             className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FontAwesomeIcon icon={isValidating ? faSpinner : faCheckCircle} className={`mr-2 ${isValidating ? 'fa-spin' : ''}`} />

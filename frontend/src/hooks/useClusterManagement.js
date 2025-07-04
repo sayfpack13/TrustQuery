@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
-import { faExclamationTriangle, faCheckCircle } from '@fortawesome/free-solid-svg-icons';
+import { faExclamationTriangle, faCheckCircle, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 
 export const useClusterManagement = (showNotification) => {
   // State for locally managed node configurations
@@ -114,6 +114,10 @@ export const useClusterManagement = (showNotification) => {
         const validationError = new Error('Validation failed');
         validationError.validationData = error.response.data;
         throw validationError;
+      } else if (error.response?.status === 409 && error.response?.data?.reason === 'node_running') {
+        // Handle running node error specifically
+        showNotificationRef.current('error', error.response?.data?.error || 'Cannot update running node', faExclamationTriangle);
+        throw error; // Re-throw
       } else {
         // Handle other types of errors
         showNotificationRef.current('error', `Failed to update node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
@@ -141,10 +145,42 @@ export const useClusterManagement = (showNotification) => {
   const handleStartLocalNode = async (nodeName) => {
     setNodeActionLoading(prev => [...prev, nodeName]);
     try {
+      showNotificationRef.current('info', `Starting node "${nodeName}"...`, faCircleNotch, true);
+      
+      // Call the start endpoint
       await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/start`);
-      showNotificationRef.current('success', `Node "${nodeName}" is starting...`, faCheckCircle);
-      // Optimistically update UI or wait for fetch
-      setTimeout(fetchLocalNodes, 3000); // Give it a moment to start
+      
+      // Poll for actual running status instead of using timeout
+      const pollForNodeStart = async (maxAttempts = 20, interval = 3000) => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, interval));
+          
+          try {
+            // Fetch updated node status
+            await fetchLocalNodes();
+            
+            // Check if node is actually running
+            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
+            const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
+            
+            if (targetNode?.isRunning) {
+              showNotificationRef.current('success', `Node "${nodeName}" started successfully!`, faCheckCircle);
+              return true;
+            }
+          } catch (error) {
+            console.warn(`Poll attempt ${attempt + 1} failed:`, error);
+          }
+        }
+        
+        // If we get here, the node didn't start within the timeout
+        showNotificationRef.current('error', `Node "${nodeName}" failed to start within expected time. Check logs for details.`, faExclamationTriangle);
+        await fetchLocalNodes(); // Final refresh to get actual status
+        return false;
+      };
+      
+      // Start polling and wait for result
+      await pollForNodeStart();
+      
     } catch (error) {
       console.error(`Error starting node ${nodeName}:`, error);
       showNotificationRef.current('error', `Failed to start node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
@@ -156,10 +192,42 @@ export const useClusterManagement = (showNotification) => {
   const handleStopLocalNode = async (nodeName) => {
     setNodeActionLoading(prev => [...prev, nodeName]);
     try {
+      showNotificationRef.current('info', `Stopping node "${nodeName}"...`, faCircleNotch, true);
+      
+      // Call the stop endpoint
       await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/stop`);
-      showNotificationRef.current('success', `Node "${nodeName}" is stopping...`, faCheckCircle);
-      // Optimistically update UI or wait for fetch
-      setTimeout(fetchLocalNodes, 2000); // Give it a moment to stop
+      
+      // Poll for actual stopped status instead of using timeout
+      const pollForNodeStop = async (maxAttempts = 10, interval = 2000) => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, interval));
+          
+          try {
+            // Fetch updated node status
+            await fetchLocalNodes();
+            
+            // Check if node is actually stopped
+            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
+            const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
+            
+            if (!targetNode?.isRunning) {
+              showNotificationRef.current('success', `Node "${nodeName}" stopped successfully!`, faCheckCircle);
+              return true;
+            }
+          } catch (error) {
+            console.warn(`Poll attempt ${attempt + 1} failed:`, error);
+          }
+        }
+        
+        // If we get here, the node didn't stop within the timeout
+        showNotificationRef.current('error', `Node "${nodeName}" failed to stop within expected time. It may still be running.`, faExclamationTriangle);
+        await fetchLocalNodes(); // Final refresh to get actual status
+        return false;
+      };
+      
+      // Start polling and wait for result
+      await pollForNodeStop();
+      
     } catch (error) {
       console.error(`Error stopping node ${nodeName}:`, error);
       showNotificationRef.current('error', `Failed to stop node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
@@ -169,8 +237,15 @@ export const useClusterManagement = (showNotification) => {
   };
 
   const getNodeDetails = useCallback(async (nodeName) => {
+    if (!nodeName) {
+      console.error('getNodeDetails called with empty nodeName');
+      throw new Error('Node name is required');
+    }
+    
     try {
+      console.log(`Fetching details for node: ${nodeName}`);
       const response = await axiosClient.get(`/api/admin/cluster-advanced/nodes/${nodeName}`);
+      console.log('Node details response:', response.data);
       return response.data;
     } catch (error) {
       console.error(`Error fetching details for node ${nodeName}:`, error);

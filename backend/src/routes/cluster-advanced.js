@@ -413,6 +413,15 @@ router.put("/nodes/:nodeName", verifyJwt, async (req, res) => {
       return res.status(404).json({ error: `Node "${nodeName}" not found` });
     }
 
+    // Check if the node is currently running
+    const isRunning = await clusterManager.isNodeRunning(nodeName);
+    if (isRunning) {
+      return res.status(409).json({ 
+        error: `Cannot update configuration for node "${nodeName}" while it is running. Stop the node first to make changes.`,
+        reason: "node_running"
+      });
+    }
+
     // Create the potential new configuration by merging updates
     const updatedNodeConfig = { ...originalNodeConfig, ...updates };
 

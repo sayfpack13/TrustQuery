@@ -34,8 +34,8 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         host: 'localhost',
         port: 9200,
         transportPort: 9300,
-        dataPath: 'C:\\elasticsearch\\node-1\\data',
-        logsPath: 'C:\\elasticsearch\\node-1\\logs',
+        dataPath: 'C:\\elasticsearch\\nodes\\node-1\\data',
+        logsPath: 'C:\\elasticsearch\\nodes\\node-1\\logs',
         roles: { master: true, data: true, ingest: true }
       }
     ]
@@ -210,8 +210,39 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
 
   const startNode = async (nodeName) => {
     try {
+      // Call the start endpoint
       await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/start`);
-      await fetchLocalNodes();
+      
+      // Poll for actual running status
+      const pollForNodeStart = async (maxAttempts = 20, interval = 3000) => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, interval));
+          
+          try {
+            // Fetch updated node status
+            await fetchLocalNodes();
+            
+            // Check if node is actually running
+            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
+            const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
+            
+            if (targetNode?.isRunning) {
+              return true;
+            }
+          } catch (error) {
+            console.warn(`Poll attempt ${attempt + 1} failed:`, error);
+          }
+        }
+        
+        // If we get here, the node didn't start within the timeout
+        console.error(`Node "${nodeName}" failed to start within expected time`);
+        await fetchLocalNodes(); // Final refresh to get actual status
+        return false;
+      };
+      
+      // Start polling and wait for result
+      await pollForNodeStart();
+      
     } catch (error) {
       console.error('Error starting node:', error);
       alert('Failed to start node: ' + (error.response?.data?.error || error.message));
@@ -220,8 +251,39 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
 
   const stopNode = async (nodeName) => {
     try {
+      // Call the stop endpoint
       await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/stop`);
-      await fetchLocalNodes();
+      
+      // Poll for actual stopped status
+      const pollForNodeStop = async (maxAttempts = 10, interval = 2000) => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, interval));
+          
+          try {
+            // Fetch updated node status
+            await fetchLocalNodes();
+            
+            // Check if node is actually stopped
+            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
+            const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
+            
+            if (!targetNode?.isRunning) {
+              return true;
+            }
+          } catch (error) {
+            console.warn(`Poll attempt ${attempt + 1} failed:`, error);
+          }
+        }
+        
+        // If we get here, the node didn't stop within the timeout
+        console.error(`Node "${nodeName}" failed to stop within expected time`);
+        await fetchLocalNodes(); // Final refresh to get actual status
+        return false;
+      };
+      
+      // Start polling and wait for result
+      await pollForNodeStop();
+      
     } catch (error) {
       console.error('Error stopping node:', error);
       alert('Failed to stop node: ' + (error.response?.data?.error || error.message));

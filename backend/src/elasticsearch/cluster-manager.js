@@ -52,9 +52,10 @@ class ElasticsearchClusterManager {
    */
   async createBaseDirectories() {
     const baseDirs = [
-      path.join(this.baseElasticsearchPath, 'data'),
-      path.join(this.baseElasticsearchPath, 'logs'),
-      path.join(this.baseElasticsearchPath, 'config')
+      path.join(this.baseElasticsearchPath, 'nodes'),     // New organized structure
+      path.join(this.baseElasticsearchPath, 'data'),      // Legacy fallback
+      path.join(this.baseElasticsearchPath, 'logs'),      // Legacy fallback  
+      path.join(this.baseElasticsearchPath, 'config')     // Legacy fallback
     ];
 
     for (const dir of baseDirs) {
@@ -138,17 +139,22 @@ xpack.security.http.ssl.enabled: false
         clusterName = 'trustquery-cluster'
       } = nodeConfig;
 
-      // Validate required fields
-      if (!name || !dataPath || !logsPath) {
-        throw new Error('Node name, data path, and logs path are required');
+      // Validate required fields - use provided paths or generate default ones
+      if (!name) {
+        throw new Error('Node name is required');
       }
 
+      // Use provided paths or generate default ones under base path
+      const nodeBaseDir = path.join(this.baseElasticsearchPath, 'nodes', name);
+      const finalDataPath = dataPath || path.join(nodeBaseDir, 'data');
+      const finalLogsPath = logsPath || path.join(nodeBaseDir, 'logs');
+
       // Create node-specific directories
-      await fs.mkdir(dataPath, { recursive: true });
-      await fs.mkdir(logsPath, { recursive: true });
+      await fs.mkdir(finalDataPath, { recursive: true });
+      await fs.mkdir(finalLogsPath, { recursive: true });
 
       // Create node configuration directory
-      const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', name);
+      const nodeConfigDir = path.join(nodeBaseDir, 'config');
       await fs.mkdir(nodeConfigDir, { recursive: true });
 
       // Generate and save node configuration
@@ -157,8 +163,8 @@ xpack.security.http.ssl.enabled: false
         host,
         port,
         transportPort,
-        dataPath,
-        logsPath,
+        dataPath: finalDataPath,
+        logsPath: finalLogsPath,
         roles,
         clusterName
       });
@@ -172,7 +178,7 @@ xpack.security.http.ssl.enabled: false
       await fs.writeFile(jvmPath, jvmOptions);
 
       // Create log4j2.properties file (IMPORTANT - this was missing!)
-      const log4j2Config = this.generateLog4j2Config(logsPath);
+      const log4j2Config = this.generateLog4j2Config(finalLogsPath);
       const log4j2Path = path.join(nodeConfigDir, 'log4j2.properties');
       await fs.writeFile(log4j2Path, log4j2Config);
 
@@ -187,8 +193,8 @@ xpack.security.http.ssl.enabled: false
       const newNodeMetadata = {
         [nodeUrl]: {
           name,
-          dataPath,
-          logsPath,
+          dataPath: finalDataPath,
+          logsPath: finalLogsPath,
           clusterName,
           port
         }
@@ -203,8 +209,8 @@ xpack.security.http.ssl.enabled: false
         name,
         configPath,
         servicePath,
-        dataPath,
-        logsPath,
+        dataPath: finalDataPath,
+        logsPath: finalLogsPath,
         port,
         transportPort,
         nodeUrl
@@ -333,8 +339,18 @@ REM Start Elasticsearch
    */
   async startNode(nodeName) {
     try {
-      const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
-      const servicePath = path.join(nodeConfigDir, 'start-node.bat');
+      // Get the correct service path from metadata
+      const metadata = this.getNodeMetadata(nodeName);
+      let servicePath;
+      
+      if (metadata && metadata.servicePath) {
+        servicePath = metadata.servicePath;
+        console.log(`🔍 Using service path from metadata: ${servicePath}`);
+      } else {
+        // Fallback to new organized path structure
+        servicePath = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config', 'start-node.bat');
+        console.log(`🔍 Using new organized service path: ${servicePath}`);
+      }
       
       // Verify the service file exists
       try {
@@ -385,6 +401,15 @@ REM Start Elasticsearch
         console.log(`🔍 Checking for process on port ${port}...`);
         const pid = await this.findPidByPort(port);
         if (pid) {
+            // Get the config directory from the service path or metadata
+            let nodeConfigDir;
+            if (metadata && metadata.configPath) {
+              nodeConfigDir = path.dirname(metadata.configPath);
+            } else {
+              // Use new organized path structure
+              nodeConfigDir = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config');
+            }
+            
             const pidFilePath = path.join(nodeConfigDir, 'pid.json');
             await fs.writeFile(pidFilePath, JSON.stringify({ pid }), 'utf8');
             console.log(`✅ Started Elasticsearch node: ${nodeName} with PID: ${pid} on port ${port}`);
@@ -425,7 +450,20 @@ REM Start Elasticsearch
    */
   async stopNode(nodeName) {
     try {
-      const pidFilePath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'pid.json');
+      // Get the correct PID file path from metadata
+      const metadata = this.getNodeMetadata(nodeName);
+      let pidFilePath;
+      
+      if (metadata && metadata.configPath) {
+        const configDir = path.dirname(metadata.configPath);
+        pidFilePath = path.join(configDir, 'pid.json');
+      } else {
+        // Fallback to new organized path structure
+        pidFilePath = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config', 'pid.json');
+      }
+      
+      console.log(`🔍 Looking for PID file at: ${pidFilePath}`);
+      
       try {
         const pidData = await fs.readFile(pidFilePath, 'utf8');
         const { pid } = JSON.parse(pidData);
@@ -463,7 +501,19 @@ REM Start Elasticsearch
    * Get node configuration
    */
   async getNodeConfig(nodeName) {
-    const configPath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'elasticsearch.yml');
+    // First try to get the config path from metadata
+    const metadata = this.getNodeMetadata(nodeName);
+    let configPath;
+    
+    if (metadata && metadata.configPath) {
+      configPath = metadata.configPath;
+      console.log(`🔍 Using config path from metadata: ${configPath}`);
+    } else {
+      // Fallback to new organized path structure
+      configPath = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config', 'elasticsearch.yml');
+      console.log(`🔍 Using new organized config path: ${configPath}`);
+    }
+    
     try {
       const configContent = await fs.readFile(configPath, 'utf8');
       const flatConfig = yaml.parse(configContent);
@@ -513,43 +563,56 @@ REM Start Elasticsearch
    * List all configured nodes
    */
   async listNodes() {
-    const configDir = path.join(this.baseElasticsearchPath, 'config');
+    const nodesDir = path.join(this.baseElasticsearchPath, 'nodes');
     const nodes = [];
 
     try {
-        const nodeDirs = await fs.readdir(configDir, { withFileTypes: true });
+        // Create nodes directory if it doesn't exist
+        await fs.mkdir(nodesDir, { recursive: true });
+        
+        const nodeDirs = await fs.readdir(nodesDir, { withFileTypes: true });
+        console.log(`📁 Listing nodes from: ${nodesDir}`);
 
         for (const dirent of nodeDirs) {
             if (dirent.isDirectory()) {
                 const nodeDirName = dirent.name;
-                const config = await this.getNodeConfig(nodeDirName);
-
-                // The true name comes from the config file itself.
-                const definitiveNodeName = config.node.name;
+                console.log(`📋 Processing node directory: ${nodeDirName}`);
                 
-                const metadata = this.getNodeMetadata(definitiveNodeName);
-        
-        nodes.push({
-                    name: definitiveNodeName,
-                    cluster: config.cluster.name,
-                    host: config.network.host,
-                    port: config.http.port,
-                    transportPort: config.transport.port,
-                    roles: config.node.roles || { master: true, data: true, ingest: true },
-                    isRunning: await this.isNodeRunning(definitiveNodeName),
-          dataPath: metadata.dataPath,
-          logsPath: metadata.logsPath,
-        });
-      }
+                try {
+                    const config = await this.getNodeConfig(nodeDirName);
+
+                    // The true name comes from the config file itself.
+                    const definitiveNodeName = config.node.name;
+                    console.log(`🔍 Found node config for: ${definitiveNodeName}`);
+                    
+                    const metadata = this.getNodeMetadata(definitiveNodeName);
+            
+                    nodes.push({
+                        name: definitiveNodeName,
+                        cluster: config.cluster.name,
+                        host: config.network.host,
+                        port: config.http.port,
+                        transportPort: config.transport.port,
+                        roles: config.node.roles || { master: true, data: true, ingest: true },
+                        isRunning: await this.isNodeRunning(definitiveNodeName),
+                        dataPath: metadata.dataPath,
+                        logsPath: metadata.logsPath,
+                    });
+                } catch (configError) {
+                    console.warn(`⚠️ Skipping node directory ${nodeDirName}: ${configError.message}`);
+                }
+            }
         }
-      return nodes;
+        
+        console.log(`✅ Listed ${nodes.length} nodes from new directory structure`);
+        return nodes;
     } catch (error) {
         if (error.code === 'ENOENT') {
-            console.warn(`Config directory not found at ${configDir}, returning no nodes.`);
+            console.warn(`Nodes directory not found at ${nodesDir}, returning no nodes.`);
             return [];
         }
-      console.error('❌ Failed to list nodes:', error);
-      return [];
+        console.error('❌ Failed to list nodes:', error);
+        return [];
     }
   }
 
@@ -566,10 +629,13 @@ REM Start Elasticsearch
         return metadata;
     }
     
-    // Return default paths if not in metadata, with the correct structure
+    // Return default paths using new organized structure if not in metadata
+    const nodeBaseDir = path.join(this.baseElasticsearchPath, 'nodes', nodeName);
     return {
-        dataPath: path.join(this.baseElasticsearchPath, nodeName, 'data'),
-        logsPath: path.join(this.baseElasticsearchPath, nodeName, 'logs'),
+        dataPath: path.join(nodeBaseDir, 'data'),
+        logsPath: path.join(nodeBaseDir, 'logs'),
+        configPath: path.join(nodeBaseDir, 'config', 'elasticsearch.yml'),
+        servicePath: path.join(nodeBaseDir, 'config', 'start-node.bat'),
     };
   }
 
@@ -577,7 +643,17 @@ REM Start Elasticsearch
    * Get the content of a node's configuration file.
    */
   async getNodeConfigContent(nodeName) {
-    const configPath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'elasticsearch.yml');
+    // Get the correct config path from metadata
+    const metadata = this.getNodeMetadata(nodeName);
+    let configPath;
+    
+    if (metadata && metadata.configPath) {
+      configPath = metadata.configPath;
+    } else {
+      // Fallback to new organized path structure
+      configPath = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config', 'elasticsearch.yml');
+    }
+    
     try {
       const configContent = await fs.readFile(configPath, 'utf8');
       return configContent;
@@ -638,17 +714,41 @@ REM Start Elasticsearch
         }
 
       } else {
-        console.warn(`⚠️ No metadata found for node ${nodeName}. File system cleanup may be partial.`);
+        console.warn(`⚠️ No metadata found for node ${nodeName}. Will attempt to remove from new directory structure.`);
+        
+        // Use new organized structure as fallback
+        const nodeBaseDir = path.join(this.baseElasticsearchPath, 'nodes', nodeName);
+        try {
+          await fs.rm(nodeBaseDir, { recursive: true, force: true });
+          console.log(`🗑️ Removed node directory: ${nodeBaseDir}`);
+        } catch (dirError) {
+          if (dirError.code !== 'ENOENT') {
+            console.warn(`⚠️ Could not remove node directory ${nodeBaseDir}: ${dirError.message}`);
+          }
+        }
       }
       
-      // Always attempt to remove the configuration directory
-      const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
+      // Also try to remove from new organized structure if metadata exists
+      if (metadata) {
+        const nodeBaseDir = path.join(this.baseElasticsearchPath, 'nodes', nodeName);
+        try {
+          await fs.rm(nodeBaseDir, { recursive: true, force: true });
+          console.log(`🗑️ Removed organized node directory: ${nodeBaseDir}`);
+        } catch (dirError) {
+          if (dirError.code !== 'ENOENT') {
+            console.warn(`⚠️ Could not remove organized node directory: ${dirError.message}`);
+          }
+        }
+      }
+      
+      // Legacy cleanup - remove old config directory if it exists
+      const oldNodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
       try {
-        await fs.rm(nodeConfigDir, { recursive: true, force: true });
-        console.log(`🗑️ Removed node configuration directory: ${nodeConfigDir}`);
+        await fs.rm(oldNodeConfigDir, { recursive: true, force: true });
+        console.log(`🗑️ Removed legacy node configuration directory: ${oldNodeConfigDir}`);
       } catch (dirError) {
         if (dirError.code !== 'ENOENT') {
-          console.warn(`⚠️ Could not remove node configuration directory:`, dirError.message);
+          console.warn(`⚠️ Could not remove legacy node configuration directory:`, dirError.message);
         }
       }
       
@@ -702,7 +802,18 @@ REM Start Elasticsearch
    * Check if node is running
    */
   async isNodeRunning(nodeName) {
-    const pidFilePath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'pid.json');
+    // Get the correct PID file path from metadata
+    const metadata = this.getNodeMetadata(nodeName);
+    let pidFilePath;
+    
+    if (metadata && metadata.configPath) {
+      const configDir = path.dirname(metadata.configPath);
+      pidFilePath = path.join(configDir, 'pid.json');
+    } else {
+      // Fallback to new organized path structure
+      pidFilePath = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config', 'pid.json');
+    }
+    
     try {
         const pidData = await fs.readFile(pidFilePath, 'utf8');
         const { pid } = JSON.parse(pidData);
@@ -767,13 +878,33 @@ REM Start Elasticsearch
   /**
    * Update an existing Elasticsearch node configuration
    */
-  async updateNode(nodeName, updates) {
+  async updateNode(nodeName, updates, options = {}) {
     try {
       console.log(`🔧 Updating node ${nodeName} with:`, updates);
+      console.log(`🔧 Update options:`, options);
       
-      // Get current node config
+      // Get current node config and metadata
       const currentConfig = await this.getNodeConfig(nodeName);
-      const configPath = path.join(this.baseElasticsearchPath, 'config', nodeName, 'elasticsearch.yml');
+      const currentMetadata = this.getNodeMetadata(nodeName);
+      
+      // Track old paths for potential cleanup
+      const oldPaths = {
+        dataPath: currentConfig.path.data,
+        logsPath: currentConfig.path.logs,
+        configPath: currentMetadata.configPath
+      };
+      
+      // Get the correct config path from metadata
+      let configPath;
+      
+      if (currentMetadata && currentMetadata.configPath) {
+        configPath = currentMetadata.configPath;
+        console.log(`🔍 Using config path from metadata for update: ${configPath}`);
+      } else {
+        // Fallback to new organized path structure
+        configPath = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config', 'elasticsearch.yml');
+        console.log(`🔍 Using new organized config path for update: ${configPath}`);
+      }
       
       // Create updated configuration object
       const updatedConfig = {
@@ -861,9 +992,13 @@ REM Start Elasticsearch
       if (updates.logsPath && updates.logsPath !== currentConfig.path.logs) {
         try {
           const log4j2Config = this.generateLog4j2Config(newLogsPath);
-          const log4j2Path = path.join(this.baseElasticsearchPath, 'config', nodeName, 'log4j2.properties');
+          
+          // Use the same base directory as the config file
+          const configDir = path.dirname(configPath);
+          const log4j2Path = path.join(configDir, 'log4j2.properties');
+          
           await fs.writeFile(log4j2Path, log4j2Config);
-          console.log(`✅ Updated log4j2.properties with new logs path`);
+          console.log(`✅ Updated log4j2.properties with new logs path: ${log4j2Path}`);
         } catch (error) {
           console.warn(`⚠️ Could not update log4j2.properties:`, error.message);
         }
