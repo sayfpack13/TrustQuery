@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faServer, 
@@ -8,8 +8,12 @@ import {
   faDatabase,
   faNetworkWired,
   faInfoCircle,
-  faCog
+  faCog,
+  faExclamationTriangle,
+  faCheckCircle,
+  faSpinner
 } from '@fortawesome/free-solid-svg-icons';
+import axiosClient from '../api/axiosClient';
 
 const LocalNodeManager = ({ 
   isOpen, 
@@ -21,6 +25,16 @@ const LocalNodeManager = ({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [newClusterName, setNewClusterName] = useState('');
   const [showNewCluster, setShowNewCluster] = useState(false);
+  
+  // Validation state
+  const [validationErrors, setValidationErrors] = useState([]);
+  const [validationSuggestions, setValidationSuggestions] = useState({});
+  const [isValidating, setIsValidating] = useState(false);
+  const [showValidationErrors, setShowValidationErrors] = useState(false);
+  
+  // Track validation to prevent duplicates
+  const validationTimeoutRef = useRef(null);
+  const lastValidationConfigRef = useRef(null);
 
   const {
     newNodeName,
@@ -41,7 +55,8 @@ const LocalNodeManager = ({
     setNewNodeRoles,
     clusters,
     createLocalNode,
-    createCluster
+    createCluster,
+    updateLocalNode
   } = clusterManagement;
 
   useEffect(() => {
@@ -59,8 +74,76 @@ const LocalNodeManager = ({
         data: true,
         ingest: true,
       });
+    } else if (mode === 'create') {
+      // Reset form for create mode
+      setNewNodeName('');
+      setNewNodeHost('localhost');
+      setNewNodePort('9200');
+      setNewNodeTransportPort('9300');
+      setNewNodeCluster('trustquery-cluster');
+      setNewNodeDataPath('');
+      setNewNodeLogsPath('');
+      setNewNodeRoles({
+        master: true,
+        data: true,
+        ingest: true,
+      });
     }
   }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles]);
+
+  // Real-time validation when ports change (debounced)
+  useEffect(() => {
+    // Clear existing timeout
+    if (validationTimeoutRef.current) {
+      clearTimeout(validationTimeoutRef.current);
+    }
+    
+    if (mode === 'create' && newNodeName && newNodePort && newNodeTransportPort) {
+      validationTimeoutRef.current = setTimeout(async () => {
+        const nodeConfig = {
+          name: newNodeName,
+          host: newNodeHost,
+          port: parseInt(newNodePort),
+          transportPort: parseInt(newNodeTransportPort),
+          cluster: newNodeCluster,
+        };
+        
+        // Only validate if ports are valid numbers
+        if (!isNaN(nodeConfig.port) && !isNaN(nodeConfig.transportPort)) {
+          await validateNodeConfiguration(nodeConfig);
+        }
+      }, 1000); // 1 second debounce
+    }
+
+    return () => {
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+      }
+    };
+  }, [newNodeName, newNodeHost, newNodePort, newNodeTransportPort, newNodeCluster, mode]);
+
+  // Cleanup validation timeout on unmount or close
+  useEffect(() => {
+    return () => {
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Reset validation state when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+      }
+      lastValidationConfigRef.current = null;
+      setValidationErrors([]);
+      setValidationSuggestions({});
+      setShowValidationErrors(false);
+      setIsValidating(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -84,6 +167,127 @@ const LocalNodeManager = ({
     if (newNodeName) {
       setNewNodeDataPath(`C:\\elasticsearch\\${newNodeName}\\data`);
       setNewNodeLogsPath(`C:\\elasticsearch\\${newNodeName}\\logs`);
+    }
+  };
+
+  // Validation function
+  const validateNodeConfiguration = async (nodeConfig) => {
+    // Create a unique key for this configuration
+    const configKey = JSON.stringify({
+      name: nodeConfig.name,
+      host: nodeConfig.host,
+      port: nodeConfig.port,
+      transportPort: nodeConfig.transportPort,
+      cluster: nodeConfig.cluster
+    });
+    
+    // Skip if we're already validating the same configuration
+    if (isValidating || lastValidationConfigRef.current === configKey) {
+      return false;
+    }
+    
+    lastValidationConfigRef.current = configKey;
+    setIsValidating(true);
+    setValidationErrors([]);
+    setValidationSuggestions({});
+    
+    try {
+      const response = await axiosClient.post('/api/admin/cluster-advanced/nodes/validate', nodeConfig);
+      
+      if (!response.data.valid) {
+        setValidationErrors(response.data.conflicts || []);
+        setValidationSuggestions(response.data.suggestions || {});
+        setShowValidationErrors(true);
+        return false;
+      }
+      
+      setShowValidationErrors(false);
+      return true;
+    } catch (error) {
+      console.error('Validation error:', error);
+      setValidationErrors([{
+        type: 'general',
+        message: 'Failed to validate configuration: ' + (error.response?.data?.error || error.message)
+      }]);
+      setShowValidationErrors(true);
+      return false;
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  // Auto-suggest available ports
+  const applySuggestions = () => {
+    if (validationSuggestions.httpPort) {
+      setNewNodePort(validationSuggestions.httpPort.toString());
+    }
+    if (validationSuggestions.transportPort) {
+      setNewNodeTransportPort(validationSuggestions.transportPort.toString());
+    }
+    if (validationSuggestions.nodeName && validationSuggestions.nodeName.length > 0) {
+      setNewNodeName(validationSuggestions.nodeName[0]); // Use first suggestion
+    }
+    
+    // Reset validation state to allow fresh validation
+    lastValidationConfigRef.current = null;
+    setShowValidationErrors(false);
+  };
+
+  // Apply specific node name suggestion
+  const applyNodeNameSuggestion = (suggestedName) => {
+    setNewNodeName(suggestedName);
+    
+    // Reset validation state to allow fresh validation
+    lastValidationConfigRef.current = null;
+    setShowValidationErrors(false);
+  };
+
+  // Auto-suggest ports when cluster is selected
+  const handleClusterChange = async (clusterName) => {
+    setNewNodeCluster(clusterName);
+    
+    // Clear any pending validation timeout to avoid conflicts
+    if (validationTimeoutRef.current) {
+      clearTimeout(validationTimeoutRef.current);
+    }
+    
+    // If creating a new node and cluster name matches existing nodes, suggest available ports
+    if (mode === 'create' && newNodeName) {
+      try {
+        const tempConfig = {
+          name: newNodeName,
+          host: newNodeHost,
+          port: parseInt(newNodePort) || 9200,
+          transportPort: parseInt(newNodeTransportPort) || 9300,
+          cluster: clusterName,
+        };
+        
+        const response = await axiosClient.post('/api/admin/cluster-advanced/nodes/validate', tempConfig);
+        
+        if (!response.data.valid && response.data.suggestions) {
+          // Auto-apply suggestions for port conflicts
+          const hasPortConflicts = response.data.conflicts.some(c => 
+            c.type === 'http_port' || c.type === 'transport_port'
+          );
+          
+          if (hasPortConflicts) {
+            if (response.data.suggestions.httpPort) {
+              setNewNodePort(response.data.suggestions.httpPort.toString());
+            }
+            if (response.data.suggestions.transportPort) {
+              setNewNodeTransportPort(response.data.suggestions.transportPort.toString());
+            }
+          }
+          
+          // Auto-apply node name suggestion if there's a name conflict
+          const hasNameConflict = response.data.conflicts.some(c => c.type === 'node_name');
+          if (hasNameConflict && response.data.suggestions.nodeName && response.data.suggestions.nodeName.length > 0) {
+            setNewNodeName(response.data.suggestions.nodeName[0]);
+          }
+        }
+      } catch (error) {
+        console.log('Auto-suggestion failed:', error);
+      }
     }
   };
 
@@ -113,13 +317,23 @@ const LocalNodeManager = ({
               <label className="block text-sm font-medium text-neutral-300 mb-2">
                 <FontAwesomeIcon icon={faServer} className="mr-2" />
                 Node Name *
+                {validationErrors.some(e => e.type === 'node_name') && (
+                  <span className="ml-2 text-red-400 text-xs">
+                    <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
+                    Name already exists
+                  </span>
+                )}
               </label>
               <input
                 type="text"
                 value={newNodeName}
                 onChange={(e) => setNewNodeName(e.target.value)}
                 placeholder="e.g., node-1, data-node-01"
-                className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
+                  validationErrors.some(e => e.type === 'node_name') 
+                    ? 'border-red-500 focus:ring-red-500' 
+                    : 'border-neutral-700 focus:ring-blue-500'
+                }`}
                 onBlur={generateDefaultPaths}
               />
               <p className="text-neutral-400 text-xs mt-1">Unique identifier for this node</p>
@@ -134,10 +348,10 @@ const LocalNodeManager = ({
               <div className="flex space-x-2">
                 <select
                   value={newNodeCluster}
-                  onChange={(e) => setNewNodeCluster(e.target.value)}
+                  onChange={(e) => handleClusterChange(e.target.value)}
                   className="flex-1 p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {clusters.map(cluster => (
+                  {(clusters || []).map(cluster => (
                     <option key={cluster} value={cluster}>{cluster}</option>
                   ))}
                 </select>
@@ -187,25 +401,45 @@ const LocalNodeManager = ({
             <div>
               <label className="block text-sm font-medium text-neutral-300 mb-2">
                 HTTP Port
+                {validationErrors.some(e => e.type === 'http_port') && (
+                  <span className="ml-2 text-red-400 text-xs">
+                    <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
+                    Port conflict
+                  </span>
+                )}
               </label>
               <input
                 type="number"
                 value={newNodePort}
                 onChange={(e) => setNewNodePort(e.target.value)}
                 placeholder="9200"
-                className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
+                  validationErrors.some(e => e.type === 'http_port') 
+                    ? 'border-red-500 focus:ring-red-500' 
+                    : 'border-neutral-700 focus:ring-blue-500'
+                }`}
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-neutral-300 mb-2">
                 Transport Port
+                {validationErrors.some(e => e.type === 'transport_port') && (
+                  <span className="ml-2 text-red-400 text-xs">
+                    <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
+                    Port conflict
+                  </span>
+                )}
               </label>
               <input
                 type="number"
                 value={newNodeTransportPort}
                 onChange={(e) => setNewNodeTransportPort(e.target.value)}
                 placeholder="9300"
-                className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
+                  validationErrors.some(e => e.type === 'transport_port') 
+                    ? 'border-red-500 focus:ring-red-500' 
+                    : 'border-neutral-700 focus:ring-blue-500'
+                }`}
               />
             </div>
           </div>
@@ -297,6 +531,86 @@ const LocalNodeManager = ({
           </div>
         </div>
 
+        {/* Validation Errors */}
+        {showValidationErrors && validationErrors.length > 0 && (
+          <div className="mx-6 mb-4 p-4 bg-red-600 rounded-lg border border-red-500">
+            <div className="flex items-start space-x-3">
+              <FontAwesomeIcon icon={faExclamationTriangle} className="text-red-100 text-xl mt-1" />
+              <div className="flex-1">
+                <h4 className="text-red-100 font-semibold mb-2">Configuration Conflicts Detected</h4>
+                <div className="space-y-2">
+                  {validationErrors.map((error, index) => (
+                    <div key={index} className="text-red-200 text-sm">
+                      • {error.message}
+                    </div>
+                  ))}
+                </div>
+                
+                {/* Suggestions */}
+                {(validationSuggestions.httpPort || validationSuggestions.transportPort || validationSuggestions.nodeName) && (
+                  <div className="mt-4 space-y-3">
+                    {/* Port Suggestions */}
+                    {(validationSuggestions.httpPort || validationSuggestions.transportPort) && (
+                      <div className="p-3 bg-red-700 rounded border border-red-600">
+                        <h5 className="text-red-100 font-medium mb-2">Suggested Available Ports:</h5>
+                        <div className="space-y-1 text-red-200 text-sm">
+                          {validationSuggestions.httpPort && (
+                            <div>• HTTP Port: {validationSuggestions.httpPort}</div>
+                          )}
+                          {validationSuggestions.transportPort && (
+                            <div>• Transport Port: {validationSuggestions.transportPort}</div>
+                          )}
+                        </div>
+                        <button
+                          onClick={applySuggestions}
+                          className="mt-3 bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded text-sm transition duration-150"
+                        >
+                          <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
+                          Apply Port Suggestions
+                        </button>
+                      </div>
+                    )}
+                    
+                    {/* Node Name Suggestions */}
+                    {validationSuggestions.nodeName && validationSuggestions.nodeName.length > 0 && (
+                      <div className="p-3 bg-red-700 rounded border border-red-600">
+                        <h5 className="text-red-100 font-medium mb-2">Suggested Available Node Names:</h5>
+                        <div className="space-y-2">
+                          {validationSuggestions.nodeName.map((suggestedName, index) => (
+                            <div key={index} className="flex items-center justify-between bg-red-800 p-2 rounded">
+                              <span className="text-red-200 text-sm font-mono">{suggestedName}</span>
+                              <button
+                                onClick={() => applyNodeNameSuggestion(suggestedName)}
+                                className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs transition duration-150"
+                              >
+                                <FontAwesomeIcon icon={faCheckCircle} className="mr-1" />
+                                Use This
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => applyNodeNameSuggestion(validationSuggestions.nodeName[0])}
+                          className="mt-3 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm transition duration-150"
+                        >
+                          <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
+                          Use First Suggestion
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setShowValidationErrors(false)}
+                className="text-red-200 hover:text-white transition-colors"
+              >
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Footer */}
         <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">
           <button
@@ -307,14 +621,44 @@ const LocalNodeManager = ({
           </button>
           <button
             onClick={async () => {
-              await createLocalNode();
-              onClose();
+              if (mode === 'create') {
+                // Validate configuration before creating
+                const nodeConfig = {
+                  name: newNodeName,
+                  host: newNodeHost,
+                  port: parseInt(newNodePort),
+                  transportPort: parseInt(newNodeTransportPort),
+                  cluster: newNodeCluster,
+                  dataPath: newNodeDataPath,
+                  logsPath: newNodeLogsPath,
+                  roles: newNodeRoles
+                };
+                
+                const isValid = await validateNodeConfiguration(nodeConfig);
+                if (isValid) {
+                  await createLocalNode();
+                  onClose();
+                }
+              } else {
+                // For edit mode, call updateLocalNode
+                await updateLocalNode(nodeToEdit.name, {
+                  name: newNodeName,
+                  host: newNodeHost,
+                  port: parseInt(newNodePort),
+                  transportPort: parseInt(newNodeTransportPort),
+                  cluster: newNodeCluster,
+                  dataPath: newNodeDataPath,
+                  logsPath: newNodeLogsPath,
+                  roles: newNodeRoles
+                });
+                onClose();
+              }
             }}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg transition duration-150"
-            disabled={!newNodeName.trim()}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!newNodeName.trim() || isValidating}
           >
-            <FontAwesomeIcon icon={faServer} className="mr-2" />
-            {mode === 'create' ? 'Create Node' : 'Update Node'}
+            <FontAwesomeIcon icon={isValidating ? faSpinner : faServer} className={`mr-2 ${isValidating ? 'fa-spin' : ''}`} />
+            {isValidating ? 'Validating...' : (mode === 'create' ? 'Create Node' : 'Update Node')}
           </button>
         </div>
       </div>

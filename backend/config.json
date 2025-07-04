@@ -1,5 +1,5 @@
 {
-  "selectedIndex": "test5",
+  "selectedIndex": "accounts",
   "searchIndices": [
     "accounts"
   ],
@@ -10,6 +10,24 @@
   "nodeAttributes": {
     "defaultDiskType": "ssd",
     "defaultZone": "zone1"
+  },
+  "nodeMetadata": {
+    "http://localhost:9200": {
+      "name": "test",
+      "configPath": "C:\\elasticsearch\\config\\test\\elasticsearch.yml",
+      "servicePath": "C:\\elasticsearch\\config\\test\\start-node.bat",
+      "dataPath": "C:\\elasticsearch\\test\\data",
+      "logsPath": "C:\\elasticsearch\\test\\logs",
+      "cluster": "trustquery-cluster",
+      "host": "localhost",
+      "port": 9200,
+      "transportPort": 9300,
+      "roles": {
+        "master": true,
+        "data": true,
+        "ingest": true
+      }
+    }
   },
   "diskPreferences": {},
   "batchSize": 1000,
@@ -28,23 +46,5 @@
     "restartCommand": "net restart elasticsearch"
   },
   "autoRefreshInterval": 30000,
-  "maxTaskHistory": 100,
-  "nodeMetadata": {
-    "http://localhost:9200": {
-      "name": "test",
-      "configPath": "C:\\elasticsearch\\config\\test\\elasticsearch.yml",
-      "servicePath": "C:\\elasticsearch\\config\\test\\start-node.bat",
-      "dataPath": "C:\\elasticsearch\\test\\data",
-      "logsPath": "C:\\elasticsearch\\test\\logs",
-      "cluster": "trustquery-cluster",
-      "host": "localhost",
-      "port": 9200,
-      "transportPort": 9300,
-      "roles": {
-        "master": true,
-        "data": true,
-        "ingest": true
-      }
-    }
-  }
+  "maxTaskHistory": 100
 }

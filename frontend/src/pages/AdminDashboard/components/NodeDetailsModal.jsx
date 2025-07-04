@@ -55,6 +55,26 @@ export default function NodeDetailsModal({ show, onClose, node }) {
     }
   }, [activeTab, node]);
 
+  // Hide create index form if node stops running
+  useEffect(() => {
+    if (node && !node.isRunning && showCreateIndexForm) {
+      setShowCreateIndexForm(false);
+    }
+  }, [node?.isRunning, showCreateIndexForm]);
+
+  // Reset state when modal is closed
+  useEffect(() => {
+    if (!show) {
+      setActiveTab('overview');
+      setShowCreateIndexForm(false);
+      setNewIndexName('');
+      setNewIndexShards('1');
+      setNewIndexReplicas('0');
+      setShowDeleteModal(false);
+      setIndexToDelete(null);
+    }
+  }, [show]);
+
   const handleCreateIndex = async () => {
     setIsCreatingIndex(true);
     try {
@@ -144,15 +164,40 @@ export default function NodeDetailsModal({ show, onClose, node }) {
         }
         return (
           <div>
+            {!node.isRunning && ( 
+              <div className="mb-4 p-4 bg-amber-600 rounded-lg border border-amber-500">
+                <div className="flex items-center space-x-3">
+                  <FontAwesomeIcon icon={faExclamationTriangle} className="text-amber-100 text-xl" />
+                  <div>
+                    <h4 className="text-amber-100 font-semibold">Node Not Running</h4>
+                    <p className="text-amber-200 text-sm">
+                      Index operations are disabled. Start the node to manage indices.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-white">Indices on {node.name}</h3>
-              <button
-                onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
-                className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm"
-              >
-                <FontAwesomeIcon icon={faPlus} className="mr-2" />
-                Create Index
-              </button>
+              {node.isRunning ? (
+                <button
+                  onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
+                  className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm"
+                >
+                  <FontAwesomeIcon icon={faPlus} className="mr-2" />
+                  Create Index
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="bg-gray-600 cursor-not-allowed text-gray-400 px-4 py-2 rounded-lg text-sm"
+                  title="Start the node to create indices"
+                >
+                  <FontAwesomeIcon icon={faPlus} className="mr-2" />
+                  Create Index
+                </button>
+              )}
             </div>
             
             {showCreateIndexForm && (
@@ -185,7 +230,12 @@ export default function NodeDetailsModal({ show, onClose, node }) {
                 </div>
                 <div className="flex justify-end mt-2 space-x-2">
                   <button onClick={() => setShowCreateIndexForm(false)} className="bg-neutral-600 px-3 py-1 rounded">Cancel</button>
-                  <button onClick={handleCreateIndex} className="bg-primary px-3 py-1 rounded w-24" disabled={isCreatingIndex}>
+                  <button 
+                    onClick={handleCreateIndex} 
+                    className="bg-primary px-3 py-1 rounded w-24 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600" 
+                    disabled={isCreatingIndex || !node.isRunning || !newIndexName.trim()}
+                    title={!node.isRunning ? "Node must be running to create indices" : ""}
+                  >
                     {isCreatingIndex ? <FontAwesomeIcon icon={faCircleNotch} spin /> : 'Confirm'}
                   </button>
                 </div>
@@ -212,7 +262,12 @@ export default function NodeDetailsModal({ show, onClose, node }) {
                     <td className="py-3 px-4">{index.docCount}</td>
                     <td className="py-3 px-4">{index['store.size']}</td>
                     <td className="py-3 px-4">
-                      <button onClick={() => handleDeleteClick(index)} className="text-red-500 hover:text-red-400">
+                      <button 
+                        onClick={() => handleDeleteClick(index)} 
+                        className="text-red-500 hover:text-red-400 disabled:text-gray-500 disabled:cursor-not-allowed"
+                        disabled={!node.isRunning}
+                        title={!node.isRunning ? "Start the node to delete indices" : "Delete index"}
+                      >
                         <FontAwesomeIcon icon={faTrash} />
                       </button>
                     </td>

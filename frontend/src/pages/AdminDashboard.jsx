@@ -518,15 +518,17 @@ export default function AdminDashboard({ onLogout }) {
                 <div className="flex justify-end space-x-3 mt-6">
                   <button
                     onClick={handleCreateIndex}
-                    className="bg-green-600 hover:bg-green-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
+                    className="bg-green-600 hover:bg-green-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                     disabled={
                       !newIndexName.trim() || 
                       isAnyTaskRunning ||
                       parseInt(newIndexShards) < 1 || 
                       parseInt(newIndexShards) > 1000 ||
                       parseInt(newIndexReplicas) < 0 || 
-                      parseInt(newIndexReplicas) > 100
+                      parseInt(newIndexReplicas) > 100 ||
+                      !(clusterManagement.localNodes || []).some(node => node.isRunning)
                     }
+                    title={!(clusterManagement.localNodes || []).some(node => node.isRunning) ? "Start at least one node to create indices" : ""}
                   >
                     Create Index
                   </button>
@@ -635,8 +637,15 @@ export default function AdminDashboard({ onLogout }) {
                 <div className="flex justify-end space-x-3 mt-6">
                   <button
                     onClick={handleReindex}
-                    className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50"
-                    disabled={!reindexSource || !reindexDest || reindexSource === reindexDest || isAnyTaskRunning}
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={
+                      !reindexSource || 
+                      !reindexDest || 
+                      reindexSource === reindexDest || 
+                      isAnyTaskRunning ||
+                      !(clusterManagement.localNodes || []).some(node => node.isRunning)
+                    }
+                    title={!(clusterManagement.localNodes || []).some(node => node.isRunning) ? "Start at least one node to perform reindexing" : ""}
                   >
                     Start Reindexing
                   </button>

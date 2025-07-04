@@ -335,16 +335,27 @@ REM Start Elasticsearch
     try {
       const nodeConfigDir = path.join(this.baseElasticsearchPath, 'config', nodeName);
       const servicePath = path.join(nodeConfigDir, 'start-node.bat');
-      await fs.access(servicePath);
       
-        // Get node config early to have access to paths
-        const nodeConfig = await this.getNodeConfig(nodeName);
+      // Verify the service file exists
+      try {
+        await fs.access(servicePath);
+        console.log(`✅ Service file found: ${servicePath}`);
+      } catch (error) {
+        throw new Error(`Service file not found: ${servicePath}. Error: ${error.message}`);
+      }
+      
+      // Get node config early to have access to paths
+      const nodeConfig = await this.getNodeConfig(nodeName);
 
-        // Create a log file for startup output in the correct logs directory
-        const logDir = (await this.getNodeMetadata(nodeName)).logsPath;
-        await fs.mkdir(logDir, { recursive: true });
+      // Create a log file for startup output in the correct logs directory
+      const logDir = (await this.getNodeMetadata(nodeName)).logsPath;
+      await fs.mkdir(logDir, { recursive: true });
         const startupLogPath = path.join(logDir, 'startup.log');
         const output = await fs.open(startupLogPath, 'a');
+
+        console.log(`🚀 Starting node ${nodeName} using: ${servicePath}`);
+        console.log(`📁 Logs will be written to: ${startupLogPath}`);
+        console.log(`🔧 Node will run on port: ${nodeConfig.http.port}`);
 
         // This simpler spawn is more reliable on Windows
         const child = spawn(servicePath, [], {
@@ -353,12 +364,17 @@ REM Start Elasticsearch
             shell: true,
             windowsHide: true,
       });
+      
+      // Log child process information
+      console.log(`🆔 Child process spawned with PID: ${child.pid}`);
+      
       child.unref();
       
         console.log(`🚀 Start command issued for ${nodeName}. Tailing startup log at: ${startupLogPath}`);
 
-        // Small delay to allow the process to initialize
-        await new Promise(resolve => setTimeout(resolve, 5000)); 
+        // Give Elasticsearch more time to initialize before we start checking
+        console.log(`⏳ Waiting 10 seconds for Elasticsearch to initialize...`);
+        await new Promise(resolve => setTimeout(resolve, 10000)); 
 
         // Find the real PID by polling the port
         const port = nodeConfig.http.port;
@@ -366,6 +382,7 @@ REM Start Elasticsearch
             throw new Error(`Could not determine port for node ${nodeName}.`);
         }
 
+        console.log(`🔍 Checking for process on port ${port}...`);
         const pid = await this.findPidByPort(port);
         if (pid) {
             const pidFilePath = path.join(nodeConfigDir, 'pid.json');
@@ -383,13 +400,18 @@ REM Start Elasticsearch
             // Close the file handle before reading
             await output.close();
             // If the process isn't found, read the startup log to provide more context
+            console.log(`📋 Reading startup log for debugging...`);
             const startupLog = await fs.readFile(startupLogPath, 'utf8').catch(() => "Could not read startup.log.");
 
             // Also, try to read the actual Elasticsearch log file for more detailed errors.
             const esLogPath = path.join(nodeConfig.path.logs, 'elasticsearch.log');
+            console.log(`📋 Reading elasticsearch log for debugging...`);
             const esLog = await fs.readFile(esLogPath, 'utf8').catch(() => "Could not read elasticsearch.log.");
 
-            throw new Error(`Failed to confirm node start for ${nodeName}. Could not find process on port ${port}.\n\nStartup Log:\n${startupLog}\n\nElasticsearch Log:\n${esLog}`);
+            console.log(`📋 Startup Log Content:\n${startupLog.slice(-1000)}`); // Last 1000 chars
+            console.log(`📋 Elasticsearch Log Content:\n${esLog.slice(-1000)}`); // Last 1000 chars
+
+            throw new Error(`Failed to confirm node start for ${nodeName}. Could not find process on port ${port}.\n\nLast 1000 chars of Startup Log:\n${startupLog.slice(-1000)}\n\nLast 1000 chars of Elasticsearch Log:\n${esLog.slice(-1000)}`);
         }
 
     } catch (error) {
@@ -701,9 +723,11 @@ REM Start Elasticsearch
 
   async findPidByPort(port) {
     const command = `netstat -ano -p TCP`; // Be more specific to reduce output
-    const pollInterval = 500;
-    const timeout = 20000; // 20 seconds
+    const pollInterval = 1000; // Check every 1 second
+    const timeout = 60000; // 60 seconds - Elasticsearch can take a while to start
     const startTime = Date.now();
+
+    console.log(`🔍 Polling for process on port ${port} for up to ${timeout/1000} seconds...`);
 
     while (Date.now() - startTime < timeout) {
         try {
@@ -721,16 +745,22 @@ REM Start Elasticsearch
 
                 if (state === 'LISTENING' && localAddress.endsWith(':' + port)) {
                     if (pid && pid !== '0') {
+                        console.log(`✅ Found process with PID ${pid} listening on port ${port}`);
                         return pid; // Found it
                     }
                 }
             }
         } catch (e) {
+            console.log(`⚠️ Error running netstat: ${e.message}`);
             // execSync will throw if the command fails, which we can ignore while polling.
         }
+        
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        console.log(`⏱️ Still waiting for port ${port}... (${elapsed}s elapsed)`);
         await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
 
+    console.log(`❌ Timeout reached after ${timeout/1000} seconds. No process found on port ${port}`);
     return null; // Timeout reached
   }
 }

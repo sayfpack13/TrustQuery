@@ -7,6 +7,153 @@ const clusterManager = require("../elasticsearch/cluster-manager");
 
 const router = express.Router();
 
+// Validation function for port conflicts
+async function validateNodePorts(newNodeConfig) {
+  const existingMetadata = getConfig('nodeMetadata') || {};
+  const conflicts = [];
+  const suggestions = {};
+
+  // Default values
+  const newHost = newNodeConfig.host || 'localhost';
+  const newHttpPort = parseInt(newNodeConfig.port) || 9200;
+  const newTransportPort = parseInt(newNodeConfig.transportPort) || 9300;
+
+  // Check against existing nodes
+  for (const [nodeUrl, metadata] of Object.entries(existingMetadata)) {
+    const existingHost = metadata.host || 'localhost';
+    const existingHttpPort = parseInt(metadata.port) || 9200;
+    const existingTransportPort = parseInt(metadata.transportPort) || 9300;
+
+    // Skip if different hosts (no conflict on different machines)
+    if (existingHost !== newHost) continue;
+
+    // Check for HTTP port conflicts
+    if (existingHttpPort === newHttpPort) {
+      conflicts.push({
+        type: 'http_port',
+        conflictWith: metadata.name,
+        port: newHttpPort,
+        message: `HTTP port ${newHttpPort} is already used by node "${metadata.name}"`
+      });
+    }
+
+    // Check for transport port conflicts
+    if (existingTransportPort === newTransportPort) {
+      conflicts.push({
+        type: 'transport_port',
+        conflictWith: metadata.name,
+        port: newTransportPort,
+        message: `Transport port ${newTransportPort} is already used by node "${metadata.name}"`
+      });
+    }
+
+    // Check for node name conflicts
+    if (metadata.name === newNodeConfig.name) {
+      conflicts.push({
+        type: 'node_name',
+        conflictWith: metadata.name,
+        message: `Node name "${newNodeConfig.name}" already exists`
+      });
+    }
+  }
+
+  // Generate suggestions for available ports if conflicts exist
+  if (conflicts.length > 0) {
+    suggestions.httpPort = findAvailablePort(existingMetadata, 'port', newHost, 9200);
+    suggestions.transportPort = findAvailablePort(existingMetadata, 'transportPort', newHost, 9300);
+    
+    // Generate node name suggestions if there's a name conflict
+    const nameConflict = conflicts.find(c => c.type === 'node_name');
+    if (nameConflict) {
+      suggestions.nodeName = findAvailableNodeName(existingMetadata, newNodeConfig.name);
+    }
+  }
+
+  return {
+    valid: conflicts.length === 0,
+    conflicts,
+    suggestions
+  };
+}
+
+// Helper function to find available ports
+function findAvailablePort(existingMetadata, portType, host, startPort) {
+  const usedPorts = new Set();
+  
+  // Collect all used ports for the specific host
+  for (const metadata of Object.values(existingMetadata)) {
+    if ((metadata.host || 'localhost') === host) {
+      const port = parseInt(metadata[portType]);
+      if (port) usedPorts.add(port);
+    }
+  }
+
+  // Find next available port starting from startPort
+  let candidatePort = startPort;
+  while (usedPorts.has(candidatePort)) {
+    candidatePort++;
+    // Safety limit to prevent infinite loop
+    if (candidatePort > startPort + 1000) break;
+  }
+
+  return candidatePort;
+}
+
+// Helper function to find available node names
+function findAvailableNodeName(existingMetadata, baseName) {
+  const usedNames = new Set();
+  
+  // Collect all used node names
+  for (const metadata of Object.values(existingMetadata)) {
+    if (metadata.name) {
+      usedNames.add(metadata.name.toLowerCase());
+    }
+  }
+
+  // Generate suggestions based on common patterns
+  const suggestions = [];
+  
+  // Pattern 1: Add number suffix (e.g., node-1 -> node-2, node-3)
+  const baseNameLower = baseName.toLowerCase();
+  for (let i = 1; i <= 10; i++) {
+    const candidate = `${baseName}-${i}`;
+    if (!usedNames.has(candidate.toLowerCase())) {
+      suggestions.push(candidate);
+      if (suggestions.length >= 3) break;
+    }
+  }
+  
+  // Pattern 2: If original name doesn't have number, try with numbers
+  if (!baseName.match(/\d+$/)) {
+    for (let i = 2; i <= 10; i++) {
+      const candidate = `${baseName}${i}`;
+      if (!usedNames.has(candidate.toLowerCase())) {
+        suggestions.push(candidate);
+        if (suggestions.length >= 3) break;
+      }
+    }
+  }
+  
+  // Pattern 3: Role-based suggestions
+  const roleBasedNames = [
+    `${baseName}-master`,
+    `${baseName}-data`,
+    `${baseName}-ingest`,
+    `master-${baseName}`,
+    `data-${baseName}`,
+    `search-${baseName}`
+  ];
+  
+  for (const candidate of roleBasedNames) {
+    if (!usedNames.has(candidate.toLowerCase())) {
+      suggestions.push(candidate);
+      if (suggestions.length >= 5) break;
+    }
+  }
+  
+  return suggestions.slice(0, 3); // Return top 3 suggestions
+}
+
 // GET cluster information and node details
 router.get("/", verifyJwt, async (req, res) => {
   try {
@@ -153,6 +300,16 @@ router.post("/nodes", verifyJwt, async (req, res) => {
     
     if (!nodeConfig || !nodeConfig.name) {
       return res.status(400).json({ error: "Node name is required" });
+    }
+
+    // Validate port conflicts before creating the node
+    const portValidation = await validateNodePorts(nodeConfig);
+    if (!portValidation.valid) {
+      return res.status(400).json({ 
+        error: "Port conflict detected", 
+        conflicts: portValidation.conflicts,
+        suggestions: portValidation.suggestions
+      });
     }
 
     // Initialize cluster manager if not already done
@@ -608,6 +765,61 @@ router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
   } catch (error) {
     console.error(`Error creating index on node ${nodeName}:`, error);
     res.status(500).json({ error: "Failed to create index.", details: error.message });
+  }
+});
+
+// Delete an index from a specific node
+router.delete("/:nodeName/indices/:indexName", verifyJwt, async (req, res) => {
+  const { nodeName, indexName } = req.params;
+
+  if (!indexName) {
+    return res.status(400).json({ error: "Index name is required." });
+  }
+
+  try {
+    const nodeConfig = await clusterManager.getNodeConfig(nodeName);
+    if (!nodeConfig) {
+      return res.status(404).json({ error: `Node '${nodeName}' not found.` });
+    }
+    
+    const nodeUrl = `http://${nodeConfig.network.host}:${nodeConfig.http.port}`;
+    const { getSingleNodeClient } = require('../elasticsearch/client');
+    const nodeClient = getSingleNodeClient(nodeUrl);
+
+    await nodeClient.indices.delete({
+      index: indexName,
+    });
+
+    res.json({ message: `Index '${indexName}' deleted successfully from node '${nodeName}'.` });
+  } catch (error) {
+    console.error(`Error deleting index from node ${nodeName}:`, error);
+    if (error.meta && error.meta.statusCode === 404) {
+      res.status(404).json({ error: `Index '${indexName}' not found on node '${nodeName}'.` });
+    } else {
+      res.status(500).json({ error: "Failed to delete index.", details: error.message });
+    }
+  }
+});
+
+// Validate node configuration before creation
+router.post("/nodes/validate", verifyJwt, async (req, res) => {
+  try {
+    const nodeConfig = req.body.nodeConfig || req.body;
+    
+    if (!nodeConfig || !nodeConfig.name) {
+      return res.status(400).json({ error: "Node name is required" });
+    }
+
+    const validation = await validateNodePorts(nodeConfig);
+    
+    res.json({
+      valid: validation.valid,
+      conflicts: validation.conflicts,
+      suggestions: validation.suggestions
+    });
+  } catch (error) {
+    console.error("Error validating node configuration:", error);
+    res.status(500).json({ error: "Failed to validate node configuration: " + error.message });
   }
 });
 

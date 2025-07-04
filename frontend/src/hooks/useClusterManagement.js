@@ -8,6 +8,29 @@ export const useClusterManagement = (showNotification) => {
   const [clusterLoading, setClusterLoading] = useState(false);
   const [nodeActionLoading, setNodeActionLoading] = useState([]);
 
+  // State for node creation/editing form
+  const [newNodeName, setNewNodeName] = useState('');
+  const [newNodeHost, setNewNodeHost] = useState('localhost');
+  const [newNodePort, setNewNodePort] = useState('9200');
+  const [newNodeTransportPort, setNewNodeTransportPort] = useState('9300');
+  const [newNodeCluster, setNewNodeCluster] = useState('trustquery-cluster');
+  const [newNodeDataPath, setNewNodeDataPath] = useState('');
+  const [newNodeLogsPath, setNewNodeLogsPath] = useState('');
+  const [newNodeRoles, setNewNodeRoles] = useState({
+    master: true,
+    data: true,
+    ingest: true,
+  });
+
+  // Available clusters (derived from existing nodes + default)
+  const clusters = useMemo(() => {
+    const existingClusters = localNodes && Array.isArray(localNodes) ? [...new Set(localNodes.map(n => n.cluster || 'trustquery-cluster'))] : [];
+    if (!existingClusters.includes('trustquery-cluster')) {
+      existingClusters.unshift('trustquery-cluster');
+    }
+    return existingClusters;
+  }, [localNodes]);
+
   // Use ref to store the notification function to avoid dependency changes
   const showNotificationRef = useRef(showNotification);
   useEffect(() => {
@@ -28,17 +51,49 @@ export const useClusterManagement = (showNotification) => {
     }
   }, []);
 
+  // Reset form function
+  const resetNodeForm = useCallback(() => {
+    setNewNodeName('');
+    setNewNodeHost('localhost');
+    setNewNodePort('9200');
+    setNewNodeTransportPort('9300');
+    setNewNodeCluster('trustquery-cluster');
+    setNewNodeDataPath('');
+    setNewNodeLogsPath('');
+    setNewNodeRoles({
+      master: true,
+      data: true,
+      ingest: true,
+    });
+  }, []);
+
   const createLocalNode = useCallback(async (nodeConfig) => {
     try {
-      await axiosClient.post('/api/admin/cluster-advanced/nodes', nodeConfig);
-      showNotificationRef.current('success', `Node "${nodeConfig.name}" created successfully`, faCheckCircle);
+      const config = nodeConfig || {
+        name: newNodeName,
+        host: newNodeHost,
+        port: parseInt(newNodePort),
+        transportPort: parseInt(newNodeTransportPort),
+        cluster: newNodeCluster,
+        dataPath: newNodeDataPath,
+        logsPath: newNodeLogsPath,
+        roles: newNodeRoles
+      };
+      
+      await axiosClient.post('/api/admin/cluster-advanced/nodes', config);
+      showNotificationRef.current('success', `Node "${config.name}" created successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
+      
+      // Reset form if using form data
+      if (!nodeConfig) {
+        resetNodeForm();
+      }
     } catch (error) {
       console.error('Error creating node:', error);
       showNotificationRef.current('error', `Failed to create node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
       throw error; // Re-throw to allow form to handle error state
     }
-  }, [fetchLocalNodes]);
+  }, [fetchLocalNodes, newNodeName, newNodeHost, newNodePort, newNodeTransportPort, newNodeCluster, newNodeDataPath, newNodeLogsPath, newNodeRoles, resetNodeForm]);
 
   const updateLocalNode = useCallback(async (nodeName, updates) => {
     try {
@@ -98,6 +153,17 @@ export const useClusterManagement = (showNotification) => {
     }
   };
 
+  const createCluster = useCallback(async (clusterName) => {
+    try {
+      // For now, we'll just add it to the cluster list when a node is created with it
+      // This could be extended to actually register clusters on the backend
+      showNotificationRef.current('success', `Cluster "${clusterName}" will be created when first node is added`, faCheckCircle);
+    } catch (error) {
+      console.error('Error creating cluster:', error);
+      showNotificationRef.current('error', `Failed to create cluster: ${error.message}`, faExclamationTriangle);
+    }
+  }, []);
+
   return {
     localNodes,
     clusterLoading,
@@ -107,6 +173,26 @@ export const useClusterManagement = (showNotification) => {
     updateLocalNode,
     handleDeleteLocalNode,
     handleStartLocalNode,
-    handleStopLocalNode
+    handleStopLocalNode,
+    // Form state
+    newNodeName,
+    setNewNodeName,
+    newNodeHost,
+    setNewNodeHost,
+    newNodePort,
+    setNewNodePort,
+    newNodeTransportPort,
+    setNewNodeTransportPort,
+    newNodeCluster,
+    setNewNodeCluster,
+    newNodeDataPath,
+    setNewNodeDataPath,
+    newNodeLogsPath,
+    setNewNodeLogsPath,
+    newNodeRoles,
+    setNewNodeRoles,
+    clusters,
+    createCluster,
+    resetNodeForm
   };
 };
