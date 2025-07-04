@@ -934,28 +934,23 @@ router.get("/nodes/:nodeName", verifyJwt, async (req, res) => {
     console.log(`🔍 Retrieving details for node: ${req.params.nodeName}`);
     const { nodeName } = req.params;
     
-    // Get current node metadata
-    const currentMetadata = getConfig('nodeMetadata') || {};
-    console.log(`📝 Current metadata has ${Object.keys(currentMetadata).length} entries`);
+    // Get cluster status to find the node (same source as local-nodes endpoint)
+    const clusterStatus = await clusterManager.getClusterStatus();
+    console.log(`📝 Cluster has ${clusterStatus.nodes.length} nodes`);
     
     // Find the node by name
-    let nodeUrl = null;
-    let nodeData = null;
-    for (const [url, metadata] of Object.entries(currentMetadata)) {
-      console.log(`📌 Checking node: ${metadata.name} against: ${nodeName}`);
-      if (metadata.name === nodeName) {
-        nodeUrl = url;
-        nodeData = metadata;
-        break;
-      }
-    }
+    const nodeData = clusterStatus.nodes.find(node => node.name === nodeName);
     
-    if (!nodeUrl || !nodeData) {
-      console.log(`❌ Node "${nodeName}" not found in metadata`);
+    if (!nodeData) {
+      console.log(`❌ Node "${nodeName}" not found in cluster status`);
       return res.status(404).json({ error: `Node "${nodeName}" not found` });
     }
     
-    console.log(`✅ Found node "${nodeName}" at URL: ${nodeUrl}`);
+    console.log(`✅ Found node "${nodeName}"`);
+    
+    // Build node URL for compatibility
+    const nodeUrl = `http://${nodeData.host}:${nodeData.port}`;
+    
     res.json({
       nodeUrl,
       ...nodeData

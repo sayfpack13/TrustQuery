@@ -92,6 +92,9 @@ export default function AdminDashboard({ onLogout }) {
     if (activeTab === "cluster") {
       // Refresh local nodes (which includes cluster info if available)
       clusterManagement.fetchLocalNodes();
+    } else if (activeTab === "files") {
+      // Fetch cluster nodes for parsing options (indices are loaded per node)
+      clusterManagement.fetchLocalNodes();
     }
   }, [activeTab]); // Remove clusterManagement.fetchLocalNodes from dependency array to prevent loops
 
@@ -336,6 +339,8 @@ export default function AdminDashboard({ onLogout }) {
             showEditModal={false} // Files management doesn't have edit modal
             setTasksList={setTasksList}
             setCurrentRunningTaskId={setCurrentRunningTaskId}
+            // Add cluster data for parsing options (indices are fetched per node)
+            availableNodes={clusterManagement.localNodes || []}
           />
         )}
 

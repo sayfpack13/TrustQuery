@@ -263,6 +263,7 @@ app.delete("/api/admin/pending-files/:filename", verifyJwt, async (req, res) => 
 
 // Parse all .txt files in the unparsed directory with accurate progress
 app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
+  const { targetIndex, targetNode } = req.body;
   const taskId = createTask("Parse All Unparsed Files", "initializing");
   res.json({ taskId });
 
@@ -321,10 +322,21 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
         return;
       }
 
-      // Set the final grand total lines for the entire parsing operation
+      // Determine target index and node for this parsing operation
+      const parseTargetIndex = targetIndex || getSelectedIndex();
+      const parseTargetNode = targetNode || getConfig('writeNode');
+      
+      // Create or get Elasticsearch client for the specified node
+      let parseES = getCurrentES();
+      if (parseTargetNode && parseTargetNode !== getConfig('writeNode')) {
+        // Use specific node if different from current write node
+        const { Client } = require('@elastic/elasticsearch');
+        parseES = new Client({ node: parseTargetNode });
+      }
+
       updateTask(taskId, {
         total: grandTotalLines,
-        message: `Found ${grandTotalLines} lines across ${txtFiles.length} files. Starting parsing...`
+        message: `Found ${grandTotalLines} lines across ${txtFiles.length} files. Parsing to index '${parseTargetIndex}' via node '${parseTargetNode}'...`
       });
 
       let cumulativeProcessedLines = 0;
@@ -342,14 +354,13 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
             filePath,
             async (batch) => {
               const bulkBody = batch.flatMap((doc) => [
-                { index: { _index: getSelectedIndex() } },
+                { index: { _index: parseTargetIndex } },
                 { raw_line: doc },
               ]);
 
               if (bulkBody.length > 0) {
-                const es = getCurrentES();
-                if (es && es.bulk) {
-                  await es.bulk({ refresh: false, body: bulkBody });
+                if (parseES && parseES.bulk) {
+                  await parseES.bulk({ refresh: false, body: bulkBody });
                 } else {
                   console.warn("Elasticsearch client not available for bulk indexing.");
                 }
@@ -461,6 +472,7 @@ app.post("/api/admin/upload", verifyJwt, upload.array("files"), async (req, res)
 // PARSE endpoint (single file parsing with accurate progress)
 app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
   const { filename } = req.params;
+  const { targetIndex, targetNode } = req.body;
   const filePath = path.join(UNPARSED_DIR, filename);
   const parsedFilePath = path.join(PARSED_DIR, filename);
 
@@ -477,25 +489,36 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
     try {
       console.log(`Task ${taskId}: Starting parsing for ${filename}`);
 
+      // Determine target index and node for this parsing operation
+      const parseTargetIndex = targetIndex || getSelectedIndex();
+      const parseTargetNode = targetNode || getConfig('writeNode');
+      
+      // Create or get Elasticsearch client for the specified node
+      let parseES = getCurrentES();
+      if (parseTargetNode && parseTargetNode !== getConfig('writeNode')) {
+        // Use specific node if different from current write node
+        const { Client } = require('@elastic/elasticsearch');
+        parseES = new Client({ node: parseTargetNode });
+      }
+
       // === Get total lines for this file once at the beginning ===
       const totalLinesInFile = await parser.countLines(filePath);
       updateTask(taskId, {
         total: totalLinesInFile, // Set the fixed total for this file
-        message: `Found ${totalLinesInFile} lines in ${filename}. Starting parsing...`
+        message: `Found ${totalLinesInFile} lines in ${filename}. Parsing to index '${parseTargetIndex}' via node '${parseTargetNode}'...`
       });
 
       await parser.parseFile(
         filePath,
         async (batch) => {
           const bulkBody = batch.flatMap((doc) => [
-            { index: { _index: getSelectedIndex() } },
+            { index: { _index: parseTargetIndex } },
             { raw_line: doc }, // Assuming 'doc' is the raw line based on parser.js
           ]);
 
           if (bulkBody.length > 0) {
-            const es = getCurrentES();
-            if (es && es.bulk) {
-              await es.bulk({ refresh: false, body: bulkBody });
+            if (parseES && parseES.bulk) {
+              await parseES.bulk({ refresh: false, body: bulkBody });
             } else {
               console.warn("Elasticsearch client not available for bulk indexing.");
             }
