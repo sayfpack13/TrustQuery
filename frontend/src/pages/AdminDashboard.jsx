@@ -12,7 +12,6 @@ import {
 import ClusterSetupWizard from "../components/ClusterSetupWizard";
 import LocalNodeManager from "../components/LocalNodeManager";
 import { useClusterManagement } from "../hooks/useClusterManagement";
-import { useElasticsearchManagement } from "../hooks/useElasticsearchManagement";
 
 // Import new components
 import { useAdminDashboard } from "./AdminDashboard/hooks/useAdminDashboard";
@@ -41,26 +40,8 @@ export default function AdminDashboard({ onLogout }) {
     setTasksList,
   } = useAdminDashboard();
 
-  // Custom hooks for Elasticsearch management
-  const elasticsearchManagement = useElasticsearchManagement(showNotification);
-
   // === Tab Navigation State ===
   const [activeTab, setActiveTab] = useState("cluster"); // 'files', 'cluster', 'accounts', 'configuration'
-
-  // === Elasticsearch Management State ===
-  const [showESModal, setShowESModal] = useState(false);
-  const [esModalType, setEsModalType] = useState(""); // 'create', 'delete', 'reindex', 'details'
-  const [esModalData, setEsModalData] = useState({});
-  const [newIndexName, setNewIndexName] = useState("");
-  const [newIndexShards, setNewIndexShards] = useState("1");
-  const [newIndexReplicas, setNewIndexReplicas] = useState("0");
-  const [reindexSource, setReindexSource] = useState("");
-  const [reindexDest, setReindexDest] = useState("");
-  const [indexDetails, setIndexDetails] = useState(null);
-  
-  // === Backend Cached Indices State ===
-  const [cachedIndicesByNodes, setCachedIndicesByNodes] = useState({});
-  const [cachedIndicesLoading, setCachedIndicesLoading] = useState(false);
 
   // === Advanced Node Configuration State ===
   const [showClusterWizard, setShowClusterWizard] = useState(false);
@@ -73,23 +54,8 @@ export default function AdminDashboard({ onLogout }) {
   // === Loading state tracking ===
   const [isInitializing, setIsInitializing] = useState(true);
 
-  // === Backend Cached Indices Functions ===
-  const fetchCachedIndices = useCallback(async () => {
-    setCachedIndicesLoading(true);
-    try {
-      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
-      setCachedIndicesByNodes(response.data.indicesByNodes || {});
-    } catch (error) {
-      console.error("Failed to load cached indices:", error);
-      showNotification("error", "Failed to load indices data", faExclamationTriangle);
-      setCachedIndicesByNodes({});
-    } finally {
-      setCachedIndicesLoading(false);
-    }
-  }, [showNotification]);
-
-  // Custom hook for cluster management (initialized after fetchCachedIndices)
-  const clusterManagement = useClusterManagement(showNotification, fetchCachedIndices);
+  // Custom hook for cluster management
+  const clusterManagement = useClusterManagement(showNotification);
 
   // Fetch tasks on mount
   useEffect(() => {
@@ -130,109 +96,6 @@ export default function AdminDashboard({ onLogout }) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
-
-  // === Backend Cached Indices Functions ===
-  // Get all indices from cached data for dropdowns (reindex, etc.)
-  const getAllCachedIndices = useCallback(() => {
-    const allIndices = [];
-    Object.values(cachedIndicesByNodes).forEach(nodeData => {
-      if (nodeData.isRunning && nodeData.indices && Array.isArray(nodeData.indices)) {
-        nodeData.indices.forEach(index => {
-          // Avoid duplicates across nodes
-          if (!allIndices.find(idx => idx.index === index.index)) {
-            allIndices.push({
-              ...index,
-              displayName: `${index.index} (${nodeData.nodeUrl})`,
-              nodeUrl: nodeData.nodeUrl
-            });
-          }
-        });
-      }
-    });
-    return allIndices.sort((a, b) => a.index.localeCompare(b.index));
-  }, [cachedIndicesByNodes]);
-
-  // Fetch cached indices for reindex modal and other global functions
-  useEffect(() => {
-    fetchCachedIndices();
-  }, [fetchCachedIndices]);
-
-  // ES Modal functions
-  const openESModal = (type, data = {}) => {
-    setEsModalType(type);
-    setEsModalData(data);
-    setShowESModal(true);
-  };
-
-  const closeESModal = () => {
-    setShowESModal(false);
-    setEsModalType("");
-    setEsModalData({});
-    setNewIndexName("");
-    setNewIndexShards("1");
-    setNewIndexReplicas("0");
-    setReindexSource("");
-    setReindexDest("");
-    setIndexDetails(null);
-  };
-
-  const handleCreateIndex = async () => {
-    if (!newIndexName.trim()) {
-      showNotification("error", "Index name is required", faExclamationTriangle);
-      return;
-    }
-
-    // Validate index name
-    if (!/^[a-z0-9][a-z0-9_-]*$/.test(newIndexName)) {
-      showNotification("error", "Index name must start with a letter or number and contain only lowercase letters, numbers, hyphens, and underscores", faExclamationTriangle);
-      return;
-    }
-
-    try {
-      await elasticsearchManagement.handleCreateIndex(newIndexName, newIndexShards, newIndexReplicas);
-      closeESModal();
-      
-      // Refresh cached indices after successful index creation
-      setTimeout(() => {
-        fetchCachedIndices();
-      }, 1000); // Small delay to allow index creation to complete
-    } catch (err) {
-      console.error("Failed to create index:", err);
-      // Error already shown by elasticsearchManagement.handleCreateIndex
-    }
-  };
-
-  const handleGetIndexDetails = async (indexName) => {
-    const details = await elasticsearchManagement.fetchIndexDetails(indexName);
-    if (details) {
-      setIndexDetails(details);
-      openESModal('details', { indexName });
-    }
-  };
-
-  const handleReindex = async () => {
-    if (!reindexSource.trim() || !reindexDest.trim()) {
-      showNotification("error", "Both source and destination indices are required", faExclamationTriangle);
-      return;
-    }
-
-    if (reindexSource === reindexDest) {
-      showNotification("error", "Source and destination indices must be different", faExclamationTriangle);
-      return;
-    }
-
-    try {
-      await elasticsearchManagement.handleReindexData(reindexSource, reindexDest);
-      closeESModal();
-      
-      // Refresh cached indices after successful reindexing
-      setTimeout(() => {
-        fetchCachedIndices();
-      }, 1000); // Small delay to allow reindex task to start
-    } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to reindex", faExclamationTriangle);
-    }
-  };
 
   const handleEditNode = async (node) => {
     console.log("handleEditNode called with node:", node);
@@ -408,31 +271,12 @@ export default function AdminDashboard({ onLogout }) {
           <ClusterManagement 
             // Local node state
             localNodes={clusterManagement.localNodes}
-            nodeDisks={{}} // No longer used, but keeping for backward compatibility
-            diskPreferences={{}} // No longer used, but keeping for backward compatibility
             clusterLoading={clusterManagement.clusterLoading}
             nodeActionLoading={clusterManagement.nodeActionLoading}
-            selectedNodeForDisks={null} // No longer used
-            setSelectedNodeForDisks={() => {}} // No longer used
             fetchLocalNodes={clusterManagement.fetchLocalNodes}
-            fetchNodeStats={() => {}} // No longer used
-            fetchDiskPreferences={() => {}} // No longer used
             handleStartLocalNode={clusterManagement.handleStartLocalNode}
             handleStopLocalNode={clusterManagement.handleStopLocalNode}
             handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
-            handleSetPreferredDisk={() => {}} // No longer used
-            // ES state - these are handled by node-specific components now
-            esIndices={[]} // Legacy - now handled per node
-            selectedIndex={null} // Legacy - now handled per node
-            esHealth={null} // Legacy - now handled per node
-            esLoading={false} // Legacy - now handled per node
-            fetchESData={() => {}} // Legacy - now handled per node
-            handleCreateIndex={handleCreateIndex} // Legacy fallback
-            handleDeleteIndex={() => {}} // Legacy - now handled per node
-            handleSelectIndex={() => {}} // Legacy - now handled per node
-            handleReindexData={handleReindex} // Legacy fallback
-            handleGetIndexDetails={handleGetIndexDetails} // Legacy fallback
-            openESModal={openESModal} // Legacy fallback
             // Modal controls
             setShowClusterWizard={setShowClusterWizard}
             setShowLocalNodeManager={setShowLocalNodeManager}
@@ -442,7 +286,6 @@ export default function AdminDashboard({ onLogout }) {
             onEditNode={handleEditNode}
             onOpenNodeDetails={handleOpenNodeDetails}
             showNotification={showNotification}
-            onCacheRefreshed={fetchCachedIndices}
           />
         )}
 
@@ -551,245 +394,11 @@ export default function AdminDashboard({ onLogout }) {
         </div>
       )}
 
-      {/* Elasticsearch Index Modal */}
-      {showESModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-neutral-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl border border-neutral-700 relative max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-2xl font-bold text-white">
-                {esModalType === "create" && "Create New Index"}
-                {esModalType === "reindex" && "Reindex Data"}
-                {esModalType === "details" && `Index Details: ${esModalData.indexName}`}
-              </h3>
-              <button
-                onClick={closeESModal}
-                className="text-neutral-400 hover:text-red-400 text-3xl transition-colors"
-              >
-                &times;
-              </button>
-            </div>
-
-            {/* Create Index Modal */}
-            {esModalType === "create" && (
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="new-index-name" className="block text-sm font-medium text-neutral-300 mb-2">
-                    Index Name
-                  </label>
-                  <input
-                    type="text"
-                    id="new-index-name"
-                    value={newIndexName}
-                    onChange={(e) => setNewIndexName(e.target.value)}
-                    placeholder="Enter index name (lowercase, no spaces)"
-                    className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <p className="text-sm text-neutral-400 mt-1">
-                    Index names will be automatically formatted (lowercase, special characters replaced with underscores)
-                  </p>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="new-index-shards" className="block text-sm font-medium text-neutral-300 mb-2">
-                      Number of Shards
-                    </label>
-                    <input
-                      type="number"
-                      id="new-index-shards"
-                      value={newIndexShards}
-                      onChange={(e) => setNewIndexShards(e.target.value)}
-                      min="1"
-                      max="1000"
-                      placeholder="1"
-                      className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <p className="text-sm text-neutral-400 mt-1">
-                      Range: 1-1000 (default: 1)
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <label htmlFor="new-index-replicas" className="block text-sm font-medium text-neutral-300 mb-2">
-                      Number of Replicas
-                    </label>
-                    <input
-                      type="number"
-                      id="new-index-replicas"
-                      value={newIndexReplicas}
-                      onChange={(e) => setNewIndexReplicas(e.target.value)}
-                      min="0"
-                      max="100"
-                      placeholder="0"
-                      className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <p className="text-sm text-neutral-400 mt-1">
-                      Range: 0-100 (default: 0)
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="bg-neutral-800 p-3 rounded-md">
-                  <p className="text-sm text-neutral-300">
-                    <strong>Note:</strong> Shards determine how data is distributed across nodes. Replicas provide data redundancy and can improve search performance. 
-                    For most use cases, 1 shard and 0-1 replicas are sufficient for small to medium datasets.
-                  </p>
-                </div>
-                
-                <div className="flex justify-end space-x-3 mt-6">
-                  <button
-                    onClick={handleCreateIndex}
-                    className="bg-green-600 hover:bg-green-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={
-                      !newIndexName.trim() || 
-                      isAnyTaskRunning ||
-                      parseInt(newIndexShards) < 1 || 
-                      parseInt(newIndexShards) > 1000 ||
-                      parseInt(newIndexReplicas) < 0 || 
-                      parseInt(newIndexReplicas) > 100 ||
-                      !(clusterManagement.localNodes || []).some(node => node.isRunning)
-                    }
-                    title={!(clusterManagement.localNodes || []).some(node => node.isRunning) ? "Start at least one node to create indices" : ""}
-                  >
-                    Create Index
-                  </button>
-                  <button
-                    onClick={closeESModal}
-                    className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Details Modal */}
-            {esModalType === "details" && indexDetails && (
-              <div>
-                <div className="border-b border-neutral-700 mb-4">
-                  <nav className="flex space-x-4">
-                    {['Settings', 'Mappings', 'Stats'].map(tabName => (
-                      <button
-                        key={tabName}
-                        onClick={() => setEsModalData({ ...esModalData, activeDetailsTab: tabName.toLowerCase() })}
-                        className={`py-2 px-4 font-medium text-sm transition-colors ${
-                          (esModalData.activeDetailsTab || 'settings') === tabName.toLowerCase()
-                            ? 'border-b-2 border-primary text-primary'
-                            : 'border-transparent text-neutral-400 hover:text-white'
-                        }`}
-                      >
-                        {tabName}
-                      </button>
-                    ))}
-                  </nav>
-                </div>
-
-                <div className="space-y-4 text-neutral-300">
-                  {/* Settings Tab */}
-                  {(esModalData.activeDetailsTab || 'settings') === 'settings' && (
-                    <SettingsDisplay settings={indexDetails.settings} />
-                  )}
-                  {/* Mappings Tab */}
-                  {(esModalData.activeDetailsTab || 'settings') === 'mappings' && (
-                    <MappingsDisplay mappings={indexDetails.mappings} />
-                  )}
-                  {/* Stats Tab */}
-                  {(esModalData.activeDetailsTab || 'settings') === 'stats' && (
-                    <StatsDisplay stats={indexDetails.stats} />
-                  )}
-                </div>
-                <div className="flex justify-end mt-6">
-                  <button
-                    onClick={closeESModal}
-                    className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Reindex Modal */}
-            {esModalType === "reindex" && (
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="reindex-source" className="block text-sm font-medium text-neutral-300 mb-2">
-                    Source Index
-                  </label>
-                  <select
-                    id="reindex-source"
-                    value={reindexSource}
-                    onChange={(e) => setReindexSource(e.target.value)}
-                    className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select source index</option>
-                    {getAllCachedIndices().map((index) => (
-                      <option key={index.index} value={index.index}>
-                        {index.index} ({(parseInt(index['docs.count']) || 0).toLocaleString()} docs)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="reindex-dest" className="block text-sm font-medium text-neutral-300 mb-2">
-                    Destination Index
-                  </label>
-                  <select
-                    id="reindex-dest"
-                    value={reindexDest}
-                    onChange={(e) => setReindexDest(e.target.value)}
-                    className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Select destination index</option>
-                    {getAllCachedIndices().map((index) => (
-                      <option key={index.index} value={index.index}>
-                        {index.index}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="bg-yellow-600 bg-opacity-20 border border-yellow-600 rounded-lg p-4 mt-4">
-                  <p className="text-yellow-200 text-sm">
-                    <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
-                    Warning: Reindexing will copy all documents from the source index to the destination index. 
-                    If the destination index already contains data, the documents will be merged.
-                  </p>
-                </div>
-                <div className="flex justify-end space-x-3 mt-6">
-                  <button
-                    onClick={handleReindex}
-                    className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={
-                      !reindexSource || 
-                      !reindexDest || 
-                      reindexSource === reindexDest || 
-                      isAnyTaskRunning ||
-                      !(clusterManagement.localNodes || []).some(node => node.isRunning)
-                    }
-                    title={!(clusterManagement.localNodes || []).some(node => node.isRunning) ? "Start at least one node to perform reindexing" : ""}
-                  >
-                    Start Reindexing
-                  </button>
-                  <button
-                    onClick={closeESModal}
-                    className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg transition duration-150 ease-in-out"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       <NodeDetailsModal 
         show={showNodeDetailsModal}
         onClose={handleCloseNodeDetails}
         node={selectedNodeForDetails}
-        nodeDisks={{}} // Legacy - now handled differently
         formatBytes={formatBytes}
-        onCacheRefreshed={fetchCachedIndices}
       />
         </>
       )}
@@ -797,113 +406,4 @@ export default function AdminDashboard({ onLogout }) {
   );
 }
 
-// Helper component for displaying settings in a structured way
-const SettingsDisplay = ({ settings }) => {
-  const renderValue = (value) => {
-    if (typeof value === 'object' && value !== null) {
-      return (
-        <pre className="bg-neutral-700 p-2 rounded-md text-sm">
-          {JSON.stringify(value, null, 2)}
-        </pre>
-      );
-    }
-    return <span className="font-mono">{String(value)}</span>;
-  };
 
-  return (
-    <div className="bg-neutral-900 p-4 rounded-lg space-y-2">
-      {Object.entries(settings.index).map(([key, value]) => (
-        <div key={key} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start py-2 border-b border-neutral-800">
-          <span className="font-semibold text-neutral-400 capitalize">{key.replace(/_/g, ' ')}</span>
-          <div className="text-white col-span-2 bg-neutral-800 p-2 rounded-md text-sm">
-            {renderValue(value)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-// Helper component for displaying mappings
-const MappingsDisplay = ({ mappings }) => {
-  if (!mappings || !mappings.properties || Object.keys(mappings.properties).length === 0) {
-    return (
-      <div className="bg-neutral-900 p-4 rounded-lg text-center text-neutral-400">
-        No explicit mappings defined for this index.
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-neutral-900 p-4 rounded-lg space-y-4">
-      {Object.entries(mappings.properties).map(([fieldName, fieldDetails]) => (
-        <div key={fieldName} className="bg-neutral-800 p-4 rounded-lg">
-          <h5 className="font-bold text-lg text-primary mb-2">{fieldName}</h5>
-          <div className="pl-4 border-l-2 border-neutral-600 space-y-2">
-            <div className="flex justify-between">
-              <span className="font-semibold text-neutral-300">Type:</span>
-              <span className="font-mono bg-blue-900 text-blue-300 px-2 py-1 rounded-md text-sm">{fieldDetails.type}</span>
-            </div>
-            {fieldDetails.fields && (
-              <div>
-                <p className="font-semibold mt-2 text-neutral-300">Sub-fields:</p>
-                <div className="pl-4 mt-2 space-y-2">
-                  {Object.entries(fieldDetails.fields).map(([subFieldName, subFieldDetails]) => (
-                    <div key={subFieldName} className="bg-neutral-700 p-2 rounded-md">
-                      <p className="font-semibold text-neutral-400">{subFieldName}</p>
-                      <div className="flex justify-between text-sm">
-                        <span className="font-semibold">Type:</span>
-                        <span>{subFieldDetails.type}</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="font-semibold">Analyzer:</span>
-                        <span>{subFieldDetails.analyzer}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-// Helper component for displaying stats
-const StatsDisplay = ({ stats }) => {
-  const renderStats = (statsObj) => {
-    return Object.entries(statsObj).map(([statName, statValue]) => {
-      if (typeof statValue === 'object' && statValue !== null) {
-        return (
-          <div key={statName} className="col-span-1 md:col-span-2">
-            <h6 className="font-semibold text-neutral-300 capitalize mt-2">{statName.replace(/_/g, ' ')}</h6>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 pl-4 border-l-2 border-neutral-700">
-              {renderStats(statValue)}
-            </div>
-          </div>
-        );
-      }
-      return (
-        <div key={statName} className="flex justify-between border-b border-neutral-800 py-1">
-          <span className="font-semibold text-neutral-400 capitalize">{statName.replace(/_/g, ' ')}</span>
-          <span className="text-white font-mono">{statValue.toLocaleString()}</span>
-        </div>
-      );
-    });
-  };
-
-  return (
-    <div className="bg-neutral-900 p-4 rounded-lg space-y-6">
-      {Object.entries(stats).map(([category, categoryStats]) => (
-        <div key={category}>
-          <h5 className="font-bold text-lg text-primary capitalize mb-2">{category}</h5>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 pl-4">
-            {renderStats(categoryStats)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};

@@ -3,7 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleNotch, faHdd, faPlus, faTrash, faExclamationTriangle } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../../../api/axiosClient';
 
-export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed }) {
+export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [configContent, setConfigContent] = useState('');
   const [configLoading, setConfigLoading] = useState(false);
@@ -25,9 +25,6 @@ export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed
   
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
-
-  // Remove the useElasticsearchManagement hook since we'll use direct API calls
-  // const { deleteIndex, pollTask } = useElasticsearchManagement(console.log);
 
   // Add validation for form inputs
   const isValidIndexName = newIndexName.trim().length > 0 && !/[A-Z\s]/.test(newIndexName);
@@ -177,11 +174,6 @@ export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed
       await fetchNodeIndices(false, true); // Get live data immediately        // Clear the backend cache to force fresh data on next cached request
         try {
           await axiosClient.post("/api/admin/cluster-advanced/local-nodes/refresh");
-          
-          // Call the callback to refresh frontend cache state  
-          if (onCacheRefreshed) {
-            onCacheRefreshed();
-          }
 
           // Dispatch custom event to notify other components
           window.dispatchEvent(new CustomEvent('indicesCacheRefreshed'));
@@ -214,11 +206,6 @@ export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed
         // Refresh backend cache after deletion
         try {
           await axiosClient.post("/api/admin/cluster-advanced/local-nodes/refresh");
-          
-          // Call the callback to refresh frontend cache state  
-          if (onCacheRefreshed) {
-            onCacheRefreshed();
-          }
 
           // Dispatch custom event to notify other components
           window.dispatchEvent(new CustomEvent('indicesCacheRefreshed'));

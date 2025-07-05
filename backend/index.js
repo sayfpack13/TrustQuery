@@ -133,20 +133,8 @@ function updateTask(taskId, updates) {
   }
 }
 
-// Middleware to verify JWT for authenticated routes
-const verifyJwt = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ error: "No token provided" });
-
-  const token = authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ error: "Malformed token" });
-
-  jwt.verify(token, SECRET_KEY, (err, user) => {
-    if (err) return res.status(403).json({ error: "Invalid token" });
-    req.user = user;
-    next();
-  });
-};
+// Import JWT middleware from centralized auth module
+const { verifyJwt } = require('./src/middleware/auth');
 
 // Admin Login endpoint
 app.post("/api/admin/login", (req, res) => {
@@ -1539,120 +1527,7 @@ app.get("/api/indices/:indexName/documents", verifyJwt, async (req, res) => {
   }
 });
 
-// GET indices grouped by nodes (persistent cache)
-app.get("/api/admin/indices-by-nodes", verifyJwt, async (req, res) => {
-  try {
-    const config = getConfig();
-    const clusterManager = require('./src/elasticsearch/cluster-manager');
-    
-    // Get all configured nodes from cluster manager (always returns all nodes regardless of running state)
-    console.log('📋 Getting cluster status from cluster manager...');
-    const clusterStatus = await clusterManager.getClusterStatus();
-    
-    // Get cached indices data
-    const cachedIndices = await getCache();
-    const status = await getCacheStatus();
-    
-    // Build comprehensive indices-by-nodes data
-    const indicesByNodes = {};
-    
-    // Start with all configured nodes from cluster manager
-    for (const node of clusterStatus.nodes) {
-      const nodeName = node.name;
-      indicesByNodes[nodeName] = {
-        nodeUrl: `http://${node.host}:${node.port}`,
-        isRunning: node.isRunning,
-        indices: [], // Default to empty
-        error: null,
-        // Include additional node metadata
-        host: node.host,
-        port: node.port,
-        cluster: node.cluster,
-        roles: node.roles
-      };
-      
-      // If we have cached data for this node, use it
-      if (cachedIndices[nodeName]) {
-        indicesByNodes[nodeName].indices = cachedIndices[nodeName].indices || [];
-        indicesByNodes[nodeName].error = cachedIndices[nodeName].error || null;
-      }
-      
-      console.log(`📡 Node ${nodeName}: ${node.isRunning ? 'Running' : 'Not running'} - ${indicesByNodes[nodeName].indices.length} indices`);
-    }
-    
-    // Sync searchIndices to ensure they're up to date with available indices
-    await syncSearchIndices(config);
-    
-    res.json({
-      indicesByNodes,
-      cached: true,
-      timestamp: status.timestamp,
-      totalNodes: clusterStatus.totalNodes,
-      runningNodes: clusterStatus.runningNodes,
-      stoppedNodes: clusterStatus.stoppedNodes
-    });
-  } catch (error) {
-    console.error("Error retrieving indices cache:", error);
-    res.status(500).json({ error: "Failed to retrieve indices cache" });
-  }
-});
 
-// POST refresh indices cache (persistent)
-app.post("/api/admin/indices-by-nodes/refresh", verifyJwt, async (req, res) => {
-  try {
-    console.log('🔄 Refreshing persistent indices cache...');
-    const config = getConfig();
-    const clusterManager = require('./src/elasticsearch/cluster-manager');
-    
-    // Refresh cache from running nodes
-    const refreshed = await refreshCache(config);
-    
-    // Get all configured nodes from cluster manager (always returns all nodes regardless of running state)
-    console.log('📋 Getting cluster status from cluster manager...');
-    const clusterStatus = await clusterManager.getClusterStatus();
-    
-    // Build comprehensive indices-by-nodes data
-    const indicesByNodes = {};
-    
-    // Start with all configured nodes from cluster manager
-    for (const node of clusterStatus.nodes) {
-      const nodeName = node.name;
-      indicesByNodes[nodeName] = {
-        nodeUrl: `http://${node.host}:${node.port}`,
-        isRunning: node.isRunning,
-        indices: [], // Default to empty
-        error: null,
-        // Include additional node metadata
-        host: node.host,
-        port: node.port,
-        cluster: node.cluster,
-        roles: node.roles
-      };
-      
-      // If we have refreshed data for this node, use it
-      if (refreshed[nodeName]) {
-        indicesByNodes[nodeName].indices = refreshed[nodeName].indices || [];
-        indicesByNodes[nodeName].error = refreshed[nodeName].error || null;
-      }
-      
-      console.log(`📡 Node ${nodeName}: ${node.isRunning ? 'Running' : 'Not running'} - ${indicesByNodes[nodeName].indices.length} indices`);
-    }
-    
-    // Sync searchIndices to remove stale entries
-    await syncSearchIndices(config);
-    
-    res.json({
-      message: "Indices cache refreshed.",
-      indicesByNodes: indicesByNodes,
-      totalNodes: clusterStatus.totalNodes,
-      runningNodes: clusterStatus.runningNodes,
-      stoppedNodes: clusterStatus.stoppedNodes
-    });
-  } catch (error) {
-    console.error("Error refreshing indices cache:", error);
-    res.status(500).json({ error: "Failed to refresh indices cache" });
-  }
-});
 
 // ==================== PUBLIC ENDPOINTS ====================
 
@@ -2022,10 +1897,6 @@ async function updateRunningStatusInCacheEfficient(cachedData) {
   return updatedData;
 }
 
-// Legacy function kept for backwards compatibility (now using efficient approach internally)
-async function updateRunningStatusInCache(cachedData) {
-  // Redirect to the efficient implementation
-  return await updateRunningStatusInCacheEfficient(cachedData);
-}
+
 
 
