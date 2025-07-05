@@ -316,7 +316,10 @@ export default function ConfigurationManagement({
                                     }`} title={`Health: ${index.health}`}></span>
                                   </div>
                                   <div className="text-sm text-neutral-400 mt-1 flex items-center justify-between">
-                                    <span>{parseInt(index['docs.count'] || 0).toLocaleString()} documents</span>
+                                    <span>{(index.docCount !== undefined 
+                                      ? index.docCount 
+                                      : parseInt(index['docs.count'], 10) || 0
+                                    ).toLocaleString()} documents</span>
                                     <span className="text-xs">{index['store.size'] || '0b'}</span>
                                   </div>
                                 </div>

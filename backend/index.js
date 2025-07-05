@@ -93,6 +93,16 @@ async function initializeServer() {
   const clusterManager = require('./src/elasticsearch/cluster-manager');
   await clusterManager.verifyNodeMetadata();
   
+  // Perform initial smart cache refresh for indices
+  const { refreshCacheForRunningNodes } = require('./src/cache/indices-cache');
+  const config = getConfig();
+  try {
+    await refreshCacheForRunningNodes(config);
+    console.log('🔄 Initial smart cache refresh completed');
+  } catch (error) {
+    console.warn('⚠️ Initial cache refresh failed:', error.message);
+  }
+  
   // Start the server
   app.listen(PORT, () => {
     console.log(`✅ Server running on: http://localhost:${PORT}`);
@@ -1153,7 +1163,15 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
     const config = getConfig();
     
     // Get cached indices data (don't refresh to avoid issues if nodes are down)
-    const cachedIndices = await getCacheFiltered(config);
+    console.log('🔍 About to call getCacheFiltered...');
+    let cachedIndices;
+    try {
+      cachedIndices = await getCacheFiltered(config);
+      console.log('✅ getCacheFiltered completed successfully');
+    } catch (cacheError) {
+      console.error('❌ Error in getCacheFiltered:', cacheError);
+      throw new Error(`Cache access failed: ${cacheError.message}`);
+    }
     const allAvailableIndices = [];
     
     console.log('🔍 Validating search indices selection...');

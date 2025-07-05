@@ -40,16 +40,34 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
       const nodeData = indicesByNodes[node.name];
       
       if (nodeData && nodeData.indices) {
-        setNodeIndices(nodeData.indices);
-        setUsingCachedData(true);
+        // Convert indices object to array format expected by the UI
+        const indicesArray = Array.isArray(nodeData.indices) 
+          ? nodeData.indices 
+          : Object.entries(nodeData.indices).map(([indexName, indexData]) => ({
+              index: indexName,
+              'docs.count': indexData.doc_count?.toString() || '0',
+              'store.size': indexData.store_size ? `${indexData.store_size}b` : '0b',
+              docCount: indexData.doc_count || 0,
+              health: 'green', // Default value since cache doesn't store health
+              status: 'open', // Default value since cache doesn't store status
+              uuid: indexName, // Use index name as fallback UUID for cache
+              creation: {
+                date: {
+                  string: new Date().toISOString() // Fallback date
+                }
+              }
+            }));
+        
+        setNodeIndices(indicesArray);
+        setUsingCachedData(!nodeData.isRunning); // Use cached data if node is not running
         setIndicesError(nodeData.error || null);
       } else {
         setNodeIndices([]);
-        setIndicesError(nodeData?.error || 'No cached data available');
+        setIndicesError(nodeData?.error || 'No data available');
       }
     } catch (error) {
-      console.error("Failed to load cached indices", error);
-      setIndicesError('Failed to load cached indices data');
+      console.error("Failed to load node indices", error);
+      setIndicesError('Failed to load indices data');
       setNodeIndices([]);
     }
   };
@@ -224,6 +242,20 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
     }
   };
 
+  // Listen for cache refresh events
+  useEffect(() => {
+    const handleCacheRefresh = () => {
+      if (activeTab === 'indices') {
+        fetchNodeIndices(false); // Refresh without showing loading
+      }
+    };
+
+    window.addEventListener('indicesCacheRefreshed', handleCacheRefresh);
+    return () => {
+      window.removeEventListener('indicesCacheRefreshed', handleCacheRefresh);
+    };
+  }, [activeTab]);
+
   if (!show || !node) {
     return null;
   }
@@ -353,24 +385,41 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
             
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-white">Indices on {node.name}</h3>
-              {node.isRunning ? (
-                <button
-                  onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
-                  className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm"
-                >
-                  <FontAwesomeIcon icon={faPlus} className="mr-2" />
-                  Create Index
-                </button>
-              ) : (
-                <button
-                  disabled
-                  className="bg-gray-600 cursor-not-allowed text-gray-400 px-4 py-2 rounded-lg text-sm"
-                  title="Start the node to create indices"
-                >
-                  <FontAwesomeIcon icon={faPlus} className="mr-2" />
-                  Create Index
-                </button>
-              )}
+              <div className="flex items-center space-x-2">
+                {/* Cache status indicator */}
+                <div className="flex items-center space-x-1">
+                  <span className={`inline-block w-2 h-2 rounded-full ${
+                    node.isRunning 
+                      ? (usingCachedData ? 'bg-yellow-400' : 'bg-green-400')
+                      : 'bg-blue-400'
+                  }`}></span>
+                  <span className="text-xs text-neutral-400">
+                    {node.isRunning 
+                      ? (usingCachedData ? 'Smart Cache' : 'Live') 
+                      : 'Cached (Offline)'}
+                  </span>
+                </div>
+                
+                {/* Create index button */}
+                {node.isRunning ? (
+                  <button
+                    onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
+                    className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm"
+                  >
+                    <FontAwesomeIcon icon={faPlus} className="mr-2" />
+                    Create Index
+                  </button>
+                ) : (
+                  <button
+                    disabled
+                    className="bg-gray-600 cursor-not-allowed text-gray-400 px-4 py-2 rounded-lg text-sm"
+                    title="Start the node to create indices"
+                  >
+                    <FontAwesomeIcon icon={faPlus} className="mr-2" />
+                    Create Index
+                  </button>
+                )}
+              </div>
             </div>
             
             {showCreateIndexForm && (
@@ -466,8 +515,13 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
                       <span className={`inline-block w-3 h-3 rounded-full ${index.health === 'green' ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
                     </td>
                     <td className="py-3 px-4">{index.index}</td>
-                    <td className="py-3 px-4">{index.docCount}</td>
-                    <td className="py-3 px-4">{index['store.size']}</td>
+                    <td className="py-3 px-4">
+                      {(index.docCount !== undefined 
+                        ? index.docCount 
+                        : parseInt(index['docs.count'], 10) || 0
+                      ).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4">{index['store.size'] || '0b'}</td>
                     <td className="py-3 px-4">
                       <button 
                         onClick={() => handleDeleteClick(index)} 
@@ -489,6 +543,16 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
                 ))}
               </tbody>
             </table>
+            
+            {/* Last update timestamp */}
+            {nodeIndices.length > 0 && (
+              <div className="text-xs text-neutral-400 mt-2 text-right">
+                {node.isRunning 
+                  ? `Live data • Updated: ${new Date().toLocaleTimeString()}`
+                  : `Cached data • Node offline`
+                }
+              </div>
+            )}
           </div>
         );
       case 'configuration':
@@ -584,4 +648,4 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
       )}
     </>
   );
-} 
+}

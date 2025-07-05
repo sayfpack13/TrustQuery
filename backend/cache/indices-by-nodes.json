@@ -1,11 +1,1 @@
-{
-  "indicesByNodes": {
-    "test": {
-      "nodeUrl": "http://localhost:9200",
-      "isRunning": true,
-      "indices": [],
-      "error": null
-    }
-  },
-  "timestamp": 1751701101684
-}
+{}

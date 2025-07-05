@@ -483,17 +483,59 @@ REM Start Elasticsearch
 
         if (pid) {
           console.log(`🔌 Attempting to stop node ${nodeName} with PID: ${pid}`);
-          // Forcefully kill the process on Windows
-          spawn('taskkill', ['/F', '/PID', pid], {
-            detached: true,
-            stdio: 'ignore'
-          }).unref();
-      }
+          
+          // Check if process is actually running first
+          try {
+            execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, { stdio: 'ignore' });
+            console.log(`✅ Process ${pid} is running, proceeding to stop it`);
+          } catch (checkError) {
+            console.log(`ℹ️ Process ${pid} is not running, no need to stop`);
+            // Clean up PID file and return
+            try {
+              await fs.unlink(pidFilePath);
+            } catch (unlinkError) {
+              // Ignore if PID file doesn't exist
+            }
+            return { success: true };
+          }
+          
+          // Forcefully kill the process on Windows and wait for completion
+          try {
+            execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe', timeout: 10000 });
+            console.log(`✅ Successfully terminated process ${pid}`);
+            
+            // Wait a moment for the process to fully terminate
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Verify the process is actually gone
+            try {
+              execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, { stdio: 'ignore' });
+              console.warn(`⚠️ Process ${pid} still running after kill command`);
+            } catch (verifyError) {
+              console.log(`✅ Process ${pid} confirmed terminated`);
+            }
+            
+          } catch (killError) {
+            if (killError.status === 128) {
+              // Process not found - already stopped
+              console.log(`ℹ️ Process ${pid} not found during kill - already stopped`);
+            } else {
+              console.warn(`⚠️ Error killing process ${pid}:`, killError.message);
+              throw killError;
+            }
+          }
+        }
       
         // Clean up the PID file
-        await fs.unlink(pidFilePath);
-      console.log(`🛑 Stopped Elasticsearch node: ${nodeName}`);
-      return { success: true };
+        try {
+          await fs.unlink(pidFilePath);
+          console.log(`🗑️ Cleaned up PID file: ${pidFilePath}`);
+        } catch (unlinkError) {
+          console.warn(`⚠️ Could not remove PID file: ${unlinkError.message}`);
+        }
+        
+        console.log(`🛑 Stopped Elasticsearch node: ${nodeName}`);
+        return { success: true };
 
       } catch (error) {
         if (error.code === 'ENOENT') {
@@ -682,12 +724,30 @@ REM Start Elasticsearch
    * Remove a node configuration
    */
   async removeNode(nodeName) {
+    let wasRunning = false;
     try {
-      // Stop the node first
-      try {
-        await this.stopNode(nodeName);
-      } catch (stopError) {
-        console.warn(`⚠️ Could not stop node ${nodeName} (it may not be running):`, stopError.message);
+      console.log(`🗑️ Starting removal process for node: ${nodeName}`);
+      
+      // Check if node is running and stop it first
+      wasRunning = await this.isNodeRunning(nodeName);
+      if (wasRunning) {
+        console.log(`🛑 Node ${nodeName} is running, stopping it first...`);
+        try {
+          await this.stopNode(nodeName);
+          
+          // Wait a moment and verify it's actually stopped
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const stillRunning = await this.isNodeRunning(nodeName);
+          if (stillRunning) {
+            throw new Error(`Node ${nodeName} is still running after stop attempt`);
+          }
+          console.log(`✅ Node ${nodeName} successfully stopped`);
+        } catch (stopError) {
+          console.error(`❌ Failed to stop node ${nodeName}:`, stopError.message);
+          throw new Error(`Cannot delete running node ${nodeName}. Stop failed: ${stopError.message}`);
+        }
+      } else {
+        console.log(`✅ Node ${nodeName} is not running, proceeding with deletion`);
       }
       
       const { getConfig, setConfig } = require('../config');
@@ -774,8 +834,13 @@ REM Start Elasticsearch
         console.log(`✅ Removed metadata for ${nodeName} from configuration.`);
       }
       
-      console.log(`✅ Node ${nodeName} removal completed`);
-      return { success: true };
+      console.log(`✅ Node ${nodeName} removal completed successfully`);
+      return { 
+        success: true, 
+        message: `Node "${nodeName}" stopped and removed successfully`,
+        wasRunning: wasRunning,
+        metadataRemoved: !!nodeUrlToDelete
+      };
     } catch (error) {
       console.error(`❌ Failed to remove node ${nodeName}:`, error);
       throw error;

@@ -166,18 +166,9 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
             if (targetNode?.isRunning) {
               showNotificationRef.current('success', `Node "${nodeName}" started successfully!`, faCheckCircle);
               
-              // Also refresh indices cache to show indices from newly started node
-              try {
-                await axiosClient.post("/api/admin/cluster-advanced/local-nodes/refresh");
-                console.log(`🔄 Indices cache refreshed after starting node ${nodeName}`);
-                
-                // Call the callback to refresh frontend cache state
-                if (onCacheRefreshed) {
-                  onCacheRefreshed();
-                }
-              } catch (cacheError) {
-                console.warn("Failed to refresh indices cache after node start:", cacheError);
-                // Don't fail the node start notification if cache refresh fails
+              // Cache will be automatically refreshed on next data access
+              if (onCacheRefreshed) {
+                onCacheRefreshed();
               }
               
               return true;

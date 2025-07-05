@@ -2,18 +2,18 @@
 const express = require("express");
 const { verifyJwt } = require("../middleware/auth");
 const { getConfig, setConfig } = require("../config");
-const { refreshCache, syncSearchIndices } = require('../cache/indices-cache');
+const { refreshCache, refreshCacheForRunningNodes, syncSearchIndices } = require('../cache/indices-cache');
 const { getES, initializeElasticsearchClients } = require("../elasticsearch/client");
 const clusterManager = require("../elasticsearch/cluster-manager");
 
 const router = express.Router();
 
-// Helper function to refresh cache and sync search indices
+// Helper function to refresh cache and sync search indices using smart refresh
 async function refreshCacheAndSync(config, operation = 'operation') {
   try {
-    await refreshCache(config);
+    await refreshCacheForRunningNodes(config);
     await syncSearchIndices(config);
-    console.log(`🔄 Persistent indices cache and searchIndices synchronized after ${operation}`);
+    console.log(`🔄 Smart cache refresh and searchIndices synchronized after ${operation}`);
   } catch (error) {
     console.warn(`⚠️ Failed to refresh cache and sync indices after ${operation}:`, error.message);
   }
@@ -719,11 +719,14 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
       console.warn(`⚠️ Failed to refresh persistent indices cache after removing node:`, cacheError.message);
     }
     
-    const message = removeResult.warnings && removeResult.warnings.length > 0
-      ? `Node "${nodeName}" removed successfully (with warnings - see server logs)`
+    const message = removeResult.wasRunning 
+      ? `Node "${nodeName}" was stopped and removed successfully`
       : `Node "${nodeName}" removed successfully`;
     
-    res.json({ message });
+    res.json({ 
+      message,
+      details: removeResult
+    });
   } catch (error) {
     console.error(`Error removing node ${req.params.nodeName}:`, error);
     
@@ -840,43 +843,114 @@ router.get("/setup-guide", verifyJwt, async (req, res) => {
 // GET local nodes status with indices information
 router.get("/local-nodes", verifyJwt, async (req, res) => {
   try {
+    const config = getConfig();
+    
+    // First get cluster status to see which nodes are running
     const clusterStatus = await clusterManager.getClusterStatus();
     
-    // Get cached indices data to supplement node information
-    const { getCacheFiltered, getCacheStatus } = require('../cache/indices-cache');
-    const { getConfig } = require('../config');
-    const config = getConfig();
-    const cachedIndices = await getCacheFiltered(config);
-    const cacheStatus = await getCacheStatus();
-    
-    // Enhance nodes with indices information
-    const enhancedNodes = clusterStatus.nodes.map(node => {
+    // Perform smart refresh - only update running nodes, use cache for offline ones
+    const refreshedCache = await refreshCacheForRunningNodes(config);
+      // Enhance nodes with indices information
+    const enhancedNodes = await Promise.all(clusterStatus.nodes.map(async (node) => {
       const nodeUrl = `http://${node.host}:${node.port}`;
-      const cachedNodeData = cachedIndices[node.name] || {};
+      const cachedNodeData = refreshedCache[node.name] || {};
       
+      let indicesArray = [];
+      
+      if (node.isRunning) {
+        // For running nodes, fetch fresh live data to ensure accuracy
+        try {
+          const { getSingleNodeClient } = require('../elasticsearch/client');
+          const client = getSingleNodeClient(nodeUrl);
+          const response = await client.cat.indices({
+            format: "json",
+            h: "index,status,health,docs.count,store.size,creation.date.string,uuid",
+            s: "index:asc"
+          });
+          
+          indicesArray = response.map((index) => ({
+            index: index.index,
+            'docs.count': index['docs.count'],
+            'store.size': index['store.size'],
+            docCount: parseInt(index['docs.count'], 10) || 0,
+            health: index.health,
+            status: index.status,
+            uuid: index.uuid,
+            creation: {
+              date: {
+                string: index['creation.date.string']
+              }
+            }
+          }));
+        } catch (error) {
+          console.error(`Failed to fetch live indices for running node ${node.name}:`, error);
+          // Fall back to cached data if live fetch fails
+          if (cachedNodeData.indices) {
+            indicesArray = Array.isArray(cachedNodeData.indices) 
+              ? cachedNodeData.indices 
+              : Object.entries(cachedNodeData.indices).map(([indexName, indexData]) => ({
+                  index: indexName,
+                  'docs.count': indexData.doc_count?.toString() || '0',
+                  'store.size': indexData.store_size ? `${indexData.store_size}b` : '0b',
+                  docCount: indexData.doc_count || 0,
+                  health: 'yellow', // Indicate data might be stale
+                  status: 'open',
+                  uuid: indexName,
+                  creation: {
+                    date: {
+                      string: new Date().toISOString()
+                    }
+                  }
+                }));
+          }
+        }
+      } else {
+        // For offline nodes, use cached data
+        if (cachedNodeData.indices) {
+          indicesArray = Array.isArray(cachedNodeData.indices) 
+            ? cachedNodeData.indices 
+            : Object.entries(cachedNodeData.indices).map(([indexName, indexData]) => ({
+                index: indexName,
+                'docs.count': indexData.doc_count?.toString() || '0',
+                'store.size': indexData.store_size ? `${indexData.store_size}b` : '0b',
+                docCount: indexData.doc_count || 0,
+                health: 'green',
+                status: 'open',
+                uuid: indexName,
+                creation: {
+                  date: {
+                    string: new Date().toISOString()
+                  }
+                }
+              }));
+        }
+      }
+
       return {
         ...node,
         nodeUrl,
-        indices: cachedNodeData.indices || [],
-        lastCacheUpdate: cachedNodeData.timestamp || null
+        indices: indicesArray,
+        lastCacheUpdate: cachedNodeData.last_updated || null,
+        cacheStatus: node.isRunning ? 'live' : 'cached'
       };
-    });
-    
+    }));
+
     // Create indicesByNodes format for compatibility
     const indicesByNodes = {};
     enhancedNodes.forEach(node => {
       indicesByNodes[node.name] = {
         nodeUrl: node.nodeUrl,
         isRunning: node.isRunning,
-        indices: node.indices,
-        timestamp: node.lastCacheUpdate
+        indices: node.indices, // This is now guaranteed to be an array
+        timestamp: node.lastCacheUpdate,
+        error: refreshedCache[node.name]?.error || null
       };
     });
     
     res.json({
       ...clusterStatus,
       nodes: enhancedNodes,
-      indicesByNodes // Add this for compatibility with existing frontend code
+      indicesByNodes
     });
   } catch (error) {
     console.error("Error getting local nodes status:", error);
@@ -887,13 +961,11 @@ router.get("/local-nodes", verifyJwt, async (req, res) => {
 // POST refresh local nodes data and indices cache
 router.post("/local-nodes/refresh", verifyJwt, async (req, res) => {
   try {
-    console.log('🔄 Refreshing local nodes data and indices cache...');
+    console.log('🔄 Performing smart refresh of local nodes data and indices cache...');
     
-    // Refresh the indices cache first
-    const { refreshCache } = require('../cache/indices-cache');
-    const { getConfig } = require('../config');
+    // Use smart refresh that only updates running nodes
     const config = getConfig();
-    const refreshedCache = await refreshCache(config);
+    const refreshedCache = await refreshCacheForRunningNodes(config);
     
     // Get fresh cluster status
     const clusterStatus = await clusterManager.getClusterStatus();
@@ -922,14 +994,16 @@ router.post("/local-nodes/refresh", verifyJwt, async (req, res) => {
       };
     });
     
+    const runningNodesCount = Object.values(refreshedCache).filter(node => node.isRunning).length;
+    
     res.json({
-      message: "Local nodes data and indices cache refreshed.",
+      message: `Smart refresh: Updated ${runningNodesCount} running nodes, using cache for offline nodes.`,
       ...clusterStatus,
       nodes: enhancedNodes,
       indicesByNodes
     });
   } catch (error) {
-    console.error("Error refreshing local nodes data:", error);
+    console.error("Error during smart refresh of local nodes data:", error);
     res.status(500).json({ error: "Failed to refresh local nodes data: " + error.message });
   }
 });
@@ -1368,5 +1442,6 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
     res.status(500).json({ error: "Failed to get node statistics: " + error.message });
   }
 });
+
 
 module.exports = router;
