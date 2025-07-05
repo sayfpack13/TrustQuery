@@ -44,7 +44,7 @@ export default function FilesManagement({
   const fetchCachedIndices = useCallback(async () => {
     setIndicesLoading(true);
     try {
-      const response = await axiosClient.get("/api/admin/indices-by-nodes");
+      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
       setCachedIndicesByNodes(response.data.indicesByNodes || {});
     } catch (error) {
       console.error("Failed to load cached indices:", error);

@@ -21,7 +21,6 @@ const DEFAULT_CONFIG = {
   
   // Admin UI settings
   adminSettings: {
-    showRawLineByDefault: false
   },
   
   // Task management

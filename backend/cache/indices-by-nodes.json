@@ -3,20 +3,9 @@
     "test": {
       "nodeUrl": "http://localhost:9200",
       "isRunning": true,
-      "indices": [
-        {
-          "index": "accc",
-          "health": "green",
-          "status": "open",
-          "docs.count": "553999",
-          "store.size": "0b",
-          "uuid": "EAHdOfGvStiL2OO9n3figg",
-          "node": "test",
-          "nodeUrl": "http://localhost:9200"
-        }
-      ],
+      "indices": [],
       "error": null
     }
   },
-  "timestamp": 1751696534416
+  "timestamp": 1751699224333
 }

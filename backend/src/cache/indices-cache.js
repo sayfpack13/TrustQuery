@@ -66,18 +66,25 @@ async function getCacheFiltered(config) {
   const data = await loadCacheFile();
   const { elasticsearchNodes: nodes = [], nodeMetadata = {} } = config;
   
-  // Create a set of current node names for filtering
-  const currentNodeNames = new Set();
+  // Start with all configured nodes, regardless of whether they're in cache
+  const filteredIndicesByNodes = {};
+  
   for (const nodeUrl of nodes) {
     const info = nodeMetadata[nodeUrl] || { name: nodeUrl, host: nodeUrl };
-    currentNodeNames.add(info.name);
-  }
-  
-  // Filter cached data to only include nodes that still exist in configuration
-  const filteredIndicesByNodes = {};
-  for (const [nodeName, nodeData] of Object.entries(data.indicesByNodes)) {
-    if (currentNodeNames.has(nodeName)) {
-      filteredIndicesByNodes[nodeName] = nodeData;
+    const nodeName = info.name;
+    
+    // Use cached data if available, otherwise create empty entry
+    if (data.indicesByNodes[nodeName]) {
+      filteredIndicesByNodes[nodeName] = data.indicesByNodes[nodeName];
+    } else {
+      // Create entry for configured node even if not in cache
+      filteredIndicesByNodes[nodeName] = {
+        nodeUrl,
+        isRunning: false,
+        indices: [],
+        error: null,
+        timestamp: 0
+      };
     }
   }
   

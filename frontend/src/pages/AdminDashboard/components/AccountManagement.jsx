@@ -57,7 +57,7 @@ export default function AccountManagement({
   const fetchNodesAndIndices = useCallback(async () => {
     try {
       setIndicesLoading(true);
-      const response = await axiosClient.get("/api/admin/indices-by-nodes");
+      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
       const indicesByNodes = response.data.indicesByNodes || {};
       
       // Extract nodes and their indices

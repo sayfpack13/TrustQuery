@@ -1122,7 +1122,7 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
       
       // UI-specific settings go in adminSettings
       const uiSettings = {};
-      if (adminSettings.showRawLineByDefault !== undefined) uiSettings.showRawLineByDefault = adminSettings.showRawLineByDefault;
+      // No UI settings currently needed
       
       if (Object.keys(uiSettings).length > 0) {
         updates.adminSettings = { ...currentAdminSettings, ...uiSettings };
@@ -1543,8 +1543,42 @@ app.get("/api/indices/:indexName/documents", verifyJwt, async (req, res) => {
 app.get("/api/admin/indices-by-nodes", verifyJwt, async (req, res) => {
   try {
     const config = getConfig();
-    const indicesByNodes = await getCacheFiltered(config);
+    const clusterManager = require('./src/elasticsearch/cluster-manager');
+    
+    // Get all configured nodes from cluster manager (always returns all nodes regardless of running state)
+    console.log('📋 Getting cluster status from cluster manager...');
+    const clusterStatus = await clusterManager.getClusterStatus();
+    
+    // Get cached indices data
+    const cachedIndices = await getCache();
     const status = await getCacheStatus();
+    
+    // Build comprehensive indices-by-nodes data
+    const indicesByNodes = {};
+    
+    // Start with all configured nodes from cluster manager
+    for (const node of clusterStatus.nodes) {
+      const nodeName = node.name;
+      indicesByNodes[nodeName] = {
+        nodeUrl: `http://${node.host}:${node.port}`,
+        isRunning: node.isRunning,
+        indices: [], // Default to empty
+        error: null,
+        // Include additional node metadata
+        host: node.host,
+        port: node.port,
+        cluster: node.cluster,
+        roles: node.roles
+      };
+      
+      // If we have cached data for this node, use it
+      if (cachedIndices[nodeName]) {
+        indicesByNodes[nodeName].indices = cachedIndices[nodeName].indices || [];
+        indicesByNodes[nodeName].error = cachedIndices[nodeName].error || null;
+      }
+      
+      console.log(`📡 Node ${nodeName}: ${node.isRunning ? 'Running' : 'Not running'} - ${indicesByNodes[nodeName].indices.length} indices`);
+    }
     
     // Sync searchIndices to ensure they're up to date with available indices
     await syncSearchIndices(config);
@@ -1552,7 +1586,10 @@ app.get("/api/admin/indices-by-nodes", verifyJwt, async (req, res) => {
     res.json({
       indicesByNodes,
       cached: true,
-      timestamp: status.timestamp
+      timestamp: status.timestamp,
+      totalNodes: clusterStatus.totalNodes,
+      runningNodes: clusterStatus.runningNodes,
+      stoppedNodes: clusterStatus.stoppedNodes
     });
   } catch (error) {
     console.error("Error retrieving indices cache:", error);
@@ -1565,22 +1602,57 @@ app.post("/api/admin/indices-by-nodes/refresh", verifyJwt, async (req, res) => {
   try {
     console.log('🔄 Refreshing persistent indices cache...');
     const config = getConfig();
+    const clusterManager = require('./src/elasticsearch/cluster-manager');
+    
+    // Refresh cache from running nodes
     const refreshed = await refreshCache(config);
+    
+    // Get all configured nodes from cluster manager (always returns all nodes regardless of running state)
+    console.log('📋 Getting cluster status from cluster manager...');
+    const clusterStatus = await clusterManager.getClusterStatus();
+    
+    // Build comprehensive indices-by-nodes data
+    const indicesByNodes = {};
+    
+    // Start with all configured nodes from cluster manager
+    for (const node of clusterStatus.nodes) {
+      const nodeName = node.name;
+      indicesByNodes[nodeName] = {
+        nodeUrl: `http://${node.host}:${node.port}`,
+        isRunning: node.isRunning,
+        indices: [], // Default to empty
+        error: null,
+        // Include additional node metadata
+        host: node.host,
+        port: node.port,
+        cluster: node.cluster,
+        roles: node.roles
+      };
+      
+      // If we have refreshed data for this node, use it
+      if (refreshed[nodeName]) {
+        indicesByNodes[nodeName].indices = refreshed[nodeName].indices || [];
+        indicesByNodes[nodeName].error = refreshed[nodeName].error || null;
+      }
+      
+      console.log(`📡 Node ${nodeName}: ${node.isRunning ? 'Running' : 'Not running'} - ${indicesByNodes[nodeName].indices.length} indices`);
+    }
     
     // Sync searchIndices to remove stale entries
     await syncSearchIndices(config);
     
     res.json({
       message: "Indices cache refreshed.",
-      indicesByNodes: refreshed
+      indicesByNodes: indicesByNodes,
+      totalNodes: clusterStatus.totalNodes,
+      runningNodes: clusterStatus.runningNodes,
+      stoppedNodes: clusterStatus.stoppedNodes
     });
   } catch (error) {
     console.error("Error refreshing indices cache:", error);
     res.status(500).json({ error: "Failed to refresh indices cache" });
   }
 });
-
-
 
 // ==================== PUBLIC ENDPOINTS ====================
 
@@ -1887,6 +1959,73 @@ function applyMaskingForPublicSearch(accountData, config) {
     password: maskString(accountData.password || '', maskingRatio, minVisibleChars),
     // Note: raw_line, index, highlight, and sourceFile are intentionally excluded for privacy
   };
+}
+
+// Helper function to check if a specific node is running efficiently using cluster manager
+async function isNodeRunning(nodeUrl) {
+  try {
+    const { clusterManager } = require('./src/elasticsearch/cluster-manager');
+    const config = getConfig();
+    
+    // Find the node name from the URL using nodeMetadata
+    const nodeMetadata = config.nodeMetadata || {};
+    let nodeName = null;
+    
+    for (const [url, metadata] of Object.entries(nodeMetadata)) {
+      if (url === nodeUrl) {
+        nodeName = metadata.name;
+        break;
+      }
+    }
+    
+    if (!nodeName) {
+      console.log(`No node name found for URL: ${nodeUrl}, checking via HTTP ping`);
+      // Fallback to HTTP ping if no node name found
+      const { Client } = require('@elastic/elasticsearch');
+      const client = new Client({ 
+        node: nodeUrl,
+        requestTimeout: 2000,
+        pingTimeout: 1000
+      });
+      await client.ping();
+      return true;
+    }
+    
+    // Use cluster manager's efficient isNodeRunning method
+    return await clusterManager.isNodeRunning(nodeName);
+  } catch (error) {
+    return false;
+  }
+}
+
+// Helper function to check running status for all nodes in cached data using efficient cluster manager approach
+async function updateRunningStatusInCacheEfficient(cachedData) {
+  const updatedData = {};
+  const clusterManager = require('./src/elasticsearch/cluster-manager');
+  
+  for (const [nodeName, nodeData] of Object.entries(cachedData)) {
+    updatedData[nodeName] = {
+      ...nodeData,
+      isRunning: false // Default to false
+    };
+    
+    try {
+      // Use cluster manager's efficient PID-based isNodeRunning method
+      const isRunning = await clusterManager.isNodeRunning(nodeName);
+      updatedData[nodeName].isRunning = isRunning;
+      console.log(`📡 Node ${nodeName}: ${isRunning ? 'Running' : 'Not running'}`);
+    } catch (error) {
+      console.warn(`⚠️ Failed to check status for node ${nodeName}:`, error.message);
+    }
+  }
+  
+  return updatedData;
+}
+
+// Legacy function kept for backwards compatibility (now using efficient approach internally)
+async function updateRunningStatusInCache(cachedData) {
+  // Redirect to the efficient implementation
+  return await updateRunningStatusInCacheEfficient(cachedData);
 }
 
 

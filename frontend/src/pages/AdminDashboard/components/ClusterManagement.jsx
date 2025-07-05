@@ -393,7 +393,7 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
   // Fetch cached indices from backend
   const fetchCachedNodeIndices = async () => {
     try {
-      const response = await axiosClient.get("/api/admin/indices-by-nodes");
+      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
       const indicesByNodes = response.data.indicesByNodes || {};
       const nodeData = indicesByNodes[node.name];
       
@@ -488,7 +488,7 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
       
       // Clear the backend cache to force fresh data on next cached request
       try {
-        await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+        await axiosClient.post("/api/admin/cluster-advanced/local-nodes/refresh");
         
         // Call the callback to refresh frontend cache state  
         if (onCacheRefreshed) {
@@ -518,7 +518,7 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
       
       // Clear the backend cache to force fresh data on next cached request
       try {
-        await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+        await axiosClient.post("/api/admin/cluster-advanced/local-nodes/refresh");
         
         // Call the callback to refresh frontend cache state  
         if (onCacheRefreshed) {

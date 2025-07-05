@@ -29,8 +29,7 @@ export default function ConfigurationManagement({
     minVisibleChars: 2,
     maskingRatio: 0.2,
     usernameMaskingRatio: 0.4,
-    batchSize: 1000,
-    showRawLineByDefault: false
+    batchSize: 1000
   });
   const [hasUnsavedSystemChanges, setHasUnsavedSystemChanges] = useState(false);
 
@@ -68,14 +67,12 @@ export default function ConfigurationManagement({
   const fetchIndicesByNodes = useCallback(async () => {
     try {
       setIndicesLoading(true);
-      const response = await axiosClient.get("/api/admin/indices-by-nodes");
+      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
       
       console.log("Indices by nodes response:", response.data);
       
       setIndicesByNodes(response.data.indicesByNodes || {});
       setIndicesCacheInfo({
-        cached: response.data.cached,
-        cacheAge: response.data.cacheAge,
         totalNodes: response.data.totalNodes,
         runningNodes: response.data.runningNodes
       });
@@ -116,14 +113,12 @@ export default function ConfigurationManagement({
 
   const resetSystemSettings = () => {
     if (config) {
-      const adminSettings = config.adminSettings || {};
-      setTempSystemSettings({
-        minVisibleChars: config.minVisibleChars || 2,
-        maskingRatio: config.maskingRatio || 0.2,
-        usernameMaskingRatio: config.usernameMaskingRatio || 0.4,
-        batchSize: config.batchSize || 1000,
-        showRawLineByDefault: adminSettings.showRawLineByDefault || false
-      });
+      const adminSettings = config.adminSettings || {};        setTempSystemSettings({
+          minVisibleChars: config.minVisibleChars || 2,
+          maskingRatio: config.maskingRatio || 0.2,
+          usernameMaskingRatio: config.usernameMaskingRatio || 0.4,
+          batchSize: config.batchSize || 1000
+        });
       setHasUnsavedSystemChanges(false);
     }
   };
@@ -179,11 +174,6 @@ export default function ConfigurationManagement({
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-neutral-300">
                     <strong>{indicesCacheInfo.runningNodes}/{indicesCacheInfo.totalNodes}</strong> nodes running
-                    {indicesCacheInfo.cached && (
-                      <span className="ml-2 text-blue-400">
-                        (cached {indicesCacheInfo.cacheAge}s ago)
-                      </span>
-                    )}
                   </div>
                   <div className="text-sm text-neutral-300">
                     <strong>{Object.values(indicesByNodes).reduce((total, node) => 
@@ -259,12 +249,15 @@ export default function ConfigurationManagement({
                           )}
                         </div>
                       
-                      {nodeData.isRunning && nodeData.indices.length > 0 ? (
+                      {nodeData.indices && nodeData.indices.length > 0 ? (
                         <div className="p-4">
                           {/* Node selection controls */}
                           <div className="flex items-center justify-between mb-3 pb-3 border-b border-neutral-600">
                             <span className="text-sm text-neutral-300">
                               {nodeData.indices.length} indices on this node
+                              {!nodeData.isRunning && (
+                                <span className="ml-2 text-amber-400">(from cache - node stopped)</span>
+                              )}
                             </span>
                             <div className="flex space-x-2">
                               <button
@@ -331,14 +324,18 @@ export default function ConfigurationManagement({
                             ))}
                           </div>
                         </div>
-                      ) : nodeData.isRunning ? (
+                      ) : !nodeData.isRunning ? (
+                        <div className="p-4 text-center text-neutral-500">
+                          <FontAwesomeIcon icon={faExclamationTriangle} className="text-2xl mb-2 text-amber-500" />
+                          <p>Node is not running</p>
+                          <p className="text-xs mt-1 text-neutral-400">
+                            Start the node to see available indices, or indices from cache will be shown if available
+                          </p>
+                        </div>
+                      ) : (
                         <div className="p-4 text-center text-neutral-400">
                           <FontAwesomeIcon icon={faDatabase} className="text-2xl mb-2" />
                           <p>No indices found on this node</p>
-                        </div>
-                      ) : (
-                        <div className="p-4 text-center text-neutral-500">
-                          <p>Node is not running</p>
                         </div>
                       )}
                     </div>
@@ -354,7 +351,7 @@ export default function ConfigurationManagement({
                       <button
                         onClick={() => {
                           const allIndices = Object.values(indicesByNodes)
-                            .filter(node => node.isRunning && node.indices)
+                            .filter(node => node.indices) // Remove the isRunning filter
                             .flatMap(node => node.indices.map(idx => idx.index));
                           setSelectedSearchIndices(allIndices);
                         }}
@@ -475,25 +472,6 @@ export default function ConfigurationManagement({
                     </p>
                   </div>
                 </div>
-              </div>
-              
-              {/* UI Preferences */}
-              <div>
-                <h4 className="text-lg font-medium text-white mb-4">UI Preferences</h4>
-                <label className="flex items-center p-4 bg-neutral-600 rounded-lg cursor-pointer hover:bg-neutral-500 transition-colors border border-neutral-500">
-                  <input
-                    type="checkbox"
-                    checked={tempSystemSettings.showRawLineByDefault}
-                    onChange={(e) => handleSystemSettingChange('showRawLineByDefault', e.target.checked)}
-                    className="mr-3 w-4 h-4 text-primary bg-neutral-700 border-neutral-600 rounded focus:ring-primary focus:ring-2"
-                  />
-                  <div>
-                    <span className="text-white font-medium">Show Raw Data by Default</span>
-                    <div className="text-sm text-neutral-400 mt-1">
-                      Display the raw data line by default in account management views
-                    </div>
-                  </div>
-                </label>
               </div>
             </div>
             

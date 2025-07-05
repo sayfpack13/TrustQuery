@@ -837,14 +837,100 @@ router.get("/setup-guide", verifyJwt, async (req, res) => {
   }
 });
 
-// GET local nodes status
+// GET local nodes status with indices information
 router.get("/local-nodes", verifyJwt, async (req, res) => {
   try {
     const clusterStatus = await clusterManager.getClusterStatus();
-    res.json(clusterStatus);
+    
+    // Get cached indices data to supplement node information
+    const { getCacheFiltered, getCacheStatus } = require('../cache/indices-cache');
+    const { getConfig } = require('../config');
+    const config = getConfig();
+    const cachedIndices = await getCacheFiltered(config);
+    const cacheStatus = await getCacheStatus();
+    
+    // Enhance nodes with indices information
+    const enhancedNodes = clusterStatus.nodes.map(node => {
+      const nodeUrl = `http://${node.host}:${node.port}`;
+      const cachedNodeData = cachedIndices[node.name] || {};
+      
+      return {
+        ...node,
+        nodeUrl,
+        indices: cachedNodeData.indices || [],
+        lastCacheUpdate: cachedNodeData.timestamp || null
+      };
+    });
+    
+    // Create indicesByNodes format for compatibility
+    const indicesByNodes = {};
+    enhancedNodes.forEach(node => {
+      indicesByNodes[node.name] = {
+        nodeUrl: node.nodeUrl,
+        isRunning: node.isRunning,
+        indices: node.indices,
+        timestamp: node.lastCacheUpdate
+      };
+    });
+    
+    res.json({
+      ...clusterStatus,
+      nodes: enhancedNodes,
+      indicesByNodes // Add this for compatibility with existing frontend code
+    });
   } catch (error) {
     console.error("Error getting local nodes status:", error);
     res.status(500).json({ error: "Failed to get local nodes status: " + error.message });
+  }
+});
+
+// POST refresh local nodes data and indices cache
+router.post("/local-nodes/refresh", verifyJwt, async (req, res) => {
+  try {
+    console.log('🔄 Refreshing local nodes data and indices cache...');
+    
+    // Refresh the indices cache first
+    const { refreshCache } = require('../cache/indices-cache');
+    const { getConfig } = require('../config');
+    const config = getConfig();
+    const refreshedCache = await refreshCache(config);
+    
+    // Get fresh cluster status
+    const clusterStatus = await clusterManager.getClusterStatus();
+    
+    // Enhance nodes with refreshed indices information
+    const enhancedNodes = clusterStatus.nodes.map(node => {
+      const nodeUrl = `http://${node.host}:${node.port}`;
+      const cachedNodeData = refreshedCache[node.name] || {};
+      
+      return {
+        ...node,
+        nodeUrl,
+        indices: cachedNodeData.indices || [],
+        lastCacheUpdate: cachedNodeData.timestamp || null
+      };
+    });
+    
+    // Create indicesByNodes format for compatibility
+    const indicesByNodes = {};
+    enhancedNodes.forEach(node => {
+      indicesByNodes[node.name] = {
+        nodeUrl: node.nodeUrl,
+        isRunning: node.isRunning,
+        indices: node.indices,
+        timestamp: node.lastCacheUpdate
+      };
+    });
+    
+    res.json({
+      message: "Local nodes data and indices cache refreshed.",
+      ...clusterStatus,
+      nodes: enhancedNodes,
+      indicesByNodes
+    });
+  } catch (error) {
+    console.error("Error refreshing local nodes data:", error);
+    res.status(500).json({ error: "Failed to refresh local nodes data: " + error.message });
   }
 });
 

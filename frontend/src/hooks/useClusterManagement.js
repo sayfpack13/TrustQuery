@@ -168,7 +168,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
               
               // Also refresh indices cache to show indices from newly started node
               try {
-                await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+                await axiosClient.post("/api/admin/cluster-advanced/local-nodes/refresh");
                 console.log(`🔄 Indices cache refreshed after starting node ${nodeName}`);
                 
                 // Call the callback to refresh frontend cache state

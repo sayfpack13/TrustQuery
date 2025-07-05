@@ -1,7 +1,5 @@
 {
-  "searchIndices": [
-    "accc"
-  ],
+  "searchIndices": [],
   "elasticsearchNodes": [
     "http://localhost:9200"
   ],
@@ -28,7 +26,6 @@
   "maskingRatio": 0.2,
   "usernameMaskingRatio": 0.4,
   "adminSettings": {
-    "showRawLineByDefault": true
   },
   "autoRefreshInterval": 30000,
   "maxTaskHistory": 100,
