@@ -94,11 +94,15 @@ async function initializeServer() {
   await clusterManager.verifyNodeMetadata();
   
   // Perform initial smart cache refresh for indices
-  const { refreshCacheForRunningNodes } = require('./src/cache/indices-cache');
+  const { refreshCacheForRunningNodes, syncSearchIndices } = require('./src/cache/indices-cache');
   const config = getConfig();
   try {
     await refreshCacheForRunningNodes(config);
     console.log('🔄 Initial smart cache refresh completed');
+    
+    // Sync search indices to remove any invalid entries from config
+    await syncSearchIndices(config);
+    console.log('🔄 Initial search indices sync completed');
   } catch (error) {
     console.warn('⚠️ Initial cache refresh failed:', error.message);
   }
@@ -1363,6 +1367,16 @@ app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
 
       // Delete the index
       await es.indices.delete({ index: indexName });
+
+      // Sync search indices to remove the deleted index from configuration
+      try {
+        const { syncSearchIndices } = require('./src/cache/indices-cache');
+        const config = getConfig();
+        await syncSearchIndices(config);
+        console.log(`🔄 Synced search indices after deleting index '${indexName}'`);
+      } catch (syncError) {
+        console.warn(`⚠️ Failed to sync search indices after deleting index:`, syncError.message);
+      }
 
       updateTask(taskId, {
         status: "completed",

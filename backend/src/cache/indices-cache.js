@@ -145,10 +145,68 @@ async function refreshCache() {
 }
 
 async function syncSearchIndices(config) {
-    // This function should sync the searchIndices configuration
-    // For now, just return without doing anything specific
-    console.log('syncSearchIndices called - no specific action needed');
-    return true;
+    // This function syncs the searchIndices configuration by removing any indices
+    // that no longer exist across all nodes
+    console.log('🔄 Syncing searchIndices configuration...');
+    
+    try {
+        const { getConfig, setConfig } = require('../config');
+        const currentSearchIndices = getConfig('searchIndices') || [];
+        
+        if (currentSearchIndices.length === 0) {
+            console.log('ℹ️ No search indices configured, nothing to sync');
+            return true;
+        }
+        
+        // Get current cache to see what indices actually exist
+        const cache = await getCache();
+        const existingIndices = new Set();
+        
+        // Collect all existing indices from all nodes
+        for (const [nodeName, nodeData] of Object.entries(cache)) {
+            if (nodeData && nodeData.indices) {
+                if (Array.isArray(nodeData.indices)) {
+                    // New format: array of index objects
+                    nodeData.indices.forEach(indexInfo => {
+                        if (indexInfo.index) {
+                            existingIndices.add(indexInfo.index);
+                        }
+                    });
+                } else {
+                    // Old format: object with index names as keys
+                    Object.keys(nodeData.indices).forEach(indexName => {
+                        existingIndices.add(indexName);
+                    });
+                }
+            }
+        }
+        
+        console.log(`📊 Found ${existingIndices.size} existing indices across all nodes`);
+        console.log(`🔍 Current searchIndices configuration: [${currentSearchIndices.join(', ')}]`);
+        
+        // Filter out indices that no longer exist
+        const validSearchIndices = currentSearchIndices.filter(indexName => {
+            const exists = existingIndices.has(indexName);
+            if (!exists) {
+                console.log(`🗑️ Removing non-existent index '${indexName}' from searchIndices`);
+            }
+            return exists;
+        });
+        
+        // Only update if there's a change
+        if (validSearchIndices.length !== currentSearchIndices.length) {
+            await setConfig('searchIndices', validSearchIndices);
+            console.log(`✅ Updated searchIndices configuration: [${validSearchIndices.join(', ')}]`);
+            console.log(`🧹 Removed ${currentSearchIndices.length - validSearchIndices.length} invalid indices from search configuration`);
+        } else {
+            console.log('✅ All searchIndices are valid, no sync needed');
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('❌ Error syncing searchIndices:', error);
+        return false;
+    }
 }
 
 async function getCacheFiltered(config) {
