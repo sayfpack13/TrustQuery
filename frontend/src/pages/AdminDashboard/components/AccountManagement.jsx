@@ -9,6 +9,10 @@ import {
   faCircleNotch,
   faCheckCircle,
   faTimes,
+  faServer,
+  faDatabase,
+  faFilter,
+  faRefresh,
 } from "@fortawesome/free-solid-svg-icons";
 
 export default function AccountManagement({ 
@@ -21,6 +25,13 @@ export default function AccountManagement({
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const pageSize = 20;
+
+  // Node and index filtering state
+  const [availableNodes, setAvailableNodes] = useState([]);
+  const [selectedNode, setSelectedNode] = useState('');
+  const [selectedIndex, setSelectedIndex] = useState('');
+  const [availableIndices, setAvailableIndices] = useState([]);
+  const [indicesLoading, setIndicesLoading] = useState(false);
 
   // Password visibility state for the main table (per-row, overridden by global toggle)
   const [hiddenPasswords, setHiddenPasswords] = useState({});
@@ -42,13 +53,58 @@ export default function AccountManagement({
   // State for page input in pagination
   const [pageInput, setPageInput] = useState("1");
 
+  // Fetch available nodes and indices
+  const fetchNodesAndIndices = useCallback(async () => {
+    try {
+      setIndicesLoading(true);
+      const response = await axiosClient.get("/api/admin/indices-by-nodes");
+      const indicesByNodes = response.data.indicesByNodes || {};
+      
+      // Extract nodes and their indices
+      const nodes = [];
+      const allIndices = [];
+      
+      Object.entries(indicesByNodes).forEach(([nodeName, nodeData]) => {
+        nodes.push({
+          name: nodeName,
+          url: nodeData.nodeUrl,
+          isRunning: nodeData.isRunning,
+          indices: nodeData.indices || []
+        });
+        
+        if (nodeData.indices) {
+          nodeData.indices.forEach(index => {
+            if (!allIndices.find(idx => idx.index === index.index)) {
+              allIndices.push({
+                ...index,
+                nodeName: nodeName
+              });
+            }
+          });
+        }
+      });
+      
+      setAvailableNodes(nodes);
+      setAvailableIndices(allIndices);
+    } catch (error) {
+      console.error("Failed to fetch nodes and indices:", error);
+      showNotification("error", "Failed to load nodes and indices data", faTimes);
+    } finally {
+      setIndicesLoading(false);
+    }
+  }, [showNotification]);
+
   // Fetch accounts data
   const fetchAccounts = useCallback(async () => {
     try {
       setLoading(true);
-      const accountsRes = await axiosClient.get("/api/admin/accounts", {
-        params: { page, size: pageSize },
-      });
+      
+      // Fetch accounts normally (with node/index filter if selected)
+      const params = { page, size: pageSize };
+      if (selectedNode) params.node = selectedNode;
+      if (selectedIndex) params.index = selectedIndex;
+      
+      const accountsRes = await axiosClient.get("/api/admin/accounts", { params });
 
       const fetchedAccounts = accountsRes.data.results || [];
       setAccounts(fetchedAccounts);
@@ -69,11 +125,17 @@ export default function AccountManagement({
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, showNotification]);
+  }, [page, pageSize, showNotification, selectedNode, selectedIndex, availableNodes]);
 
   useEffect(() => {
-    fetchAccounts();
-  }, [fetchAccounts]);
+    fetchNodesAndIndices();
+  }, [fetchNodesAndIndices]);
+
+  useEffect(() => {
+    if (availableNodes.length > 0) {
+      fetchAccounts();
+    }
+  }, [fetchAccounts, availableNodes]);
 
   // Calculate total pages
   const totalPages = Math.ceil(total / pageSize);
@@ -273,6 +335,68 @@ export default function AccountManagement({
           </div>
         </div>
 
+        {/* Filtering Controls */}
+        <div className="mb-6 p-4 bg-neutral-700 rounded-lg border border-neutral-600">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center space-x-2">
+              <FontAwesomeIcon icon={faFilter} className="text-blue-400" />
+              <span className="text-white font-medium">Filter:</span>
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <FontAwesomeIcon icon={faServer} className="text-green-400" />
+              <label className="text-neutral-300">Node:</label>
+              <select
+                value={selectedNode}
+                onChange={(e) => setSelectedNode(e.target.value)}
+                className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                disabled={indicesLoading}
+              >
+                <option value="">All Nodes</option>
+                {availableNodes.map(node => (
+                  <option key={node.name} value={node.name}>
+                    {node.name} {node.isRunning ? '(Running)' : '(Stopped)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <FontAwesomeIcon icon={faDatabase} className="text-blue-400" />
+              <label className="text-neutral-300">Index:</label>
+              <select
+                value={selectedIndex}
+                onChange={(e) => setSelectedIndex(e.target.value)}
+                className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                disabled={indicesLoading}
+              >
+                <option value="">All Indices</option>
+                {availableIndices
+                  .filter(index => !selectedNode || index.nodeName === selectedNode)
+                  .map(index => (
+                    <option key={`${index.nodeName}-${index.index}`} value={index.index}>
+                      {index.index} ({index.nodeName})
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+
+            <button
+              onClick={() => {
+                setPage(1);
+                fetchAccounts();
+              }}
+              disabled={loading || indicesLoading}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded transition duration-150 ease-in-out flex items-center space-x-1"
+            >
+              <FontAwesomeIcon icon={faRefresh} />
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Main Content Area */}
         <div className="overflow-hidden border border-neutral-600 rounded-lg">
           <table className="min-w-full divide-y divide-neutral-600">
             <thead className="bg-neutral-700">
@@ -291,127 +415,145 @@ export default function AccountManagement({
                 <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
                   URL
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                  Username
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                  Password
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                  Source File
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-700">
-              {loading ? (
-                <tr>
-                  <td
-                    colSpan="6"
-                    className="px-6 py-4 text-center text-neutral-400"
-                  >
-                    Loading records...
-                  </td>
-                </tr>
-              ) : accounts.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan="6"
-                    className="px-6 py-4 text-center text-neutral-400"
-                  >
-                    No records found.
-                  </td>
-                </tr>
-              ) : (
-                accounts.map((account) => (
-                  <tr
-                    key={account.id}
-                    className="hover:bg-neutral-700 transition duration-150 ease-in-out"
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <input
-                        type="checkbox"
-                        className="form-checkbox h-4 w-4 text-blue-400 rounded focus:ring-blue-400 bg-neutral-600 border-neutral-500 cursor-pointer"
-                        checked={selected.includes(account)}
-                        onChange={() => toggleSelect(account)}
-                      />
-                    </td>
-                    <td className="px-6 py-4 text-sm text-neutral-200 break-all">
-                      {account.url}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                      {account.username}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                      <div className="flex items-center">
-                        {showAllPasswords || !hiddenPasswords[account.id] ? (
-                          <span>{account.password}</span>
-                        ) : (
-                          <span>••••••••</span>
-                        )}
-                        <button
-                          onClick={() => togglePasswordVisibility(account.id)}
-                          className="ml-2 text-neutral-400 hover:text-blue-400 transition-colors"
-                        >
-                          <FontAwesomeIcon
-                            icon={
-                              showAllPasswords || !hiddenPasswords[account.id]
-                                ? faEyeSlash
-                                : faEye
-                            }
-                            className="text-base"
-                          />
-                        </button>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                      {account.sourceFile}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex space-x-3">
-                        <button
-                          onClick={() => handleEditClick(account)}
-                          className="bg-primary hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform"
-                          title="Edit Account"
-                        >
-                          <FontAwesomeIcon icon={faEdit} />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteAccount(account.id)}
-                          className="bg-danger hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform"
-                          title="Delete Account"
-                        >
-                          <FontAwesomeIcon icon={faTrash} />
-                        </button>
-                      </div>
-                    </td>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                      Username
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                      Password
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                      Source File
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                      Node
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                      Index
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                      Actions
+                    </th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-neutral-700">
+                  {loading ? (
+                    <tr>
+                      <td
+                        colSpan="8"
+                        className="px-6 py-4 text-center text-neutral-400"
+                      >
+                        Loading records...
+                      </td>
+                    </tr>
+                  ) : accounts.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan="8"
+                        className="px-6 py-4 text-center text-neutral-400"
+                      >
+                        No records found.
+                      </td>
+                    </tr>
+                  ) : (
+                    accounts.map((account) => (
+                      <tr
+                        key={account.id}
+                        className="hover:bg-neutral-700 transition duration-150 ease-in-out"
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            className="form-checkbox h-4 w-4 text-blue-400 rounded focus:ring-blue-400 bg-neutral-600 border-neutral-500 cursor-pointer"
+                            checked={selected.includes(account)}
+                            onChange={() => toggleSelect(account)}
+                          />
+                        </td>
+                        <td className="px-6 py-4 text-sm text-neutral-200 break-all">
+                          {account.url}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                          {account.username}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                          <div className="flex items-center">
+                            {showAllPasswords || !hiddenPasswords[account.id] ? (
+                              <span>{account.password}</span>
+                            ) : (
+                              <span>••••••••</span>
+                            )}
+                            <button
+                              onClick={() => togglePasswordVisibility(account.id)}
+                              className="ml-2 text-neutral-400 hover:text-blue-400 transition-colors"
+                            >
+                              <FontAwesomeIcon
+                                icon={
+                                  showAllPasswords || !hiddenPasswords[account.id]
+                                    ? faEyeSlash
+                                    : faEye
+                                }
+                                className="text-base"
+                              />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                          {account.sourceFile}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                          <div className="flex items-center space-x-2">
+                            <FontAwesomeIcon icon={faServer} className="text-green-400" />
+                            <span>{account._source?.node || account.node || 'Unknown'}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                          <div className="flex items-center space-x-2">
+                            <FontAwesomeIcon icon={faDatabase} className="text-blue-400" />
+                            <span>{account._index || account.index || 'Unknown'}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <div className="flex space-x-3">
+                            <button
+                              onClick={() => handleEditClick(account)}
+                              className="bg-primary hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform"
+                              title="Edit Account"
+                            >
+                              <FontAwesomeIcon icon={faEdit} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteAccount(account.id)}
+                              className="bg-danger hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform"
+                              title="Delete Account"
+                            >
+                              <FontAwesomeIcon icon={faTrash} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-        {/* Pagination Controls */}
-        <div className="mt-6 flex justify-center items-center space-x-2">
-          <button
-            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-            disabled={page === 1 || loading}
-            className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
-          >
-            Previous
-          </button>
-          {renderPaginationButtons()}
-          <button
-            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-            disabled={page === totalPages || loading}
-            className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
-          >
-            Next
-          </button>
-        </div>
+            {/* Pagination Controls */}
+            <div className="mt-6 flex justify-center items-center space-x-2">
+              <button
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={page === 1 || loading}
+                className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
+              >
+                Previous
+              </button>
+              {renderPaginationButtons()}
+              <button
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={page === totalPages || loading}
+                className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
+              >
+                Next
+              </button>
+            </div>
       </section>
 
       {/* Edit Account Modal */}

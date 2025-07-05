@@ -596,6 +596,8 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const size = parseInt(req.query.size) || 20;
   const from = (page - 1) * size;
+  const requestedNode = req.query.node;
+  const requestedIndex = req.query.index;
 
   try {
     const esAvailable = await isElasticsearchAvailable();
@@ -607,9 +609,109 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       });
     }
 
-    const es = getCurrentES();
+    const config = getConfig();
+    const { getCacheFiltered } = require('./src/cache/indices-cache');
+    const cachedIndices = await getCacheFiltered(config);
+
+    // Determine which index(es) to search and which ES client to use
+    let searchIndex;
+    let es;
+    let targetNodeUrl;
+
+    if (requestedNode && requestedIndex) {
+      // Specific index on specific node requested
+      const nodeData = cachedIndices[requestedNode];
+      if (!nodeData || !nodeData.indices || !nodeData.indices.find(idx => idx.index === requestedIndex)) {
+        return res.status(400).json({
+          error: `Index '${requestedIndex}' not found on node '${requestedNode}'`,
+          results: [],
+          total: 0
+        });
+      }
+      
+      searchIndex = requestedIndex;
+      targetNodeUrl = nodeData.nodeUrl;
+      
+      if (!targetNodeUrl) {
+        return res.status(400).json({
+          error: `Node '${requestedNode}' not found or not configured`,
+          results: [],
+          total: 0
+        });
+      }
+      
+      // Create ES client for specific node
+      const { Client } = require('@elastic/elasticsearch');
+      es = new Client({ node: targetNodeUrl });
+
+    } else if (requestedNode && !requestedIndex) {
+      // Specific node requested, but no specific index - search all indices on that node
+      const nodeData = cachedIndices[requestedNode];
+      if (!nodeData || !nodeData.nodeUrl) {
+        return res.status(400).json({
+          error: `Node '${requestedNode}' not found or not configured`,
+          results: [],
+          total: 0
+        });
+      }
+
+      if (!nodeData.indices || nodeData.indices.length === 0) {
+        return res.json({
+          results: [],
+          total: 0,
+          message: `No indices found on node '${requestedNode}'`
+        });
+      }
+
+      // Use all indices on the specified node
+      searchIndex = nodeData.indices.map(idx => idx.index).join(',');
+      targetNodeUrl = nodeData.nodeUrl;
+      
+      const { Client } = require('@elastic/elasticsearch');
+      es = new Client({ node: targetNodeUrl });
+
+    } else if (!requestedNode && requestedIndex) {
+      // Specific index requested, but no specific node - use default ES client
+      // First check if the index exists on any node
+      let indexExists = false;
+      for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
+        if (nodeData.indices && nodeData.indices.find(idx => idx.index === requestedIndex)) {
+          indexExists = true;
+          break;
+        }
+      }
+      
+      if (!indexExists) {
+        return res.status(400).json({
+          error: `Index '${requestedIndex}' not found on any configured node`,
+          results: [],
+          total: 0
+        });
+      }
+      
+      searchIndex = requestedIndex;
+      es = getCurrentES();
+
+    } else {
+      // No specific node or index - use default search indices from config
+      const searchIndices = config.searchIndices || [];
+      
+      if (searchIndices.length === 0) {
+        return res.json({
+          results: [],
+          total: 0,
+          message: "No search indices configured. Please configure search indices in the Configuration tab."
+        });
+      }
+      
+      searchIndex = searchIndices.join(',');
+      es = getCurrentES();
+    }
+
+    console.log(`Searching index(es): ${searchIndex} on ${targetNodeUrl || 'default ES client'}`);
+
     const response = await es.search({
-      index: getSelectedIndex(),
+      index: searchIndex,
       from: from,
       size: size,
       body: {
@@ -621,19 +723,28 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
     const results = response.hits.hits.map((hit) => {
       // Parse the raw line for display in admin panel
       const parsedAccount = parseLineForDisplay(hit._source.raw_line);
-      return { id: hit._id, raw_line: hit._source.raw_line, ...parsedAccount };
+      return { 
+        id: hit._id, 
+        raw_line: hit._source.raw_line, 
+        _index: hit._index,
+        node: requestedNode || 'default',
+        ...parsedAccount 
+      };
     });
 
     res.json({ results, total });
   } catch (error) {
     console.error("Error searching accounts:", error);
-    res.status(500).json({ message: "Error searching accounts." });
+    res.status(500).json({ message: "Error searching accounts: " + error.message });
   }
 });
 
 // DELETE single account
 app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const { id } = req.params;
+  const requestedNode = req.query.node;
+  const requestedIndex = req.query.index;
+  
   try {
     const esAvailable = await isElasticsearchAvailable();
     if (!esAvailable) {
@@ -642,9 +753,32 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
       });
     }
 
-    const es = getCurrentES();
+    // Determine which index and ES client to use
+    let es;
+    let targetIndex;
+    
+    if (requestedNode && requestedIndex) {
+      const config = getConfig();
+      const { getCacheFiltered } = require('./src/cache/indices-cache');
+      const cachedIndices = await getCacheFiltered(config);
+      const nodeData = cachedIndices[requestedNode];
+      
+      if (!nodeData || !nodeData.nodeUrl) {
+        return res.status(400).json({
+          error: `Node '${requestedNode}' not found or not configured`
+        });
+      }
+
+      const { Client } = require('@elastic/elasticsearch');
+      es = new Client({ node: nodeData.nodeUrl });
+      targetIndex = requestedIndex;
+    } else {
+      es = getCurrentES();
+      targetIndex = getSelectedIndex();
+    }
+
     await es.delete({
-      index: getSelectedIndex(),
+      index: targetIndex,
       id: id,
       refresh: true,
     });
@@ -658,7 +792,9 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
 // PUT (update) single account
 app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const { id } = req.params;
-  const { raw_line } = req.body; // Expect raw_line in the body
+  const { url, username, password } = req.body;
+  const requestedNode = req.query.node;
+  const requestedIndex = req.query.index;
 
   try {
     const esAvailable = await isElasticsearchAvailable();
@@ -668,9 +804,35 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
       });
     }
 
-    const es = getCurrentES();
+    // Construct the raw_line from the provided fields
+    const raw_line = `${url}:${username}:${password}`;
+
+    // Determine which index and ES client to use
+    let es;
+    let targetIndex;
+    
+    if (requestedNode && requestedIndex) {
+      const config = getConfig();
+      const { getCacheFiltered } = require('./src/cache/indices-cache');
+      const cachedIndices = await getCacheFiltered(config);
+      const nodeData = cachedIndices[requestedNode];
+      
+      if (!nodeData || !nodeData.nodeUrl) {
+        return res.status(400).json({
+          error: `Node '${requestedNode}' not found or not configured`
+        });
+      }
+
+      const { Client } = require('@elastic/elasticsearch');
+      es = new Client({ node: nodeData.nodeUrl });
+      targetIndex = requestedIndex;
+    } else {
+      es = getCurrentES();
+      targetIndex = getSelectedIndex();
+    }
+
     await es.update({
-      index: getSelectedIndex(),
+      index: targetIndex,
       id: id,
       body: {
         doc: { raw_line }, // Update raw_line field
@@ -1053,7 +1215,17 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
 
 // Storage for selected index (uses configuration)
 function getSelectedIndex() {
-  return getConfig('selectedIndex');
+  // For backward compatibility, check both selectedIndex and searchIndices
+  const selectedIndex = getConfig('selectedIndex');
+  const searchIndices = getConfig('searchIndices') || [];
+  
+  // If we have searchIndices configured, use those (modern approach)
+  if (searchIndices.length > 0) {
+    return searchIndices.join(',');
+  }
+  
+  // Fallback to old selectedIndex if no searchIndices
+  return selectedIndex || '';
 }
 
 async function setSelectedIndex(indexName) {
