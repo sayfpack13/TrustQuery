@@ -21,8 +21,7 @@ const DEFAULT_CONFIG = {
   
   // Admin UI settings
   adminSettings: {
-    showRawLineByDefault: false,
-    indicesCacheDurationMinutes: 15 // How long to cache indices data
+    showRawLineByDefault: false
   },
   
   // Task management

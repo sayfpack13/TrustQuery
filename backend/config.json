@@ -1,28 +1,11 @@
 {
   "searchIndices": [
-    "test2"
+    "test"
   ],
   "elasticsearchNodes": [
-    "http://localhost:9201",
     "http://localhost:9200"
   ],
   "nodeMetadata": {
-    "http://localhost:9201": {
-      "name": "test-1",
-      "configPath": "C:\\elasticsearch\\nodes\\test-1\\config\\elasticsearch.yml",
-      "servicePath": "C:\\elasticsearch\\nodes\\test-1\\config\\start-node.bat",
-      "dataPath": "C:\\elasticsearch\\nodes\\test-1\\data",
-      "logsPath": "C:\\elasticsearch\\nodes\\test-1\\logs",
-      "cluster": "trustquery-cluster",
-      "host": "localhost",
-      "port": 9201,
-      "transportPort": 9301,
-      "roles": {
-        "master": true,
-        "data": true,
-        "ingest": true
-      }
-    },
     "http://localhost:9200": {
       "name": "test",
       "configPath": "C:\\elasticsearch\\nodes\\test\\config\\elasticsearch.yml",
@@ -65,18 +48,23 @@
     "restartCommand": "net restart elasticsearch"
   },
   "cachedIndicesByNodes": {
-    "test-1": {
-      "nodeUrl": "http://localhost:9201",
-      "isRunning": false,
-      "indices": [],
-      "error": "fetch failed"
-    },
     "test": {
       "nodeUrl": "http://localhost:9200",
-      "isRunning": false,
-      "indices": [],
-      "error": "fetch failed"
+      "isRunning": true,
+      "indices": [
+        {
+          "index": "test",
+          "health": "green",
+          "status": "open",
+          "docs.count": "554000",
+          "store.size": "8.8mb",
+          "uuid": "R8vuZTICRlyh0UhoPfj7ng",
+          "node": "test",
+          "nodeUrl": "http://localhost:9200"
+        }
+      ],
+      "error": null
     }
   },
-  "indicesCacheTimestamp": 1751663563404
+  "indicesCacheTimestamp": 1751676884416
 }

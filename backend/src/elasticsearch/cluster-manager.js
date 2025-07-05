@@ -418,6 +418,16 @@ REM Start Elasticsearch
             const { initializeElasticsearchClients } = require('./client');
             initializeElasticsearchClients();
 
+            // Refresh indices cache after successful node start
+            try {
+              const { refreshIndicesCache } = require('../../index');
+              await refreshIndicesCache();
+              console.log(`🔄 Indices cache refreshed after starting node ${nodeName}`);
+            } catch (cacheError) {
+              console.warn(`⚠️ Failed to refresh indices cache after starting node ${nodeName}:`, cacheError.message);
+              // Don't fail the node start if cache refresh fails
+            }
+
             // Close the file handle
             await output.close();
             return { success: true, pid };

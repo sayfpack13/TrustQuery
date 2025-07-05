@@ -513,7 +513,7 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
         async (batch) => {
           const bulkBody = batch.flatMap((doc) => [
             { index: { _index: parseTargetIndex } },
-            { raw_line: doc }, // Assuming 'doc' is the raw line based on parser.js
+            { raw_line: doc },
           ]);
 
           if (bulkBody.length > 0) {
@@ -986,6 +986,16 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
       return res.status(400).json({ error: "Indices must be an array" });
     }
 
+    // Allow empty array to clear all search indices (makes search return nothing)
+    if (indices.length === 0) {
+      await setConfig('searchIndices', []);
+      return res.json({
+        message: "Search indices cleared - search will return no results",
+        searchIndices: [],
+        config: getConfig()
+      });
+    }
+
     // Validate that indices exist in our cached data
     const config = getConfig();
     const cachedIndices = config.cachedIndicesByNodes || {};
@@ -1352,7 +1362,7 @@ app.get("/api/admin/indices-by-nodes", verifyJwt, async (req, res) => {
     // Check if we have cached data and it's recent (unless force refresh)
     const cachedIndices = config.cachedIndicesByNodes || {};
     const cacheTimestamp = config.indicesCacheTimestamp || 0;
-    const cacheDurationMinutes = config.adminSettings?.indicesCacheDurationMinutes || 15;
+    const cacheDurationMinutes = 15; // Fixed 15-minute cache duration
     const cacheMaxAge = cacheDurationMinutes * 60 * 1000; // Convert to milliseconds
     const now = Date.now();
     
@@ -1433,6 +1443,37 @@ app.get("/api/admin/indices-by-nodes", verifyJwt, async (req, res) => {
       indicesCacheTimestamp: now
     });
 
+    // Clean up stale search indices
+    const currentConfig = getConfig();
+    const currentSearchIndices = currentConfig.searchIndices || [];
+    if (currentSearchIndices.length > 0) {
+      const allAvailableIndices = [];
+      
+      // Collect all available indices from all nodes
+      Object.values(indicesByNodes).forEach(nodeData => {
+        if (nodeData.indices && Array.isArray(nodeData.indices)) {
+          nodeData.indices.forEach(idx => {
+            allAvailableIndices.push(idx.index);
+          });
+        }
+      });
+
+      // Filter out stale search indices
+      const validSearchIndices = currentSearchIndices.filter(index => 
+        allAvailableIndices.includes(index)
+      );
+
+      // Update search indices if any were removed
+      if (validSearchIndices.length !== currentSearchIndices.length) {
+        const removedIndices = currentSearchIndices.filter(index => 
+          !allAvailableIndices.includes(index)
+        );
+        
+        console.log(`🧹 Cleaning up stale search indices: ${removedIndices.join(', ')}`);
+        await setConfig('searchIndices', validSearchIndices);
+      }
+    }
+
     res.json({
       indicesByNodes,
       cached: false,
@@ -1467,7 +1508,7 @@ app.get("/api/admin/indices-cache-status", verifyJwt, async (req, res) => {
   try {
     const config = getConfig();
     const cacheTimestamp = config.indicesCacheTimestamp || 0;
-    const cacheDurationMinutes = config.adminSettings?.indicesCacheDurationMinutes || 15;
+    const cacheDurationMinutes = 15; // Fixed 15-minute cache duration
     const cacheMaxAge = cacheDurationMinutes * 60 * 1000;
     const now = Date.now();
     const ageSeconds = Math.floor((now - cacheTimestamp) / 1000);
@@ -1485,3 +1526,427 @@ app.get("/api/admin/indices-cache-status", verifyJwt, async (req, res) => {
     res.status(500).json({ error: "Failed to get cache status" });
   }
 });
+
+// Utility function to refresh indices cache
+async function refreshIndicesCache() {
+  try {
+    console.log('🔄 Refreshing indices cache...');
+    const config = getConfig();
+    const nodes = config.elasticsearchNodes || [];
+    const nodeMetadata = config.nodeMetadata || {};
+    const indicesByNodes = {};
+    const now = Date.now();
+    
+    for (const nodeUrl of nodes) {
+      const nodeInfo = nodeMetadata[nodeUrl] || { name: nodeUrl, host: nodeUrl };
+      const nodeName = nodeInfo.name;
+      
+      try {
+        // Check if node is running by making a health check
+        const healthResponse = await fetch(`${nodeUrl}/_cluster/health`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 5000
+        });
+        
+        if (!healthResponse.ok) {
+          indicesByNodes[nodeName] = {
+            nodeUrl,
+            isRunning: false,
+            indices: [],
+            error: `Node not responding (${healthResponse.status})`
+          };
+          continue;
+        }
+
+        // Fetch indices for this node
+        const indicesResponse = await fetch(`${nodeUrl}/_cat/indices?format=json&h=index,health,status,docs.count,store.size,uuid`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000
+        });
+
+        if (indicesResponse.ok) {
+          const indices = await indicesResponse.json();
+          indicesByNodes[nodeName] = {
+            nodeUrl,
+            isRunning: true,
+            indices: indices.map(idx => ({
+              ...idx,
+              node: nodeName,
+              nodeUrl: nodeUrl
+            })),
+            error: null
+          };
+        } else {
+          indicesByNodes[nodeName] = {
+            nodeUrl,
+            isRunning: true,
+            indices: [],
+            error: `Failed to fetch indices (${indicesResponse.status})`
+          };
+        }
+      } catch (error) {
+        console.error(`Error fetching indices for node ${nodeName}:`, error);
+        indicesByNodes[nodeName] = {
+          nodeUrl,
+          isRunning: false,
+          indices: [],
+          error: error.message
+        };
+      }
+    }
+
+    // Cache the results
+    await setConfig({
+      cachedIndicesByNodes: indicesByNodes,
+      indicesCacheTimestamp: now
+    });
+
+    // Clean up stale search indices
+    const currentConfig = getConfig();
+    const currentSearchIndices = currentConfig.searchIndices || [];
+    if (currentSearchIndices.length > 0) {
+      const allAvailableIndices = [];
+      
+      // Collect all available indices from all nodes
+      Object.values(indicesByNodes).forEach(nodeData => {
+        if (nodeData.indices && Array.isArray(nodeData.indices)) {
+          nodeData.indices.forEach(idx => {
+            allAvailableIndices.push(idx.index);
+          });
+        }
+      });
+
+      // Filter out stale search indices
+      const validSearchIndices = currentSearchIndices.filter(index => 
+        allAvailableIndices.includes(index)
+      );
+
+      // Update search indices if any were removed
+      if (validSearchIndices.length !== currentSearchIndices.length) {
+        const removedIndices = currentSearchIndices.filter(index => 
+          !allAvailableIndices.includes(index)
+        );
+        
+        console.log(`🧹 Cleaning up stale search indices: ${removedIndices.join(', ')}`);
+        await setConfig('searchIndices', validSearchIndices);
+      }
+    }
+
+    console.log('✅ Indices cache refreshed successfully');
+    return indicesByNodes;
+  } catch (error) {
+    console.error('❌ Error refreshing indices cache:', error);
+    throw error;
+  }
+}
+
+// ==================== PUBLIC ENDPOINTS ====================
+
+// GET total accounts count (public endpoint)
+app.get("/api/total-accounts", async (req, res) => {
+  try {
+    const config = getConfig();
+    const searchIndices = config.searchIndices || [];
+    
+    // If no search indices are configured, return 0
+    if (searchIndices.length === 0) {
+      return res.json({ 
+        totalAccounts: 0, 
+        searchIndices: [],
+        message: "No search indices configured"
+      });
+    }
+
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.json({ 
+        totalAccounts: 0, 
+        searchIndices: searchIndices,
+        message: "Elasticsearch not available"
+      });
+    }
+
+    let totalCount = 0;
+    const availableIndices = [];
+
+    // Count documents across all configured search indices
+    for (const indexName of searchIndices) {
+      try {
+        const es = getCurrentES();
+        const response = await es.count({ index: indexName });
+        totalCount += response.count;
+        availableIndices.push(indexName);
+      } catch (indexError) {
+        console.warn(`Failed to count documents in index ${indexName}:`, indexError.message);
+        // Continue with other indices even if one fails
+      }
+    }
+
+    res.json({ 
+      totalAccounts: totalCount, 
+      searchIndices: availableIndices 
+    });
+  } catch (error) {
+    console.error("Error fetching total accounts:", error);
+    res.json({ 
+      totalAccounts: 0, 
+      searchIndices: [],
+      message: "Error fetching total accounts"
+    });
+  }
+});
+
+// Helper function to check if request is from an admin user
+function isAdminRequest(req) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return false;
+    
+    const token = authHeader.split(" ")[1];
+    if (!token) return false;
+    
+    const decoded = jwt.verify(token, SECRET_KEY);
+    return decoded && decoded.role === "admin";
+  } catch (error) {
+    return false;
+  }
+}
+
+// GET search endpoint (public endpoint)
+app.get("/api/search", async (req, res) => {
+  try {
+    const { q, page = 1, size = 10 } = req.query;
+    const config = getConfig();
+    const searchIndices = config.searchIndices || [];
+    const isAdmin = isAdminRequest(req);
+    
+    // If no search indices are configured, return empty results
+    if (searchIndices.length === 0) {
+      return res.json({
+        results: [],
+        total: 0,
+        searchIndices: [],
+        message: "No search indices configured for search"
+      });
+    }
+
+    if (!q || !q.trim()) {
+      return res.status(400).json({ error: "Search query is required" });
+    }
+
+    const esAvailable = await isElasticsearchAvailable();
+    if (!esAvailable) {
+      return res.json({
+        results: [],
+        total: 0,
+        searchIndices: searchIndices,
+        message: "Elasticsearch not available"
+      });
+    }
+
+    const from = (parseInt(page) - 1) * parseInt(size);
+    const searchResults = [];
+    let totalResults = 0;
+    const searchedIndices = [];
+
+    // Search across all configured search indices
+    for (const indexName of searchIndices) {
+      try {
+        const es = getCurrentES();
+        const response = await es.search({
+          index: indexName,
+          from: from,
+          size: parseInt(size),
+          body: {
+            query: {
+              bool: {
+                should: [
+                  { match: { raw_line: { query: q, fuzziness: "AUTO" } } },
+                  { wildcard: { raw_line: `*${q.toLowerCase()}*` } },
+                ],
+                minimum_should_match: 1,
+              },
+            },
+            highlight: {
+              fields: {
+                raw_line: {
+                  pre_tags: ["<mark>"],
+                  post_tags: ["</mark>"],
+                },
+              },
+            },
+          },
+        });
+
+        const indexResults = response.hits.hits.map((hit) => {
+          const parsedAccount = parseLineForDisplay(hit._source.raw_line);
+          
+          if (isAdmin) {
+            // For admin users: no masking, include raw_line
+            return {
+              id: hit._id,
+              ...parsedAccount,
+              raw_line: hit._source.raw_line,
+            };
+          } else {
+            // For public users: apply masking, exclude raw_line and other sensitive fields
+            const maskedAccount = applyMaskingForPublicSearch(parsedAccount, config);
+            return {
+              id: hit._id,
+              ...maskedAccount,
+            };
+          }
+        });
+
+        searchResults.push(...indexResults);
+        totalResults += response.hits.total.value;
+        searchedIndices.push(indexName);
+      } catch (indexError) {
+        console.warn(`Failed to search in index ${indexName}:`, indexError.message);
+        // Continue with other indices even if one fails
+      }
+    }
+
+    // Sort results by relevance (for public search, sort by id for consistency)
+    searchResults.sort((a, b) => {
+      return a.id.localeCompare(b.id);
+    });
+
+    // Apply pagination to combined results
+    const paginatedResults = searchResults.slice(from, from + parseInt(size));
+
+    res.json({
+      results: paginatedResults,
+      total: totalResults,
+      searchIndices: searchedIndices,
+      page: parseInt(page),
+      size: parseInt(size),
+    });
+  } catch (error) {
+    console.error("Error performing search:", error);
+    res.status(500).json({ 
+      error: "Search failed",
+      details: error.message 
+    });
+  }
+});
+
+// Helper function to parse account line for display
+function parseLineForDisplay(rawLine) {
+  if (!rawLine || typeof rawLine !== 'string') {
+    return {
+      url: '',
+      username: '',
+      password: '',
+      sourceFile: 'unknown'
+    };
+  }
+
+  // Try to parse common formats: url:username:password or username:password@url
+  const line = rawLine.trim();
+  
+  // Format 1: url:username:password
+  if (line.includes(':') && line.split(':').length >= 3) {
+    const parts = line.split(':');
+    return {
+      url: parts[0] || '',
+      username: parts[1] || '',
+      password: parts.slice(2).join(':') || '', // In case password contains ':'
+      sourceFile: 'parsed'
+    };
+  }
+  
+  // Format 2: username:password@url
+  if (line.includes('@') && line.includes(':')) {
+    const atIndex = line.lastIndexOf('@');
+    const colonIndex = line.indexOf(':');
+    if (colonIndex < atIndex) {
+      return {
+        url: line.substring(atIndex + 1) || '',
+        username: line.substring(0, colonIndex) || '',
+        password: line.substring(colonIndex + 1, atIndex) || '',
+        sourceFile: 'parsed'
+      };
+    }
+  }
+  
+  // Format 3: email:password (treat email as both url and username)
+  if (line.includes(':') && line.includes('@')) {
+    const parts = line.split(':');
+    const email = parts[0];
+    const password = parts.slice(1).join(':');
+    return {
+      url: email.includes('@') ? email.split('@')[1] : email,
+      username: email,
+      password: password || '',
+      sourceFile: 'parsed'
+    };
+  }
+  
+  // Fallback: treat the entire line as raw data
+  return {
+    url: line,
+    username: '',
+    password: '',
+    sourceFile: 'unknown'
+  };
+}
+
+// Helper function to apply masking based on character ratio
+function maskString(str, ratio, minVisible = 2) {
+  if (!str || typeof str !== 'string' || str.length === 0) {
+    return '';
+  }
+  
+  if (ratio <= 0) {
+    return str; // No masking
+  }
+  
+  if (ratio >= 1) {
+    return '*'.repeat(str.length); // Full masking
+  }
+  
+  const totalVisibleChars = Math.max(minVisible, Math.floor(str.length * (1 - ratio)));
+  const maskedChars = str.length - totalVisibleChars;
+  
+  if (maskedChars <= 0) {
+    return str; // No masking needed
+  }
+  
+  // For very short strings, show beginning and end
+  if (str.length <= 4) {
+    const visiblePart = str.substring(0, Math.ceil(totalVisibleChars / 2));
+    const maskedPart = '*'.repeat(maskedChars);
+    const endPart = totalVisibleChars > visiblePart.length ? 
+      str.substring(str.length - (totalVisibleChars - visiblePart.length)) : '';
+    return visiblePart + maskedPart + endPart;
+  }
+  
+  // For longer strings, mask the middle part
+  const startVisible = Math.ceil(totalVisibleChars / 2);
+  const endVisible = totalVisibleChars - startVisible;
+  
+  const startPart = str.substring(0, startVisible);
+  const endPart = endVisible > 0 ? str.substring(str.length - endVisible) : '';
+  const maskedPart = '*'.repeat(maskedChars);
+  
+  return startPart + maskedPart + endPart;
+}
+
+// Helper function to apply masking for public search results
+function applyMaskingForPublicSearch(accountData, config) {
+  const maskingRatio = config.maskingRatio || 0.2;
+  const usernameMaskingRatio = config.usernameMaskingRatio || 0.4;
+  const minVisibleChars = config.minVisibleChars || 2;
+  
+  return {
+    url: maskString(accountData.url || '', maskingRatio, minVisibleChars), // URL is now also masked
+    username: maskString(accountData.username || '', usernameMaskingRatio, minVisibleChars),
+    password: maskString(accountData.password || '', maskingRatio, minVisibleChars),
+    // Note: raw_line, index, highlight, and sourceFile are intentionally excluded for privacy
+  };
+}
+
+

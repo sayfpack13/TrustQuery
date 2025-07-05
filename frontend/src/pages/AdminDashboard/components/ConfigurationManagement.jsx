@@ -11,6 +11,7 @@ import {
   faCogs,
   faCheckCircle,
   faServer,
+  faExclamationTriangle,
 } from "@fortawesome/free-solid-svg-icons";
 
 export default function ConfigurationManagement({ 
@@ -29,8 +30,7 @@ export default function ConfigurationManagement({
     maskingRatio: 0.2,
     usernameMaskingRatio: 0.4,
     batchSize: 1000,
-    showRawLineByDefault: false,
-    indicesCacheDurationMinutes: 15
+    showRawLineByDefault: false
   });
   const [hasUnsavedSystemChanges, setHasUnsavedSystemChanges] = useState(false);
 
@@ -52,8 +52,7 @@ export default function ConfigurationManagement({
           maskingRatio: systemSettings.maskingRatio || 0.2,
           usernameMaskingRatio: systemSettings.usernameMaskingRatio || 0.4,
           batchSize: systemSettings.batchSize || 1000,
-          showRawLineByDefault: adminSettings.showRawLineByDefault || false,
-          indicesCacheDurationMinutes: adminSettings.indicesCacheDurationMinutes || 15
+          showRawLineByDefault: adminSettings.showRawLineByDefault || false
         });
       setHasUnsavedSystemChanges(false);
       
@@ -66,11 +65,10 @@ export default function ConfigurationManagement({
     }
   }, []); // Empty dependency array to prevent re-creation
 
-  const fetchIndicesByNodes = useCallback(async (forceRefresh = false) => {
+  const fetchIndicesByNodes = useCallback(async () => {
     try {
       setIndicesLoading(true);
-      const url = forceRefresh ? "/api/admin/indices-by-nodes?force=true" : "/api/admin/indices-by-nodes";
-      const response = await axiosClient.get(url);
+      const response = await axiosClient.get("/api/admin/indices-by-nodes");
       
       console.log("Indices by nodes response:", response.data);
       
@@ -124,8 +122,7 @@ export default function ConfigurationManagement({
         maskingRatio: config.maskingRatio || 0.2,
         usernameMaskingRatio: config.usernameMaskingRatio || 0.4,
         batchSize: config.batchSize || 1000,
-        showRawLineByDefault: adminSettings.showRawLineByDefault || false,
-        indicesCacheDurationMinutes: adminSettings.indicesCacheDurationMinutes || 15
+        showRawLineByDefault: adminSettings.showRawLineByDefault || false
       });
       setHasUnsavedSystemChanges(false);
     }
@@ -137,7 +134,11 @@ export default function ConfigurationManagement({
         indices: selectedSearchIndices
       });
       
-      showNotification("success", "Search configuration updated successfully!", faCheckCircle);
+      const message = selectedSearchIndices.length === 0 
+        ? "Search disabled - public search will return no results" 
+        : "Search configuration updated successfully!";
+      
+      showNotification("success", message, faCheckCircle);
       fetchConfig(); // Refresh to get the latest config
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to update search configuration", faTimes);
@@ -165,20 +166,6 @@ export default function ConfigurationManagement({
                 <FontAwesomeIcon icon={faSearch} className="mr-3 text-green-400" />
                 Multi-Index Search Configuration
               </h3>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => fetchIndicesByNodes(true)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out disabled:opacity-50"
-                  disabled={indicesLoading}
-                  title="Force refresh indices data"
-                >
-                  <FontAwesomeIcon 
-                    icon={faCircleNotch} 
-                    className={`mr-1 ${indicesLoading ? 'fa-spin' : ''}`} 
-                  />
-                  {indicesLoading ? 'Refreshing...' : 'Refresh'}
-                </button>
-              </div>
             </div>
             
             <p className="text-neutral-300 mb-4">
@@ -207,11 +194,18 @@ export default function ConfigurationManagement({
               </div>
             )}
             
-            {selectedSearchIndices.length > 0 && (
+            {selectedSearchIndices.length > 0 ? (
               <div className="mb-4 p-3 bg-blue-600 bg-opacity-20 border border-blue-600 rounded-lg">
                 <p className="text-blue-200 text-sm flex items-center">
                   <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
                   Currently configured for search: <strong className="ml-1">{selectedSearchIndices.join(', ')}</strong>
+                </p>
+              </div>
+            ) : (
+              <div className="mb-4 p-3 bg-amber-600 bg-opacity-20 border border-amber-600 rounded-lg">
+                <p className="text-amber-200 text-sm flex items-center">
+                  <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
+                  No search indices configured. Public search will return no results until indices are selected.
                 </p>
               </div>
             )}
@@ -380,11 +374,10 @@ export default function ConfigurationManagement({
                   </div>
                   <button
                     onClick={updateSearchIndices}
-                    className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={selectedSearchIndices.length === 0}
+                    className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75"
                   >
                     <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                    Update Search Configuration
+                    {selectedSearchIndices.length === 0 ? 'Disable Search (Clear All)' : 'Update Search Configuration'}
                   </button>
                 </div>
               </>
@@ -479,23 +472,6 @@ export default function ConfigurationManagement({
                     />
                     <p className="text-xs text-neutral-400 mt-1">
                       Number of records to process in each batch operation
-                    </p>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
-                      Indices Cache Duration (minutes)
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="60"
-                      value={tempSystemSettings.indicesCacheDurationMinutes}
-                      onChange={(e) => handleSystemSettingChange('indicesCacheDurationMinutes', parseInt(e.target.value) || 15)}
-                      className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <p className="text-xs text-neutral-400 mt-1">
-                      How long to cache indices data from nodes before refreshing
                     </p>
                   </div>
                 </div>

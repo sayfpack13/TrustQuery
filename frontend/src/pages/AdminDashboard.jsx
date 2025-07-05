@@ -41,8 +41,7 @@ export default function AdminDashboard({ onLogout }) {
     setTasksList,
   } = useAdminDashboard();
 
-  // Custom hooks for cluster and Elasticsearch management
-  const clusterManagement = useClusterManagement(showNotification);
+  // Custom hooks for Elasticsearch management
   const elasticsearchManagement = useElasticsearchManagement(showNotification);
 
   // === Tab Navigation State ===
@@ -58,6 +57,10 @@ export default function AdminDashboard({ onLogout }) {
   const [reindexSource, setReindexSource] = useState("");
   const [reindexDest, setReindexDest] = useState("");
   const [indexDetails, setIndexDetails] = useState(null);
+  
+  // === Backend Cached Indices State ===
+  const [cachedIndicesByNodes, setCachedIndicesByNodes] = useState({});
+  const [cachedIndicesLoading, setCachedIndicesLoading] = useState(false);
 
   // === Advanced Node Configuration State ===
   const [showClusterWizard, setShowClusterWizard] = useState(false);
@@ -69,6 +72,24 @@ export default function AdminDashboard({ onLogout }) {
 
   // === Loading state tracking ===
   const [isInitializing, setIsInitializing] = useState(true);
+
+  // === Backend Cached Indices Functions ===
+  const fetchCachedIndices = useCallback(async () => {
+    setCachedIndicesLoading(true);
+    try {
+      const response = await axiosClient.get("/api/admin/indices-by-nodes");
+      setCachedIndicesByNodes(response.data.indicesByNodes || {});
+    } catch (error) {
+      console.error("Failed to load cached indices:", error);
+      showNotification("error", "Failed to load indices data", faExclamationTriangle);
+      setCachedIndicesByNodes({});
+    } finally {
+      setCachedIndicesLoading(false);
+    }
+  }, [showNotification]);
+
+  // Custom hook for cluster management (initialized after fetchCachedIndices)
+  const clusterManagement = useClusterManagement(showNotification, fetchCachedIndices);
 
   // Fetch tasks on mount
   useEffect(() => {
@@ -110,6 +131,32 @@ export default function AdminDashboard({ onLogout }) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
+  // === Backend Cached Indices Functions ===
+  // Get all indices from cached data for dropdowns (reindex, etc.)
+  const getAllCachedIndices = useCallback(() => {
+    const allIndices = [];
+    Object.values(cachedIndicesByNodes).forEach(nodeData => {
+      if (nodeData.isRunning && nodeData.indices && Array.isArray(nodeData.indices)) {
+        nodeData.indices.forEach(index => {
+          // Avoid duplicates across nodes
+          if (!allIndices.find(idx => idx.index === index.index)) {
+            allIndices.push({
+              ...index,
+              displayName: `${index.index} (${nodeData.nodeUrl})`,
+              nodeUrl: nodeData.nodeUrl
+            });
+          }
+        });
+      }
+    });
+    return allIndices.sort((a, b) => a.index.localeCompare(b.index));
+  }, [cachedIndicesByNodes]);
+
+  // Fetch cached indices for reindex modal and other global functions
+  useEffect(() => {
+    fetchCachedIndices();
+  }, [fetchCachedIndices]);
+
   // ES Modal functions
   const openESModal = (type, data = {}) => {
     setEsModalType(type);
@@ -144,7 +191,11 @@ export default function AdminDashboard({ onLogout }) {
     try {
       await elasticsearchManagement.handleCreateIndex(newIndexName, newIndexShards, newIndexReplicas);
       closeESModal();
-      elasticsearchManagement.fetchESData();
+      
+      // Refresh cached indices after successful index creation
+      setTimeout(() => {
+        fetchCachedIndices();
+      }, 1000); // Small delay to allow index creation to complete
     } catch (err) {
       console.error("Failed to create index:", err);
       // Error already shown by elasticsearchManagement.handleCreateIndex
@@ -173,6 +224,11 @@ export default function AdminDashboard({ onLogout }) {
     try {
       await elasticsearchManagement.handleReindexData(reindexSource, reindexDest);
       closeESModal();
+      
+      // Refresh cached indices after successful reindexing
+      setTimeout(() => {
+        fetchCachedIndices();
+      }, 1000); // Small delay to allow reindex task to start
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to reindex", faExclamationTriangle);
     }
@@ -386,6 +442,7 @@ export default function AdminDashboard({ onLogout }) {
             onEditNode={handleEditNode}
             onOpenNodeDetails={handleOpenNodeDetails}
             showNotification={showNotification}
+            onCacheRefreshed={fetchCachedIndices}
           />
         )}
 
@@ -666,9 +723,9 @@ export default function AdminDashboard({ onLogout }) {
                     className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Select source index</option>
-                    {elasticsearchManagement.esIndices.map((index) => (
+                    {getAllCachedIndices().map((index) => (
                       <option key={index.index} value={index.index}>
-                        {index.index} ({(index['docs.count'] || 0).toLocaleString()} docs)
+                        {index.index} ({(parseInt(index['docs.count']) || 0).toLocaleString()} docs)
                       </option>
                     ))}
                   </select>
@@ -684,7 +741,7 @@ export default function AdminDashboard({ onLogout }) {
                     className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Select destination index</option>
-                    {elasticsearchManagement.esIndices.map((index) => (
+                    {getAllCachedIndices().map((index) => (
                       <option key={index.index} value={index.index}>
                         {index.index}
                       </option>
@@ -732,6 +789,7 @@ export default function AdminDashboard({ onLogout }) {
         node={selectedNodeForDetails}
         nodeDisks={{}} // Legacy - now handled differently
         formatBytes={formatBytes}
+        onCacheRefreshed={fetchCachedIndices}
       />
         </>
       )}

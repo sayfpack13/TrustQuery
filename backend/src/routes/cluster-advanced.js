@@ -864,6 +864,16 @@ router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
       },
     });
 
+    // Refresh indices cache after successful index creation
+    try {
+      const { refreshIndicesCache } = require('../../index');
+      await refreshIndicesCache();
+      console.log(`🔄 Indices cache refreshed after creating index ${indexName} on node ${nodeName}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh indices cache after creating index:`, cacheError.message);
+      // Don't fail the index creation if cache refresh fails
+    }
+
     res.status(201).json({ message: `Index '${indexName}' created successfully on node '${nodeName}'.` });
   } catch (error) {
     console.error(`Error creating index on node ${nodeName}:`, error);

@@ -4,13 +4,14 @@ import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleNotch, 
 import axiosClient from '../../../api/axiosClient';
 import { useElasticsearchManagement } from '../../../hooks/useElasticsearchManagement';
 
-export default function NodeDetailsModal({ show, onClose, node }) {
+export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [configContent, setConfigContent] = useState('');
   const [configLoading, setConfigLoading] = useState(false);
   const [nodeIndices, setNodeIndices] = useState([]);
   const [indicesLoading, setIndicesLoading] = useState(false);
   const [indicesError, setIndicesError] = useState(null);
+  const [usingCachedData, setUsingCachedData] = useState(true);
   const [showCreateIndexForm, setShowCreateIndexForm] = useState(false);
   const [isCreatingIndex, setIsCreatingIndex] = useState(false);
   const [isDeletingIndex, setIsDeletingIndex] = useState(null);
@@ -34,21 +35,56 @@ export default function NodeDetailsModal({ show, onClose, node }) {
   const isValidReplicas = parseInt(newIndexReplicas) >= 0;
   const isFormValid = isValidIndexName && isValidShards && isValidReplicas;
 
-  const fetchNodeIndices = async (showLoading = true) => {
+  // Fetch cached indices from backend
+  const fetchCachedNodeIndices = async () => {
+    try {
+      const response = await axiosClient.get("/api/admin/indices-by-nodes");
+      const indicesByNodes = response.data.indicesByNodes || {};
+      const nodeData = indicesByNodes[node.name];
+      
+      if (nodeData && nodeData.indices) {
+        setNodeIndices(nodeData.indices);
+        setUsingCachedData(true);
+        setIndicesError(nodeData.error || null);
+      } else {
+        setNodeIndices([]);
+        setIndicesError(nodeData?.error || 'No cached data available');
+      }
+    } catch (error) {
+      console.error("Failed to load cached indices", error);
+      setIndicesError('Failed to load cached indices data');
+      setNodeIndices([]);
+    }
+  };
+
+  // Fetch live indices directly from node (fallback or explicit refresh)  
+  const fetchLiveNodeIndices = async (showLoading = true) => {
     if (node) {
       if (showLoading) setIndicesLoading(true);
       setIndicesError(null);
+      setUsingCachedData(false);
       
       try {
         const response = await axiosClient.get(`/api/admin/cluster-advanced/${node.name}/indices`);
         setNodeIndices(response.data || []);
       } catch (error) {
-        console.error("Failed to load node indices", error);
+        console.error("Failed to load live node indices", error);
         setIndicesError(error.response?.data?.error || 'Failed to load indices');
         setNodeIndices([]);
       } finally {
         if (showLoading) setIndicesLoading(false);
       }
+    }
+  };
+
+  // Primary fetch function - uses cached data by default
+  const fetchNodeIndices = async (showLoading = true, forceLive = false) => {
+    if (forceLive) {
+      await fetchLiveNodeIndices(showLoading);
+    } else {
+      if (showLoading) setIndicesLoading(true);
+      await fetchCachedNodeIndices();
+      if (showLoading) setIndicesLoading(false);
     }
   };
 
@@ -137,8 +173,20 @@ export default function NodeDetailsModal({ show, onClose, node }) {
       setNewIndexShards('1');
       setNewIndexReplicas('0');
       
-      // Refresh the list
-      await fetchNodeIndices(false); // Don't show loading spinner for refresh
+      // Refresh with live data after creation, then trigger cache refresh
+      await fetchNodeIndices(false, true); // Get live data immediately
+      
+      // Clear the backend cache to force fresh data on next cached request
+      try {
+        await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+        
+        // Call the callback to refresh frontend cache state  
+        if (onCacheRefreshed) {
+          onCacheRefreshed();
+        }
+      } catch (cacheError) {
+        console.error("Failed to refresh cache:", cacheError);
+      }
     } catch (error) {
       console.error("Failed to create index", error);
       // Error handling could be improved with notifications
@@ -157,6 +205,18 @@ export default function NodeDetailsModal({ show, onClose, node }) {
       setIsDeletingIndex(indexToDelete.index);
       try {
         const response = await deleteIndex(indexToDelete.index);
+        
+        // Refresh backend cache after deletion
+        try {
+          await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+          
+          // Call the callback to refresh frontend cache state  
+          if (onCacheRefreshed) {
+            onCacheRefreshed();
+          }
+        } catch (cacheError) {
+          console.error("Failed to refresh cache:", cacheError);
+        }
       } catch (err) {
         console.error("Error deleting index", err);
       } finally {

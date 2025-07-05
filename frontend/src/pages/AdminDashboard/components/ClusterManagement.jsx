@@ -58,6 +58,7 @@ export default function ClusterManagement({
   nodeActionLoading,
   onOpenNodeDetails,
   showNotification,
+  onCacheRefreshed,
 }) {
   const getNodeStats = (nodeName) => {
     return null; // Stats are no longer fetched this way
@@ -347,6 +348,7 @@ export default function ClusterManagement({
                 node={node}
                 isAnyTaskRunning={isAnyTaskRunning}
                 onOpenNodeDetails={onOpenNodeDetails}
+                onCacheRefreshed={onCacheRefreshed}
               />
             ))}
           </div>
@@ -367,7 +369,7 @@ export default function ClusterManagement({
 }
 
 // NodeIndicesSection Component for individual node index management
-function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
+function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCacheRefreshed }) {
   const [nodeIndices, setNodeIndices] = useState([]);
   const [indicesLoading, setIndicesLoading] = useState(false);
   const [indicesError, setIndicesError] = useState(null);
@@ -384,7 +386,29 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
   const isValidReplicas = parseInt(newIndexReplicas) >= 0;
   const isFormValid = isValidIndexName && isValidShards && isValidReplicas;
 
-  const fetchNodeIndices = async (showLoading = true) => {
+  // Fetch cached indices from backend
+  const fetchCachedNodeIndices = async () => {
+    try {
+      const response = await axiosClient.get("/api/admin/indices-by-nodes");
+      const indicesByNodes = response.data.indicesByNodes || {};
+      const nodeData = indicesByNodes[node.name];
+      
+      if (nodeData && nodeData.indices) {
+        setNodeIndices(nodeData.indices);
+        setIndicesError(nodeData.error || null);
+      } else {
+        setNodeIndices([]);
+        setIndicesError(nodeData?.error || 'No cached data available');
+      }
+    } catch (error) {
+      console.error(`Failed to load cached indices for node ${node.name}:`, error);
+      setIndicesError('Failed to load cached indices data');
+      setNodeIndices([]);
+    }
+  };
+
+  // Fetch live indices directly from node (fallback or explicit refresh)
+  const fetchLiveNodeIndices = async (showLoading = true) => {
     if (!node.isRunning) {
       setNodeIndices([]);
       setIndicesError(null);
@@ -405,7 +429,7 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
       clearTimeout(timeoutId);
       setNodeIndices(response.data || []);
     } catch (error) {
-      console.error(`Failed to load indices for node ${node.name}:`, error);
+      console.error(`Failed to load live indices for node ${node.name}:`, error);
       
       if (error.name === 'AbortError') {
         setIndicesError('Request timed out. The node may be unresponsive.');
@@ -419,6 +443,19 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
       
       setNodeIndices([]);
     } finally {
+      if (showLoading) setIndicesLoading(false);
+    }
+  };
+
+  // Primary fetch function - uses cached data for non-running nodes, live data for running nodes
+  const fetchNodeIndices = async (showLoading = true) => {
+    if (node.isRunning) {
+      // Use live data for running nodes
+      await fetchLiveNodeIndices(showLoading);
+    } else {
+      // Use cached data for non-running nodes
+      if (showLoading) setIndicesLoading(true);
+      await fetchCachedNodeIndices();
       if (showLoading) setIndicesLoading(false);
     }
   };
@@ -442,8 +479,20 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
       setNewIndexShards('1');
       setNewIndexReplicas('0');
       
-      // Refresh the list
-      await fetchNodeIndices(false); // Don't show loading spinner for refresh
+      // Refresh with live data after creation, then trigger cache refresh
+      await fetchNodeIndices(false); // Get updated data immediately
+      
+      // Clear the backend cache to force fresh data on next cached request
+      try {
+        await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+        
+        // Call the callback to refresh frontend cache state  
+        if (onCacheRefreshed) {
+          onCacheRefreshed();
+        }
+      } catch (cacheError) {
+        console.error("Failed to refresh cache:", cacheError);
+      }
     } catch (error) {
       console.error("Failed to create index", error);
       // Error handling could be improved with notifications
@@ -460,7 +509,21 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
     setIsDeletingIndex(indexName);
     try {
       await axiosClient.delete(`/api/admin/cluster-advanced/${node.name}/indices/${indexName}`);
-      await fetchNodeIndices(false); // Refresh the list without loading spinner
+      
+      // Refresh with live data after deletion, then trigger cache refresh
+      await fetchNodeIndices(false); // Get updated data immediately
+      
+      // Clear the backend cache to force fresh data on next cached request
+      try {
+        await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+        
+        // Call the callback to refresh frontend cache state  
+        if (onCacheRefreshed) {
+          onCacheRefreshed();
+        }
+      } catch (cacheError) {
+        console.error("Failed to refresh cache:", cacheError);
+      }
     } catch (error) {
       console.error("Failed to delete index", error);
       // Error handling could be improved with notifications
@@ -540,17 +603,6 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails }) {
               Create Index
             </button>
           )}
-          <button
-            onClick={fetchNodeIndices}
-            className="bg-primary hover:bg-button-hover-bg text-white px-3 py-1 rounded text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={indicesLoading || !node.isRunning}
-          >
-            <FontAwesomeIcon 
-              icon={faCircleNotch} 
-              className={`mr-1 ${indicesLoading ? 'fa-spin' : ''}`} 
-            />
-            Refresh
-          </button>
         </div>
       </div>
 

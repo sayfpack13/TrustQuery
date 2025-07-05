@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
 import { faExclamationTriangle, faCheckCircle, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 
-export const useClusterManagement = (showNotification) => {
+export const useClusterManagement = (showNotification, onCacheRefreshed = null) => {
   // State for locally managed node configurations
   const [localNodes, setLocalNodes] = useState([]);
   const [clusterLoading, setClusterLoading] = useState(false);
@@ -165,6 +165,21 @@ export const useClusterManagement = (showNotification) => {
             
             if (targetNode?.isRunning) {
               showNotificationRef.current('success', `Node "${nodeName}" started successfully!`, faCheckCircle);
+              
+              // Also refresh indices cache to show indices from newly started node
+              try {
+                await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+                console.log(`🔄 Indices cache refreshed after starting node ${nodeName}`);
+                
+                // Call the callback to refresh frontend cache state
+                if (onCacheRefreshed) {
+                  onCacheRefreshed();
+                }
+              } catch (cacheError) {
+                console.warn("Failed to refresh indices cache after node start:", cacheError);
+                // Don't fail the node start notification if cache refresh fails
+              }
+              
               return true;
             }
           } catch (error) {
