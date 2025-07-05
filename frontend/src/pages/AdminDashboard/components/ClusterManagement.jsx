@@ -16,6 +16,7 @@ import {
   faSpinner,
   faCircle,
   faExclamationCircle,
+  faExclamationTriangle,
   faPencilAlt,
 } from "@fortawesome/free-solid-svg-icons";
 import NodeDetailsModal from "./NodeDetailsModal";
@@ -379,6 +380,9 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
   const [newIndexName, setNewIndexName] = useState('');
   const [newIndexShards, setNewIndexShards] = useState('1');
   const [newIndexReplicas, setNewIndexReplicas] = useState('0');
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [indexToDelete, setIndexToDelete] = useState(null);
 
   // Add validation for form inputs
   const isValidIndexName = newIndexName.trim().length > 0 && !/[A-Z\s]/.test(newIndexName);
@@ -490,6 +494,9 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
         if (onCacheRefreshed) {
           onCacheRefreshed();
         }
+
+        // Dispatch custom event to notify other components
+        window.dispatchEvent(new CustomEvent('indicesCacheRefreshed'));
       } catch (cacheError) {
         console.error("Failed to refresh cache:", cacheError);
       }
@@ -502,10 +509,6 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
   };
 
   const handleDeleteIndex = async (indexName) => {
-    if (!window.confirm(`Are you sure you want to delete index "${indexName}" from node ${node.name}? This action cannot be undone.`)) {
-      return;
-    }
-
     setIsDeletingIndex(indexName);
     try {
       await axiosClient.delete(`/api/admin/cluster-advanced/${node.name}/indices/${indexName}`);
@@ -521,6 +524,9 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
         if (onCacheRefreshed) {
           onCacheRefreshed();
         }
+
+        // Dispatch custom event to notify other components
+        window.dispatchEvent(new CustomEvent('indicesCacheRefreshed'));
       } catch (cacheError) {
         console.error("Failed to refresh cache:", cacheError);
       }
@@ -529,6 +535,19 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
       // Error handling could be improved with notifications
     } finally {
       setIsDeletingIndex(null);
+    }
+  };
+
+  const handleDeleteClick = (index) => {
+    setIndexToDelete(index);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (indexToDelete) {
+      await handleDeleteIndex(indexToDelete.index);
+      setShowDeleteModal(false);
+      setIndexToDelete(null);
     }
   };
 
@@ -565,6 +584,27 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
       setIndicesError(null);
     }
   }, [node.isRunning, showCreateIndexForm]);
+
+  // Listen for external cache refresh events (e.g., from NodeDetailsModal)
+  React.useEffect(() => {
+    const handleCacheRefresh = () => {
+      setRefreshTrigger(prev => prev + 1);
+    };
+
+    // Create a custom event listener for cache refreshes
+    window.addEventListener('indicesCacheRefreshed', handleCacheRefresh);
+    
+    return () => {
+      window.removeEventListener('indicesCacheRefreshed', handleCacheRefresh);
+    };
+  }, []);
+
+  // Refresh indices data when refreshTrigger changes
+  React.useEffect(() => {
+    if (refreshTrigger > 0 && node.isRunning) {
+      fetchNodeIndices(false); // Refresh without showing loading spinner
+    }
+  }, [refreshTrigger, node.isRunning]);
 
   return (
     <div className="bg-neutral-700 p-6 rounded-lg border border-neutral-600">
@@ -757,7 +797,7 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
                       <td className="py-2 px-3">{index['store.size'] || '0b'}</td>
                       <td className="py-2 px-3">
                         <button 
-                          onClick={() => handleDeleteIndex(index.index)} 
+                          onClick={() => handleDeleteClick(index)} 
                           className="text-red-500 hover:text-red-400 transition duration-150 ease-in-out disabled:text-gray-500 disabled:cursor-not-allowed"
                           disabled={isAnyTaskRunning || isDeletingIndex === index.index}
                           title={isDeletingIndex === index.index ? "Deleting..." : "Delete index"}
@@ -776,6 +816,29 @@ function NodeIndicesSection({ node, isAnyTaskRunning, onOpenNodeDetails, onCache
             </div>
           )}
         </>
+      )}
+      
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-[60]">
+          <div className="bg-neutral-800 p-8 rounded-lg shadow-2xl border border-neutral-600">
+            <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
+              <FontAwesomeIcon icon={faExclamationTriangle} className="mr-3 text-red-500" />
+              Confirm Deletion
+            </h3>
+            <p className="text-neutral-300 mb-6">
+              Are you sure you want to delete the index <span className="font-bold text-white">{indexToDelete?.index}</span> from node <span className="font-bold text-white">{node.name}</span>? This action cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-4">
+              <button onClick={() => setShowDeleteModal(false)} className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg">
+                Cancel
+              </button>
+              <button onClick={confirmDelete} className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -67,6 +67,8 @@ const upload = multer({ storage: storage });
 app.use(cors());
 app.use(express.json());
 
+// Import persistent indices cache module (single import)
+const { getCache, getCacheFiltered, getCacheStatus, clearCache, refreshCache, syncSearchIndices } = require('./src/cache/indices-cache');
 // Import route modules
 const clusterAdvancedRoutes = require('./src/routes/cluster-advanced');
 const esConfigRoutes = require('./src/routes/elasticsearch-config');
@@ -996,19 +998,33 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
       });
     }
 
-    // Validate that indices exist in our cached data
+    // Validate that indices exist in our persistent cached data
+    const { getCacheFiltered } = require('./src/cache/indices-cache');
     const config = getConfig();
-    const cachedIndices = config.cachedIndicesByNodes || {};
+    
+    // Get cached indices data (don't refresh to avoid issues if nodes are down)
+    const cachedIndices = await getCacheFiltered(config);
     const allAvailableIndices = [];
+    
+    console.log('🔍 Validating search indices selection...');
+    console.log('Requested indices:', indices);
+    console.log('Cached data nodes:', Object.keys(cachedIndices));
+    console.log('Full cached data structure:', JSON.stringify(cachedIndices, null, 2));
     
     // Collect all available indices from all nodes
     Object.values(cachedIndices).forEach(nodeData => {
+      console.log('Processing node data:', nodeData);
       if (nodeData.indices && Array.isArray(nodeData.indices)) {
         nodeData.indices.forEach(idx => {
-          allAvailableIndices.push(idx.index);
+          console.log('Processing index:', idx);
+          if (idx.index && !allAvailableIndices.includes(idx.index)) {
+            allAvailableIndices.push(idx.index);
+          }
         });
       }
     });
+    
+    console.log('Available indices:', allAvailableIndices);
 
     // Check if all requested indices exist
     for (const index of indices) {
@@ -1351,296 +1367,48 @@ app.get("/api/indices/:indexName/documents", verifyJwt, async (req, res) => {
   }
 });
 
-// GET indices grouped by nodes (cached)
+// GET indices grouped by nodes (persistent cache)
 app.get("/api/admin/indices-by-nodes", verifyJwt, async (req, res) => {
   try {
-    const { force = false } = req.query;
     const config = getConfig();
-    const nodes = config.elasticsearchNodes || [];
-    const nodeMetadata = config.nodeMetadata || {};
+    const indicesByNodes = await getCacheFiltered(config);
+    const status = await getCacheStatus();
     
-    // Check if we have cached data and it's recent (unless force refresh)
-    const cachedIndices = config.cachedIndicesByNodes || {};
-    const cacheTimestamp = config.indicesCacheTimestamp || 0;
-    const cacheDurationMinutes = 15; // Fixed 15-minute cache duration
-    const cacheMaxAge = cacheDurationMinutes * 60 * 1000; // Convert to milliseconds
-    const now = Date.now();
+    // Sync searchIndices to ensure they're up to date with available indices
+    await syncSearchIndices(config);
     
-    if (!force && cachedIndices && Object.keys(cachedIndices).length > 0 && 
-        (now - cacheTimestamp) < cacheMaxAge) {
-      return res.json({
-        indicesByNodes: cachedIndices,
-        cached: true,
-        cacheAge: Math.floor((now - cacheTimestamp) / 1000)
-      });
-    }
-
-    const indicesByNodes = {};
-    
-    for (const nodeUrl of nodes) {
-      const nodeInfo = nodeMetadata[nodeUrl] || { name: nodeUrl, host: nodeUrl };
-      const nodeName = nodeInfo.name;
-      
-      try {
-        // Check if node is running by making a health check
-        const healthResponse = await fetch(`${nodeUrl}/_cluster/health`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 5000
-        });
-        
-        if (!healthResponse.ok) {
-          indicesByNodes[nodeName] = {
-            nodeUrl,
-            isRunning: false,
-            indices: [],
-            error: `Node not responding (${healthResponse.status})`
-          };
-          continue;
-        }
-
-        // Fetch indices for this node
-        const indicesResponse = await fetch(`${nodeUrl}/_cat/indices?format=json&h=index,health,status,docs.count,store.size,uuid`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
-        });
-
-        if (indicesResponse.ok) {
-          const indices = await indicesResponse.json();
-          indicesByNodes[nodeName] = {
-            nodeUrl,
-            isRunning: true,
-            indices: indices.map(idx => ({
-              ...idx,
-              node: nodeName,
-              nodeUrl: nodeUrl
-            })),
-            error: null
-          };
-        } else {
-          indicesByNodes[nodeName] = {
-            nodeUrl,
-            isRunning: true,
-            indices: [],
-            error: `Failed to fetch indices (${indicesResponse.status})`
-          };
-        }
-      } catch (error) {
-        console.error(`Error fetching indices for node ${nodeName}:`, error);
-        indicesByNodes[nodeName] = {
-          nodeUrl,
-          isRunning: false,
-          indices: [],
-          error: error.message
-        };
-      }
-    }
-
-    // Cache the results
-    await setConfig({
-      cachedIndicesByNodes: indicesByNodes,
-      indicesCacheTimestamp: now
-    });
-
-    // Clean up stale search indices
-    const currentConfig = getConfig();
-    const currentSearchIndices = currentConfig.searchIndices || [];
-    if (currentSearchIndices.length > 0) {
-      const allAvailableIndices = [];
-      
-      // Collect all available indices from all nodes
-      Object.values(indicesByNodes).forEach(nodeData => {
-        if (nodeData.indices && Array.isArray(nodeData.indices)) {
-          nodeData.indices.forEach(idx => {
-            allAvailableIndices.push(idx.index);
-          });
-        }
-      });
-
-      // Filter out stale search indices
-      const validSearchIndices = currentSearchIndices.filter(index => 
-        allAvailableIndices.includes(index)
-      );
-
-      // Update search indices if any were removed
-      if (validSearchIndices.length !== currentSearchIndices.length) {
-        const removedIndices = currentSearchIndices.filter(index => 
-          !allAvailableIndices.includes(index)
-        );
-        
-        console.log(`🧹 Cleaning up stale search indices: ${removedIndices.join(', ')}`);
-        await setConfig('searchIndices', validSearchIndices);
-      }
-    }
-
     res.json({
       indicesByNodes,
-      cached: false,
-      totalNodes: nodes.length,
-      runningNodes: Object.values(indicesByNodes).filter(n => n.isRunning).length
+      cached: true,
+      timestamp: status.timestamp
     });
-
   } catch (error) {
-    console.error("Error fetching indices by nodes:", error);
-    res.status(500).json({ error: "Failed to fetch indices data" });
+    console.error("Error retrieving indices cache:", error);
+    res.status(500).json({ error: "Failed to retrieve indices cache" });
   }
 });
 
-// POST clear indices cache
+// POST refresh indices cache (persistent)
 app.post("/api/admin/indices-by-nodes/refresh", verifyJwt, async (req, res) => {
   try {
-    // Clear cache
-    await setConfig({
-      cachedIndicesByNodes: {},
-      indicesCacheTimestamp: 0
-    });
-    
-    res.json({ message: "Indices cache cleared. Next request will fetch fresh data." });
-  } catch (error) {
-    console.error("Error clearing indices cache:", error);
-    res.status(500).json({ error: "Failed to clear cache" });
-  }
-});
-
-// GET indices cache status
-app.get("/api/admin/indices-cache-status", verifyJwt, async (req, res) => {
-  try {
+    console.log('🔄 Refreshing persistent indices cache...');
     const config = getConfig();
-    const cacheTimestamp = config.indicesCacheTimestamp || 0;
-    const cacheDurationMinutes = 15; // Fixed 15-minute cache duration
-    const cacheMaxAge = cacheDurationMinutes * 60 * 1000;
-    const now = Date.now();
-    const ageSeconds = Math.floor((now - cacheTimestamp) / 1000);
-    const remainingSeconds = Math.max(0, Math.floor((cacheMaxAge - (now - cacheTimestamp)) / 1000));
+    const refreshed = await refreshCache(config);
+    
+    // Sync searchIndices to remove stale entries
+    await syncSearchIndices(config);
     
     res.json({
-      hasCachedData: !!config.cachedIndicesByNodes && Object.keys(config.cachedIndicesByNodes).length > 0,
-      cacheAgeSeconds: ageSeconds,
-      cacheRemainingSeconds: remainingSeconds,
-      cacheDurationMinutes: cacheDurationMinutes,
-      cacheExpired: (now - cacheTimestamp) > cacheMaxAge
+      message: "Indices cache refreshed.",
+      indicesByNodes: refreshed
     });
   } catch (error) {
-    console.error("Error getting cache status:", error);
-    res.status(500).json({ error: "Failed to get cache status" });
+    console.error("Error refreshing indices cache:", error);
+    res.status(500).json({ error: "Failed to refresh indices cache" });
   }
 });
 
-// Utility function to refresh indices cache
-async function refreshIndicesCache() {
-  try {
-    console.log('🔄 Refreshing indices cache...');
-    const config = getConfig();
-    const nodes = config.elasticsearchNodes || [];
-    const nodeMetadata = config.nodeMetadata || {};
-    const indicesByNodes = {};
-    const now = Date.now();
-    
-    for (const nodeUrl of nodes) {
-      const nodeInfo = nodeMetadata[nodeUrl] || { name: nodeUrl, host: nodeUrl };
-      const nodeName = nodeInfo.name;
-      
-      try {
-        // Check if node is running by making a health check
-        const healthResponse = await fetch(`${nodeUrl}/_cluster/health`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 5000
-        });
-        
-        if (!healthResponse.ok) {
-          indicesByNodes[nodeName] = {
-            nodeUrl,
-            isRunning: false,
-            indices: [],
-            error: `Node not responding (${healthResponse.status})`
-          };
-          continue;
-        }
 
-        // Fetch indices for this node
-        const indicesResponse = await fetch(`${nodeUrl}/_cat/indices?format=json&h=index,health,status,docs.count,store.size,uuid`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
-        });
-
-        if (indicesResponse.ok) {
-          const indices = await indicesResponse.json();
-          indicesByNodes[nodeName] = {
-            nodeUrl,
-            isRunning: true,
-            indices: indices.map(idx => ({
-              ...idx,
-              node: nodeName,
-              nodeUrl: nodeUrl
-            })),
-            error: null
-          };
-        } else {
-          indicesByNodes[nodeName] = {
-            nodeUrl,
-            isRunning: true,
-            indices: [],
-            error: `Failed to fetch indices (${indicesResponse.status})`
-          };
-        }
-      } catch (error) {
-        console.error(`Error fetching indices for node ${nodeName}:`, error);
-        indicesByNodes[nodeName] = {
-          nodeUrl,
-          isRunning: false,
-          indices: [],
-          error: error.message
-        };
-      }
-    }
-
-    // Cache the results
-    await setConfig({
-      cachedIndicesByNodes: indicesByNodes,
-      indicesCacheTimestamp: now
-    });
-
-    // Clean up stale search indices
-    const currentConfig = getConfig();
-    const currentSearchIndices = currentConfig.searchIndices || [];
-    if (currentSearchIndices.length > 0) {
-      const allAvailableIndices = [];
-      
-      // Collect all available indices from all nodes
-      Object.values(indicesByNodes).forEach(nodeData => {
-        if (nodeData.indices && Array.isArray(nodeData.indices)) {
-          nodeData.indices.forEach(idx => {
-            allAvailableIndices.push(idx.index);
-          });
-        }
-      });
-
-      // Filter out stale search indices
-      const validSearchIndices = currentSearchIndices.filter(index => 
-        allAvailableIndices.includes(index)
-      );
-
-      // Update search indices if any were removed
-      if (validSearchIndices.length !== currentSearchIndices.length) {
-        const removedIndices = currentSearchIndices.filter(index => 
-          !allAvailableIndices.includes(index)
-        );
-        
-        console.log(`🧹 Cleaning up stale search indices: ${removedIndices.join(', ')}`);
-        await setConfig('searchIndices', validSearchIndices);
-      }
-    }
-
-    console.log('✅ Indices cache refreshed successfully');
-    return indicesByNodes;
-  } catch (error) {
-    console.error('❌ Error refreshing indices cache:', error);
-    throw error;
-  }
-}
 
 // ==================== PUBLIC ENDPOINTS ====================
 

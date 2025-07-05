@@ -420,11 +420,14 @@ REM Start Elasticsearch
 
             // Refresh indices cache after successful node start
             try {
-              const { refreshIndicesCache } = require('../../index');
-              await refreshIndicesCache();
-              console.log(`🔄 Indices cache refreshed after starting node ${nodeName}`);
+              const { refreshCache, syncSearchIndices } = require('../cache/indices-cache');
+              const { getConfig } = require('../config');
+              const config = getConfig();
+              await refreshCache(config);
+              await syncSearchIndices(config);
+              console.log(`🔄 Persistent indices cache and searchIndices synchronized after starting node ${nodeName}`);
             } catch (cacheError) {
-              console.warn(`⚠️ Failed to refresh indices cache after starting node ${nodeName}:`, cacheError.message);
+              console.warn(`⚠️ Failed to refresh persistent indices cache after starting node ${nodeName}:`, cacheError.message);
               // Don't fail the node start if cache refresh fails
             }
 

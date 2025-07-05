@@ -1,0 +1,22 @@
+{
+  "indicesByNodes": {
+    "test": {
+      "nodeUrl": "http://localhost:9200",
+      "isRunning": true,
+      "indices": [
+        {
+          "index": "accc",
+          "health": "green",
+          "status": "open",
+          "docs.count": "0",
+          "store.size": "227b",
+          "uuid": "EAHdOfGvStiL2OO9n3figg",
+          "node": "test",
+          "nodeUrl": "http://localhost:9200"
+        }
+      ],
+      "error": null
+    }
+  },
+  "timestamp": 1751683894062
+}

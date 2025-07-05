@@ -1,6 +1,6 @@
 {
   "searchIndices": [
-    "test"
+    "accc"
   ],
   "elasticsearchNodes": [
     "http://localhost:9200"
@@ -28,7 +28,7 @@
   "maskingRatio": 0.2,
   "usernameMaskingRatio": 0.4,
   "adminSettings": {
-    "showRawLineByDefault": false
+    "showRawLineByDefault": true
   },
   "autoRefreshInterval": 30000,
   "maxTaskHistory": 100,
@@ -37,34 +37,5 @@
   "nodeAttributes": {
     "defaultDiskType": "ssd",
     "defaultZone": "zone1"
-  },
-  "diskPreferences": {},
-  "elasticsearchConfig": {
-    "configFilePath": "C:\\elasticsearch\\config\\elasticsearch.yml",
-    "dataPath": "C:\\elasticsearch\\data",
-    "logsPath": "C:\\elasticsearch\\logs",
-    "jvmOptionsPath": "C:\\elasticsearch\\config\\jvm.options",
-    "autoBackup": true,
-    "restartCommand": "net restart elasticsearch"
-  },
-  "cachedIndicesByNodes": {
-    "test": {
-      "nodeUrl": "http://localhost:9200",
-      "isRunning": true,
-      "indices": [
-        {
-          "index": "test",
-          "health": "green",
-          "status": "open",
-          "docs.count": "554000",
-          "store.size": "8.8mb",
-          "uuid": "R8vuZTICRlyh0UhoPfj7ng",
-          "node": "test",
-          "nodeUrl": "http://localhost:9200"
-        }
-      ],
-      "error": null
-    }
-  },
-  "indicesCacheTimestamp": 1751676884416
+  }
 }

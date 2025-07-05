@@ -2,10 +2,22 @@
 const express = require("express");
 const { verifyJwt } = require("../middleware/auth");
 const { getConfig, setConfig } = require("../config");
+const { refreshCache, syncSearchIndices } = require('../cache/indices-cache');
 const { getES, initializeElasticsearchClients } = require("../elasticsearch/client");
 const clusterManager = require("../elasticsearch/cluster-manager");
 
 const router = express.Router();
+
+// Helper function to refresh cache and sync search indices
+async function refreshCacheAndSync(config, operation = 'operation') {
+  try {
+    await refreshCache(config);
+    await syncSearchIndices(config);
+    console.log(`🔄 Persistent indices cache and searchIndices synchronized after ${operation}`);
+  } catch (error) {
+    console.warn(`⚠️ Failed to refresh cache and sync indices after ${operation}:`, error.message);
+  }
+}
 
 // Validation function for port conflicts
 async function validateNodePorts(newNodeConfig, editingNodeName = null) {
@@ -304,6 +316,14 @@ router.post("/create", verifyJwt, async (req, res) => {
     });
     await setConfig('nodeMetadata', nodeMetadata);
 
+    // Refresh persistent indices cache after cluster creation
+    try {
+      const config = getConfig();
+      await refreshCacheAndSync(config, `creating cluster ${clusterName} with ${createdNodes.length} nodes`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh persistent indices cache after creating cluster:`, cacheError.message);
+    }
+
     res.json({
       message: `Cluster "${clusterName}" created successfully`,
       clusterName,
@@ -379,6 +399,14 @@ router.post("/nodes", verifyJwt, async (req, res) => {
       }
     };
     await setConfig('nodeMetadata', currentMetadata);
+
+    // Refresh persistent indices cache after node creation
+    try {
+      const config = getConfig();
+      await refreshCacheAndSync(config, `creating node ${createdNode.name}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh persistent indices cache after creating node:`, cacheError.message);
+    }
 
     res.json({
       message: `Node "${createdNode.name}" created successfully`,
@@ -478,6 +506,14 @@ router.put("/nodes/:nodeName", verifyJwt, async (req, res) => {
       await setConfig('elasticsearchNodes', updatedNodes);
     }
     
+    // Refresh persistent indices cache after node update
+    try {
+      const config = getConfig();
+      await refreshCacheAndSync(config, `updating node ${nodeName}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh persistent indices cache after updating node:`, cacheError.message);
+    }
+    
     res.json({
       message: `Node "${nodeName}" updated successfully`,
       node: newMetadata,
@@ -574,6 +610,14 @@ router.post("/nodes/:nodeName/stop", verifyJwt, async (req, res) => {
     
     const result = await clusterManager.stopNode(nodeName);
     
+    // Refresh persistent indices cache after node stop
+    try {
+      const config = getConfig();
+      await refreshCacheAndSync(config, `stopping node ${nodeName}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh persistent indices cache after stopping node:`, cacheError.message);
+    }
+    
     res.json({
       message: `Node "${nodeName}" stopped successfully`,
       ...result
@@ -667,6 +711,14 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
       console.warn(`⚠️ Could not find node URL for ${nodeName}. Config may already be clean.`);
     }
     
+    // Refresh persistent cache after node removal to clean up removed nodes
+    try {
+      const config = getConfig();
+      await refreshCacheAndSync(config, `removing node ${nodeName}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh persistent indices cache after removing node:`, cacheError.message);
+    }
+    
     const message = removeResult.warnings && removeResult.warnings.length > 0
       ? `Node "${nodeName}" removed successfully (with warnings - see server logs)`
       : `Node "${nodeName}" removed successfully`;
@@ -697,6 +749,14 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
       }
       
       if (cleaned) {
+        // Refresh cache after emergency cleanup
+        try {
+          const config = getConfig();
+          await refreshCacheAndSync(config, `emergency cleanup of node ${nodeName}`);
+        } catch (cacheError) {
+          console.warn(`⚠️ Failed to refresh cache after emergency cleanup:`, cacheError.message);
+        }
+        
         res.json({ 
           message: `Node "${nodeName}" config cleaned up (filesystem cleanup failed: ${error.message})`,
           warning: "Some files may remain on disk and need manual cleanup"
@@ -864,14 +924,12 @@ router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
       },
     });
 
-    // Refresh indices cache after successful index creation
+    // After successful index creation, refresh persistent cache
     try {
-      const { refreshIndicesCache } = require('../../index');
-      await refreshIndicesCache();
-      console.log(`🔄 Indices cache refreshed after creating index ${indexName} on node ${nodeName}`);
+      const config = getConfig();
+      await refreshCacheAndSync(config, `creating index ${indexName} on node ${nodeName}`);
     } catch (cacheError) {
-      console.warn(`⚠️ Failed to refresh indices cache after creating index:`, cacheError.message);
-      // Don't fail the index creation if cache refresh fails
+      console.warn(`⚠️ Failed to refresh persistent indices cache after creating index:`, cacheError.message);
     }
 
     res.status(201).json({ message: `Index '${indexName}' created successfully on node '${nodeName}'.` });
@@ -903,9 +961,17 @@ router.delete("/:nodeName/indices/:indexName", verifyJwt, async (req, res) => {
       index: indexName,
     });
 
+    // After successful deletion, refresh persistent cache
+    try {
+      const config = getConfig();
+      await refreshCacheAndSync(config, `deleting index ${indexName} on node ${nodeName}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh persistent indices cache after deleting index:`, cacheError.message);
+    }
+
     res.json({ message: `Index '${indexName}' deleted successfully from node '${nodeName}'.` });
   } catch (error) {
-    console.error(`Error deleting index from node ${nodeName}:`, error);
+    console.error(`Error deleting index ${indexName} on node ${nodeName}:`, error);
     if (error.meta && error.meta.statusCode === 404) {
       res.status(404).json({ error: `Index '${indexName}' not found on node '${nodeName}'.` });
     } else {
@@ -1024,6 +1090,14 @@ router.post('/nodes/:nodeName/move', verifyJwt, async (req, res) => {
       }
     }
 
+    // Refresh persistent indices cache after node move
+    try {
+      const config = getConfig();
+      await refreshCacheAndSync(config, `moving node ${nodeName}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh persistent indices cache after moving node:`, cacheError.message);
+    }
+
     res.json({
       message: `Node "${nodeName}" moved successfully to ${newPath}`,
       newPaths: moveResult
@@ -1094,6 +1168,14 @@ router.post('/nodes/:nodeName/copy', verifyJwt, async (req, res) => {
       roles: copyResult.roles
     };
     await setConfig('nodeMetadata', currentMetadata);
+
+    // Refresh persistent indices cache after node copy
+    try {
+      const config = getConfig();
+      await refreshCacheAndSync(config, `copying node ${nodeName} to ${newNodeName}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to refresh persistent indices cache after copying node:`, cacheError.message);
+    }
 
     res.json({
       message: `Node "${nodeName}" copied successfully to "${newNodeName}"`,

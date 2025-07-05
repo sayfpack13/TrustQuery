@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleNotch, faHdd, faPlus, faTrash, faExclamationTriangle } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../../../api/axiosClient';
-import { useElasticsearchManagement } from '../../../hooks/useElasticsearchManagement';
 
 export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed }) {
   const [activeTab, setActiveTab] = useState('overview');
@@ -27,7 +26,8 @@ export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
 
-  const { deleteIndex, pollTask } = useElasticsearchManagement(console.log);
+  // Remove the useElasticsearchManagement hook since we'll use direct API calls
+  // const { deleteIndex, pollTask } = useElasticsearchManagement(console.log);
 
   // Add validation for form inputs
   const isValidIndexName = newIndexName.trim().length > 0 && !/[A-Z\s]/.test(newIndexName);
@@ -174,19 +174,20 @@ export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed
       setNewIndexReplicas('0');
       
       // Refresh with live data after creation, then trigger cache refresh
-      await fetchNodeIndices(false, true); // Get live data immediately
-      
-      // Clear the backend cache to force fresh data on next cached request
-      try {
-        await axiosClient.post("/api/admin/indices-by-nodes/refresh");
-        
-        // Call the callback to refresh frontend cache state  
-        if (onCacheRefreshed) {
-          onCacheRefreshed();
+      await fetchNodeIndices(false, true); // Get live data immediately        // Clear the backend cache to force fresh data on next cached request
+        try {
+          await axiosClient.post("/api/admin/indices-by-nodes/refresh");
+          
+          // Call the callback to refresh frontend cache state  
+          if (onCacheRefreshed) {
+            onCacheRefreshed();
+          }
+
+          // Dispatch custom event to notify other components
+          window.dispatchEvent(new CustomEvent('indicesCacheRefreshed'));
+        } catch (cacheError) {
+          console.error("Failed to refresh cache:", cacheError);
         }
-      } catch (cacheError) {
-        console.error("Failed to refresh cache:", cacheError);
-      }
     } catch (error) {
       console.error("Failed to create index", error);
       // Error handling could be improved with notifications
@@ -204,7 +205,11 @@ export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed
     if (indexToDelete) {
       setIsDeletingIndex(indexToDelete.index);
       try {
-        const response = await deleteIndex(indexToDelete.index);
+        // Use the correct node-specific API endpoint
+        await axiosClient.delete(`/api/admin/cluster-advanced/${node.name}/indices/${indexToDelete.index}`);
+        
+        // Refresh with live data after deletion
+        await fetchNodeIndices(false); // Get updated data immediately
         
         // Refresh backend cache after deletion
         try {
@@ -214,16 +219,20 @@ export default function NodeDetailsModal({ show, onClose, node, onCacheRefreshed
           if (onCacheRefreshed) {
             onCacheRefreshed();
           }
+
+          // Dispatch custom event to notify other components
+          window.dispatchEvent(new CustomEvent('indicesCacheRefreshed'));
         } catch (cacheError) {
           console.error("Failed to refresh cache:", cacheError);
         }
       } catch (err) {
         console.error("Error deleting index", err);
+        // Show error notification or alert if needed
+        alert(`Failed to delete index: ${err.response?.data?.error || err.message}`);
       } finally {
         setShowDeleteModal(false);
         setIndexToDelete(null);
         setIsDeletingIndex(null);
-        await fetchNodeIndices(false); // Refresh list after deletion attempt
       }
     }
   };
