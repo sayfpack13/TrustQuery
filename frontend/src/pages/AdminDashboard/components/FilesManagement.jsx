@@ -22,9 +22,9 @@ export default function FilesManagement({
   showEditModal,
   setTasksList,
   setCurrentRunningTaskId,
-  // Props for parsing options
   availableNodes = [],
   enhancedNodesData = {},
+  disabled = false,
 }) {
   const [uploadPercentage, setUploadPercentage] = useState(0);
   const [uploadFiles, setUploadFiles] = useState([]);
@@ -369,6 +369,7 @@ export default function FilesManagement({
             onClick={handleUpload}
             className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
             disabled={
+              disabled ||
               uploadFiles.length === 0 ||
               isAnyTaskRunning ||
               showEditModal ||
@@ -400,7 +401,7 @@ export default function FilesManagement({
                 <div className="space-x-2">
                   <button
                     onClick={() => handleMoveToUnparsed(f)}
-                    disabled={isAnyTaskRunning || showEditModal || deletingFiles.has(f)}
+                    disabled={disabled || isAnyTaskRunning || showEditModal || deletingFiles.has(f)}
                     className={`bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
                       isAnyTaskRunning || showEditModal || deletingFiles.has(f)
                         ? "opacity-50 cursor-not-allowed"
@@ -417,7 +418,7 @@ export default function FilesManagement({
                   <button
                     onClick={() => handleDeletePendingFile(f)}
                     className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                    disabled={loading || isAnyTaskRunning || deletingFiles.has(f)}
+                    disabled={disabled || loading || isAnyTaskRunning || deletingFiles.has(f)}
                     title={`Delete '${f}'`}
                   >
                     {deletingFiles.has(f) ? (
@@ -446,7 +447,7 @@ export default function FilesManagement({
           <button
             onClick={handleParseAll}
             className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-            disabled={unparsedFiles.length === 0 || isAnyTaskRunning || showEditModal}
+            disabled={disabled || unparsedFiles.length === 0 || isAnyTaskRunning || showEditModal}
           >
             <FontAwesomeIcon icon={faCog} className="mr-2" />
             Parse All Files...
@@ -468,7 +469,7 @@ export default function FilesManagement({
                   <button
                     onClick={() => handleParseSingleFile(f)}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                    disabled={isAnyTaskRunning || showEditModal}
+                    disabled={disabled || isAnyTaskRunning || showEditModal}
                     title={`Parse '${f}' individually`}
                   >
                     <FontAwesomeIcon icon={faPlay} className="mr-1" /> Parse
@@ -476,7 +477,7 @@ export default function FilesManagement({
                   <button
                     onClick={() => handleDeleteUnparsedFile(f)}
                     className="bg-red-700 hover:bg-red-600 text-white px-3 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                    disabled={loading || isAnyTaskRunning || deletingFiles.has(f)}
+                    disabled={disabled || loading || isAnyTaskRunning || deletingFiles.has(f)}
                     title={`Delete '${f}'`}
                   >
                     {deletingFiles.has(f) ? (
@@ -516,7 +517,7 @@ export default function FilesManagement({
                 <button
                   onClick={() => handleDeleteParsedFile(f)}
                   className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                  disabled={loading || isAnyTaskRunning || deletingFiles.has(f)}
+                  disabled={disabled || loading || isAnyTaskRunning || deletingFiles.has(f)}
                   title={`Delete '${f}'`}
                 >
                   {deletingFiles.has(f) ? (
@@ -677,6 +678,7 @@ export default function FilesManagement({
                 onClick={executeParsingTask}
                 className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={
+                  disabled ||
                   !selectedNode || 
                   !targetIndex || 
                   getRunningNodes().length === 0 ||

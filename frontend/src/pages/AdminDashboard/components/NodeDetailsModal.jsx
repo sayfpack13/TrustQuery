@@ -3,7 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleInfo, faPlus, faTrash, faExclamationTriangle, faHdd, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../../../api/axiosClient';
 
-export default function NodeDetailsModal({ show, onClose, node, formatBytes, enhancedNodesData = {}, onRefreshNodes }) {
+export default function NodeDetailsModal({ show, onClose, node, formatBytes, enhancedNodesData = {}, onRefreshNodes, disabled = false }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [configContent, setConfigContent] = useState('');
   const [configLoading, setConfigLoading] = useState(false);
@@ -458,7 +458,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                     <div className="flex space-x-2">
                       <button
                         onClick={handleManualRefresh}
-                        disabled={isRefreshingIndices || refreshInProgress.current}
+                        disabled={disabled || isRefreshingIndices || refreshInProgress.current}
                         className="bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm disabled:opacity-50 flex items-center"
                       >
                         <FontAwesomeIcon 
@@ -470,7 +470,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                       {node.isRunning && (
                         <button
                           onClick={() => fetchLiveNodeIndices(true)}
-                          disabled={indicesLoading || refreshInProgress.current}
+                          disabled={disabled || indicesLoading || refreshInProgress.current}
                           className="bg-red-700 hover:bg-red-600 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
                         >
                           Force Live Fetch
@@ -522,7 +522,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                 {node.isRunning ? (
                   <button
                     onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
-                    disabled={isCreatingIndex || refreshInProgress.current}
+                    disabled={disabled || isCreatingIndex || refreshInProgress.current}
                     className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                   >
                     <FontAwesomeIcon 
@@ -608,7 +608,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                   <button 
                     onClick={handleCreateIndex} 
                     className="bg-primary px-3 py-1 rounded w-24 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600" 
-                    disabled={isCreatingIndex || !node.isRunning || !isFormValid}
+                    disabled={disabled || isCreatingIndex || !node.isRunning || !isFormValid}
                     title={
                       !node.isRunning ? "Node must be running to create indices" : 
                       !isFormValid ? "Please fix validation errors" : ""
@@ -668,7 +668,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                           <button 
                             onClick={() => handleDeleteClick(index)} 
                             className="text-red-500 hover:text-red-400 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors p-1"
-                            disabled={!node.isRunning || isDeletingIndex === index.index || isCreatingIndex || refreshInProgress.current}
+                            disabled={disabled || !node.isRunning || isDeletingIndex === index.index || isCreatingIndex || refreshInProgress.current}
                             title={
                               !node.isRunning ? "Start the node to delete indices" : 
                               isDeletingIndex === index.index ? "Deleting..." : 

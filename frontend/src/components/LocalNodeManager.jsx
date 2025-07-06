@@ -24,7 +24,8 @@ const LocalNodeManager = ({
   onClose, 
   clusterManagement,
   mode = 'create', // 'create' or 'edit'
-  nodeToEdit
+  nodeToEdit,
+  disabled = false
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(true);
   const [newClusterName, setNewClusterName] = useState('');
@@ -364,7 +365,7 @@ const LocalNodeManager = ({
                 value={newNodeName}
                 onChange={handleNodeNameChange}
                 placeholder="e.g., node-1, data-node-01"
-                disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
                   (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
                 } ${
@@ -386,7 +387,7 @@ const LocalNodeManager = ({
                 <select
                   value={newNodeCluster}
                   onChange={(e) => handleClusterChange(e.target.value)}
-                  disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                  disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
                   className={`flex-1 p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                     (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
@@ -397,7 +398,7 @@ const LocalNodeManager = ({
                 </select>
                 <button
                   onClick={() => setShowNewCluster(!showNewCluster)}
-                  disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                  disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
                   className={`bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-md transition duration-150 ${
                     (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
@@ -438,7 +439,7 @@ const LocalNodeManager = ({
                 value={newNodeHost}
                 onChange={(e) => setNewNodeHost(e.target.value)}
                 placeholder="localhost"
-                disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
                 className={`w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
                 }`}
@@ -459,7 +460,7 @@ const LocalNodeManager = ({
                 value={newNodePort}
                 onChange={(e) => setNewNodePort(e.target.value)}
                 placeholder="9200"
-                disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
                   (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
                 } ${
@@ -484,7 +485,7 @@ const LocalNodeManager = ({
                 value={newNodeTransportPort}
                 onChange={(e) => setNewNodeTransportPort(e.target.value)}
                 placeholder="9300"
-                disabled={mode === 'edit' && nodeToEdit?.isRunning}
+            disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
                   (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
                 } ${
@@ -511,7 +512,7 @@ const LocalNodeManager = ({
                     type="checkbox"
                     checked={enabled}
                     onChange={() => handleRoleChange(role)}
-                    disabled={mode === 'edit' && nodeToEdit?.isRunning}
+                    disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
                     className="form-checkbox text-blue-600 bg-neutral-900 border-neutral-700 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <span className="text-neutral-300 capitalize">{role}</span>
@@ -535,7 +536,7 @@ const LocalNodeManager = ({
                       setMoveTargetPath(defaultPath);
                       setShowMoveModal(true);
                     }}
-                    disabled={nodeToEdit?.isRunning}
+                    disabled={disabled || nodeToEdit?.isRunning}
                     className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                     title={nodeToEdit?.isRunning ? "Stop the node to move it" : "Move node to new location"}
                   >
@@ -577,7 +578,7 @@ const LocalNodeManager = ({
                   value={newNodeDataPath}
                   onChange={mode === 'create' ? (e) => setNewNodeDataPath(e.target.value) : undefined}
                   placeholder="C:\\elasticsearch\\nodes\\node-name\\data"
-                  disabled={mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
+                  disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
                     mode === 'edit' 
                       ? 'cursor-not-allowed opacity-70 border-neutral-600' 
@@ -608,7 +609,7 @@ const LocalNodeManager = ({
                   value={newNodeLogsPath}
                   onChange={mode === 'create' ? (e) => setNewNodeLogsPath(e.target.value) : undefined}
                   placeholder="C:\\elasticsearch\\nodes\\node-name\\logs"
-                  disabled={mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
+                  disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
                     mode === 'edit' 
                       ? 'cursor-not-allowed opacity-70 border-neutral-600' 
@@ -692,7 +693,7 @@ const LocalNodeManager = ({
                         )}
                         <button
                           onClick={applySuggestions}
-                          disabled={isApplyingSuggestions}
+                          disabled={disabled || isApplyingSuggestions}
                           className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs transition duration-150 disabled:opacity-50"
                         >
                           {isApplyingSuggestions ? <FontAwesomeIcon icon={faSpinner} spin /> : 'Apply'}

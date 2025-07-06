@@ -22,7 +22,6 @@ import {
 import axiosClient from "../../../api/axiosClient";
 
 export default function ClusterManagement({
-  // Local node state
   localNodes,
   enhancedNodesData: enhancedNodesDataProp,
   clusterLoading,
@@ -31,14 +30,13 @@ export default function ClusterManagement({
   handleStartLocalNode,
   handleStopLocalNode,
   handleDeleteLocalNode,
-  // Modal controls
   setShowLocalNodeManager,
-  // Other
   isAnyTaskRunning,
   formatBytes,
   onEditNode,
   onOpenNodeDetails,
   showNotification,
+  disabled = false,
 }) {
   // Use the enhanced data from the hook instead of local state
   const enhancedNodesData = enhancedNodesDataProp || {};
@@ -156,7 +154,7 @@ export default function ClusterManagement({
             <button
               onClick={fetchLocalNodes}
               className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
-              disabled={clusterLoading}
+              disabled={disabled || clusterLoading}
             >
               <FontAwesomeIcon
                 icon={faCircleNotch}
@@ -167,7 +165,7 @@ export default function ClusterManagement({
             <button
               onClick={handleVerifyMetadata}
               className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-opacity-75"
-              disabled={clusterLoading}
+              disabled={disabled || clusterLoading}
               title="Verify and clean up node metadata"
             >
               <FontAwesomeIcon icon={faCog} className="mr-2" />
@@ -722,7 +720,7 @@ export default function ClusterManagement({
                                     onClick={() =>
                                       handleStopLocalNode(node.name)
                                     }
-                                    disabled={isLoading}
+                                    disabled={disabled || isLoading}
                                     className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:bg-neutral-600 disabled:cursor-not-allowed flex items-center justify-center"
                                   >
                                     {isLoading ? (
@@ -736,7 +734,7 @@ export default function ClusterManagement({
                                     onClick={() =>
                                       handleStartLocalNode(node.name)
                                     }
-                                    disabled={isLoading}
+                                    disabled={disabled || isLoading}
                                     className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:bg-neutral-600 disabled:cursor-not-allowed flex items-center justify-center"
                                   >
                                     {isLoading ? (
@@ -747,26 +745,27 @@ export default function ClusterManagement({
                                   </button>
                                 )}
                                 <button
-                                  onClick={() => onOpenNodeDetails(node)}
-                                  className="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                                  onClick={disabled ? undefined : () => onOpenNodeDetails(node)}
+                                  className="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                                  disabled={disabled}
                                 >
                                   Manage
                                 </button>
                               </div>
                               <div className="flex space-x-2">
                                 <button
-                                  onClick={() => onEditNode(node)}
-                                  className="text-neutral-400 hover:text-white transition-colors"
+                                  onClick={disabled ? undefined : () => onEditNode(node)}
+                                  className="text-neutral-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                   aria-label="Edit Node"
+                                  disabled={disabled}
                                 >
                                   <FontAwesomeIcon icon={faPencilAlt} />
                                 </button>
                                 <button
-                                  onClick={() =>
-                                    handleDeleteLocalNode(node.name)
-                                  }
-                                  className="text-neutral-400 hover:text-red-500 transition-colors"
+                                  onClick={disabled ? undefined : () => handleDeleteLocalNode(node.name)}
+                                  className="text-neutral-400 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                   aria-label="Delete Node"
+                                  disabled={disabled}
                                 >
                                   <FontAwesomeIcon icon={faTrash} />
                                 </button>

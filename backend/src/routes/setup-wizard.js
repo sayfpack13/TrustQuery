@@ -1,4 +1,5 @@
 // VPS Setup Wizard for TrustQuery Elasticsearch Configuration
+const { isFirstTimeUse } = require("../utils/firstTimeCheck");
 const express = require("express");
 const fs = require("fs").promises;
 const path = require("path");
@@ -673,7 +674,6 @@ router.post('/initialize', verifyJwt, async (req, res) => {
   try {
     const { basePath, skipElasticsearchInstall } = req.body;
     const osInfo = detectOS();
-    
     if (!basePath) {
       return res.status(400).json({ error: 'Elasticsearch base path is required' });
     }
@@ -692,11 +692,11 @@ router.post('/initialize', verifyJwt, async (req, res) => {
     // Update cluster manager base path
     clusterManager.baseElasticsearchPath = basePath;
 
-    // Save configuration
-    const currentConfig = getConfig();
-    const setupConfig = {
-      ...currentConfig,
-      setupWizard: {
+
+    // Save configuration using setConfig to persist changes
+    const { setConfig } = require("../config");
+    await setConfig({
+      'setupWizard': {
         completed: true,
         completedAt: new Date().toISOString(),
         os: osInfo.platform,
@@ -704,21 +704,19 @@ router.post('/initialize', verifyJwt, async (req, res) => {
         detectedPaths: detectedPaths,
         skipElasticsearchInstall: skipElasticsearchInstall || false
       },
-      // Update elasticsearch configuration
-      elasticsearchConfig: {
-        ...currentConfig.elasticsearchConfig,
-        basePath: basePath,
-        configFilePath: path.join(detectedPaths.configPath, 'elasticsearch.yml'),
-        dataPath: detectedPaths.dataPath,
-        logsPath: detectedPaths.logsPath,
-        jvmOptionsPath: path.join(detectedPaths.configPath, 'jvm.options'),
-        executable: osInfo.isWindows 
-          ? path.join(detectedPaths.binPath, 'elasticsearch.bat')
-          : path.join(detectedPaths.binPath, 'elasticsearch')
-      }
-    };
+      'elasticsearchConfig.basePath': basePath,
+      'elasticsearchConfig.configFilePath': path.join(detectedPaths.configPath, 'elasticsearch.yml'),
+      'elasticsearchConfig.dataPath': detectedPaths.dataPath,
+      'elasticsearchConfig.logsPath': detectedPaths.logsPath,
+      'elasticsearchConfig.jvmOptionsPath': path.join(detectedPaths.configPath, 'jvm.options'),
+      'elasticsearchConfig.executable': osInfo.isWindows 
+        ? path.join(detectedPaths.binPath, 'elasticsearch.bat')
+        : path.join(detectedPaths.binPath, 'elasticsearch')
+    });
 
-    await setConfig(setupConfig);
+    // Mark first run complete (create .first_run file)
+    const { markFirstRunComplete } = require("../utils/firstTimeCheck");
+    markFirstRunComplete();
 
     // Create necessary directories if they don't exist
     const directoriesToCreate = [
@@ -736,6 +734,11 @@ router.post('/initialize', verifyJwt, async (req, res) => {
         }
       }
     }
+
+    console.log('[SetupWizard] Setup completed and config saved:', {
+      basePath,
+      detectedPaths
+    });
 
     res.json({
       success: true,
@@ -761,12 +764,13 @@ router.get('/status', verifyJwt, async (req, res) => {
 
     // Check if setup was completed
     const isCompleted = setupConfig.completed || false;
-    
+
     // Check current system status
     const systemChecks = await checkSystemRequirements(osInfo);
-    
+
     // Check if Elasticsearch is running
     let elasticsearchStatus = 'not-installed';
+
     try {
       const { getES, isElasticsearchAvailable } = require('../elasticsearch/client');
       const isAvailable = await isElasticsearchAvailable();
@@ -775,13 +779,17 @@ router.get('/status', verifyJwt, async (req, res) => {
       elasticsearchStatus = 'not-installed';
     }
 
+    // Detect first time use (file-based, not just config)
+    const isFirstTime = isFirstTimeUse() && !isCompleted;
+
     res.json({
       setupCompleted: isCompleted,
       setupConfig,
       currentOS: osInfo,
       systemChecks,
       elasticsearchStatus,
-      recommendations: generateRecommendations(systemChecks, elasticsearchStatus)
+      recommendations: generateRecommendations(systemChecks, elasticsearchStatus),
+      isFirstTimeUse: isFirstTime
     });
   } catch (error) {
     console.error('Error getting setup status:', error);

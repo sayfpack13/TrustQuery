@@ -7,34 +7,28 @@
   "maskingRatio": 0.2,
   "usernameMaskingRatio": 0.4,
   "adminSettings": {},
-  "selectedIndex": "accounts",
-  "writeNode": null,
-  "nodeAttributes": {
-    "defaultDiskType": "ssd",
-    "defaultZone": "zone1"
-  },
   "setupWizard": {
     "completed": true,
-    "completedAt": "2025-07-06T07:20:27.038Z",
+    "completedAt": "2025-07-06T09:38:22.609Z",
     "os": "win32",
-    "basePath": "c:\\\\elasticsearch",
+    "basePath": "C:\\elasticsearch",
     "detectedPaths": {
-      "elasticsearchBase": "c:\\\\elasticsearch",
-      "binPath": "c:\\elasticsearch\\bin",
-      "configPath": "c:\\elasticsearch\\config",
-      "dataPath": "c:\\elasticsearch\\data",
-      "logsPath": "c:\\elasticsearch\\logs",
-      "libPath": "c:\\elasticsearch\\lib",
-      "pluginsPath": "c:\\elasticsearch\\plugins"
+      "elasticsearchBase": "C:\\elasticsearch",
+      "binPath": "C:\\elasticsearch\\bin",
+      "configPath": "C:\\elasticsearch\\config",
+      "dataPath": "C:\\elasticsearch\\data",
+      "logsPath": "C:\\elasticsearch\\logs",
+      "libPath": "C:\\elasticsearch\\lib",
+      "pluginsPath": "C:\\elasticsearch\\plugins"
     },
     "skipElasticsearchInstall": false
   },
   "elasticsearchConfig": {
-    "basePath": "c:\\\\elasticsearch",
-    "configFilePath": "c:\\elasticsearch\\config\\elasticsearch.yml",
-    "dataPath": "c:\\elasticsearch\\data",
-    "logsPath": "c:\\elasticsearch\\logs",
-    "jvmOptionsPath": "c:\\elasticsearch\\config\\jvm.options",
-    "executable": "c:\\elasticsearch\\bin\\elasticsearch.bat"
+    "basePath": "C:\\elasticsearch",
+    "configFilePath": "C:\\elasticsearch\\config\\elasticsearch.yml",
+    "dataPath": "C:\\elasticsearch\\data",
+    "logsPath": "C:\\elasticsearch\\logs",
+    "jvmOptionsPath": "C:\\elasticsearch\\config\\jvm.options",
+    "executable": "C:\\elasticsearch\\bin\\elasticsearch.bat"
   }
 }

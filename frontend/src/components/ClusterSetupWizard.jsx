@@ -501,6 +501,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       updateLoadingState('initialization', true);
       clearError(retryKey);
       
+      // Only send elasticsearch base path entered by user
       const response = await axiosClient.post('/api/setup-wizard/initialize', {
         basePath: basePath.trim()
       });
@@ -1204,8 +1205,8 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     }
   };
 
-  // VPS Setup Step Renderers
-  const renderVPSSystemInfoStep = () => (
+  // Step 1: System Info
+  const renderSystemInfoStep = () => (
     <div className="space-y-6">
       <div className="text-center">
         <FontAwesomeIcon icon={faServer} className="text-4xl text-blue-500 mb-4" />
@@ -1296,7 +1297,8 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
 
   // Removed Installation Guide step entirely
 
-  const renderVPSConfigurationStep = () => (
+  // Step 2: Configuration/Validation
+  const renderConfigurationStep = () => (
     <div className="space-y-6">
       <div className="text-center">
         <FontAwesomeIcon icon={faCog} className="text-4xl text-blue-500 mb-4" />
@@ -1535,7 +1537,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           Back
         </button>
         <button
-          onClick={() => setCurrentStep(4)}
+          onClick={() => setCurrentStep(3)}
           disabled={!validationResult?.valid}
           className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg disabled:bg-neutral-600 disabled:cursor-not-allowed"
         >
@@ -1630,423 +1632,60 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   );
 
   // VPS Setup Complete Step
-  const renderVPSSetupCompleteStep = () => (
-    <div className="space-y-6">
-      <div className="text-center">
-        <FontAwesomeIcon icon={faCheckCircle} className="text-4xl text-green-500 mb-4" />
-        <h3 className="text-2xl font-bold text-white mb-2">Complete Setup</h3>
-        <p className="text-neutral-300">
-          Finalize your Elasticsearch configuration and start using TrustQuery.
-        </p>
-      </div>
-
-      <div className="bg-neutral-700 rounded-lg p-6">
-        <h4 className="text-lg font-semibold text-white mb-4">Initialize Configuration</h4>
-        <p className="text-neutral-300 mb-4">
-          This will save your Elasticsearch configuration and complete the setup process.
-        </p>
-        
-        <button
-          onClick={initializeSetup}
-          disabled={loading}
-          className="w-full bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-lg disabled:bg-neutral-600 text-lg font-semibold"
-        >
-          {loading ? (
-            <>
-              <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />
-              Initializing Setup...
-            </>
-          ) : (
-            <>
-              <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-              Complete Setup
-            </>
-          )}
-        </button>
-      </div>
-
-      <div className="flex justify-between">
-        <button
-          onClick={() => setCurrentStep(3)}
-          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg"
-        >
-          Back
-        </button>
-        <button
-          onClick={onClose}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg"
-        >
-          Close Wizard
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderStep1 = () => {
-    // Show setup type selection first
-    if (setupType === 'vps-setup') {
-      return renderVPSSystemInfoStep();
-    }
-    
-    // Original step 1 for local cluster setup
+  // Step 3: Complete Setup
+  const renderCompleteStep = () => {
+    const isDisabled = Object.values(loadingStates).some(Boolean) || loading;
+    // Handler to show loader and close wizard after /initialize
+    const handleCompleteSetup = async () => {
+      setLoading(true);
+      try {
+        await initializeSetup();
+        setTimeout(() => {
+          setLoading(false);
+          if (typeof onComplete === 'function') onComplete();
+        }, 300);
+      } catch (e) {
+        setLoading(false);
+        // Optionally show a minimal error, but do not block completion
+      }
+    };
     return (
-    <div className="space-y-6">
-      <div className="text-center">
-        <FontAwesomeIcon icon={faInfoCircle} className="text-4xl text-blue-500 mb-4" />
-        <h3 className="text-2xl font-bold text-white mb-2">Setup Type Selection</h3>
-        <p className="text-neutral-400">
-          Choose how you want to set up TrustQuery
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div 
-          className={`p-6 rounded-lg border-2 cursor-pointer transition-colors ${
-            setupType === 'vps-setup' 
-              ? 'border-blue-500 bg-blue-900/30' 
-              : 'border-neutral-600 bg-neutral-700'
-          }`}
-          onClick={() => setSetupType('vps-setup')}
-        >
-          <FontAwesomeIcon icon={faServer} className="text-3xl text-blue-400 mb-4" />
-          <h4 className="text-lg font-semibold text-white mb-2">VPS Deployment</h4>
-          <p className="text-sm text-neutral-400 mb-4">
-            Set up TrustQuery on your VPS or dedicated server with guided installation
+      <div className="space-y-6" style={isDisabled ? { pointerEvents: 'none', opacity: 0.6 } : {}}>
+        <div className="text-center">
+          <FontAwesomeIcon icon={faCheckCircle} className="text-4xl text-green-500 mb-4" />
+          <h3 className="text-2xl font-bold text-white mb-2">Complete Setup</h3>
+          <p className="text-neutral-300">
+            Finalize your Elasticsearch configuration and start using TrustQuery.
           </p>
-          <ul className="text-xs text-neutral-400 space-y-1">
-            <li>• Platform detection (Windows/Linux)</li>
-            <li>• Automated installation guide</li>
-            <li>• Path configuration wizard</li>
-            <li>• Production-ready setup</li>
-          </ul>
         </div>
-
-        <div 
-          className={`p-6 rounded-lg border-2 cursor-pointer transition-colors ${
-            setupType === 'local-cluster' 
-              ? 'border-blue-500 bg-blue-900/30' 
-              : 'border-neutral-600 bg-neutral-700'
-          }`}
-          onClick={() => setSetupType('local-cluster')}
-        >
-          <FontAwesomeIcon icon={faDatabase} className="text-3xl text-green-400 mb-4" />
-          <h4 className="text-lg font-semibold text-white mb-2">Local Cluster</h4>
-          <p className="text-sm text-neutral-400 mb-4">
-            Create and manage local Elasticsearch nodes for development
-          </p>
-          <ul className="text-xs text-neutral-400 space-y-1">
-            <li>• Quick setup for testing</li>
-            <li>• Multiple node configuration</li>
-            <li>• Local file management</li>
-            <li>• Development environment</li>
-          </ul>
-        </div>
-      </div>
-
-      {setupGuide && setupType === 'local-cluster' && (
         <div className="bg-neutral-700 rounded-lg p-6">
-          <h4 className="text-lg font-semibold text-white mb-4">Prerequisites</h4>
-          <div className="space-y-4">
-            {setupGuide.steps.map((step, index) => (
-              <div key={index} className="flex items-start space-x-3">
-                <div className="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">
-                  {step.step}
-                </div>
-                <div className="flex-1">
-                  <h5 className="font-medium text-white">{step.title}</h5>
-                  <p className="text-sm text-neutral-400 mb-2">{step.description}</p>
-                  <div className="bg-neutral-800 rounded p-2">
-                    {step.commands.map((cmd, idx) => (
-                      <div key={idx} className="text-xs text-neutral-300 font-mono">
-                        {cmd}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <h4 className="text-lg font-semibold text-white mb-4">Initialize Configuration</h4>
+          <p className="text-neutral-300 mb-4">
+            This will save your Elasticsearch configuration and complete the setup process.
+          </p>
+          <button
+            onClick={handleCompleteSetup}
+            disabled={isDisabled || loading}
+            className="w-full bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-lg disabled:bg-neutral-600 text-lg font-semibold flex items-center justify-center"
+          >
+            {loading ? (
+              <>
+                <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />
+                Initializing Setup...
+              </>
+            ) : (
+              <>
+                <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
+                Complete Setup
+              </>
+            )}
+          </button>
         </div>
-      )}
-
-      <div className="flex justify-between">
-        <button
-          onClick={onClose}
-          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={() => setCurrentStep(2)}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg"
-        >
-          Next: Configure
-        </button>
       </div>
-    </div>
-  );
+    );
   };
 
-  const renderStep2 = () => (
-    <div className="space-y-6">
-      <div className="text-center">
-        <FontAwesomeIcon icon={faDatabase} className="text-4xl text-green-500 mb-4" />
-        <h3 className="text-2xl font-bold text-white mb-2">Cluster Configuration</h3>
-        <p className="text-neutral-400">
-          Configure your cluster name and node settings
-        </p>
-      </div>
 
-      <div className="bg-neutral-700 rounded-lg p-6">
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-neutral-300 mb-2">
-            Cluster Name
-          </label>
-          <input
-            type="text"
-            value={clusterConfig.clusterName}
-            onChange={(e) => setClusterConfig(prev => ({...prev, clusterName: e.target.value}))}
-            className="w-full px-3 py-2 bg-neutral-600 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="trustquery-cluster"
-          />
-        </div>
-
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-lg font-semibold text-white">Nodes Configuration</h4>
-            <button
-              onClick={addNode}
-              className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm"
-            >
-              <FontAwesomeIcon icon={faPlus} className="mr-1" />
-              Add Node
-            </button>
-          </div>
-
-          <div className="space-y-4">
-            {clusterConfig.nodes.map((node, index) => (
-              <div key={index} className="bg-neutral-600 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h5 className="font-medium text-white">Node {index + 1}</h5>
-                  {clusterConfig.nodes.length > 1 && (
-                    <button
-                      onClick={() => removeNode(index)}
-                      className="text-red-400 hover:text-red-300"
-                    >
-                      <FontAwesomeIcon icon={faMinus} />
-                    </button>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1">
-                      Node Name
-                    </label>
-                    <input
-                      type="text"
-                      value={node.name}
-                      onChange={(e) => updateNode(index, 'name', e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-700 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1">
-                      Host
-                    </label>
-                    <input
-                      type="text"
-                      value={node.host}
-                      onChange={(e) => updateNode(index, 'host', e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-700 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1">
-                      HTTP Port
-                    </label>
-                    <input
-                      type="number"
-                      value={node.port}
-                      onChange={(e) => updateNode(index, 'port', parseInt(e.target.value))}
-                      className="w-full px-3 py-2 bg-neutral-700 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1">
-                      Transport Port
-                    </label>
-                    <input
-                      type="number"
-                      value={node.transportPort}
-                      onChange={(e) => updateNode(index, 'transportPort', parseInt(e.target.value))}
-                      className="w-full px-3 py-2 bg-neutral-700 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1">
-                      Data Path
-                    </label>
-                    <input
-                      type="text"
-                      value={node.dataPath}
-                      onChange={(e) => updateNode(index, 'dataPath', e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-700 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1">
-                      Logs Path
-                    </label>
-                    <input
-                      type="text"
-                      value={node.logsPath}
-                      onChange={(e) => updateNode(index, 'logsPath', e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-700 border border-neutral-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-4">
-                  <label className="block text-sm font-medium text-neutral-300 mb-2">
-                    Node Roles
-                  </label>
-                  <div className="flex space-x-4">
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={node.roles.master}
-                        onChange={(e) => updateNodeRole(index, 'master', e.target.checked)}
-                        className="w-4 h-4 text-blue-600 bg-neutral-700 border-neutral-600 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-white">Master</span>
-                    </label>
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={node.roles.data}
-                        onChange={(e) => updateNodeRole(index, 'data', e.target.checked)}
-                        className="w-4 h-4 text-blue-600 bg-neutral-700 border-neutral-600 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-white">Data</span>
-                    </label>
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={node.roles.ingest}
-                        onChange={(e) => updateNodeRole(index, 'ingest', e.target.checked)}
-                        className="w-4 h-4 text-blue-600 bg-neutral-700 border-neutral-600 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-white">Ingest</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex justify-between">
-        <button
-          onClick={() => setCurrentStep(1)}
-          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg"
-        >
-          Back
-        </button>
-        <button
-          onClick={() => setCurrentStep(3)}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg"
-        >
-          Next: Review & Create
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderStep3 = () => (
-    <div className="space-y-6">
-      <div className="text-center">
-        <FontAwesomeIcon icon={faCheckCircle} className="text-4xl text-green-500 mb-4" />
-        <h3 className="text-2xl font-bold text-white mb-2">Review & Create</h3>
-        <p className="text-neutral-400">
-          Review your cluster configuration and create the cluster
-        </p>
-      </div>
-
-      <div className="bg-neutral-700 rounded-lg p-6">
-        <h4 className="text-lg font-semibold text-white mb-4">Cluster Summary</h4>
-        <div className="space-y-3">
-          <div className="flex justify-between">
-            <span className="text-neutral-300">Cluster Name:</span>
-            <span className="text-white font-medium">{clusterConfig.clusterName}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-neutral-300">Total Nodes:</span>
-            <span className="text-white font-medium">{clusterConfig.nodes.length}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-neutral-300">Master Nodes:</span>
-            <span className="text-white font-medium">
-              {clusterConfig.nodes.filter(n => n.roles.master).length}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-neutral-300">Data Nodes:</span>
-            <span className="text-white font-medium">
-              {clusterConfig.nodes.filter(n => n.roles.data).length}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-neutral-700 rounded-lg p-6">
-        <h4 className="text-lg font-semibold text-white mb-4">Nodes Details</h4>
-        <div className="space-y-3">
-          {clusterConfig.nodes.map((node, index) => (
-            <div key={index} className="bg-neutral-600 rounded p-3">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-white font-medium">{node.name}</span>
-                <span className="text-neutral-300">{node.host}:{node.port}</span>
-              </div>
-              <div className="text-sm text-neutral-400">
-                <div>Data: {node.dataPath}</div>
-                <div>Roles: {Object.entries(node.roles).filter(([, enabled]) => enabled).map(([role]) => role).join(', ')}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex justify-between">
-        <button
-          onClick={() => setCurrentStep(2)}
-          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg"
-        >
-          Back
-        </button>
-        <button
-          onClick={createCluster}
-          disabled={loading}
-          className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg disabled:opacity-50"
-        >
-          {loading ? (
-            <>
-              <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
-              Creating Cluster...
-            </>
-          ) : (
-            'Create Cluster'
-          )}
-        </button>
-      </div>
-    </div>
-  );
 
   const renderLocalNodes = () => (
     <div className="mt-8">
@@ -2154,22 +1793,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           
           <div className="flex items-center space-x-3">
             {/* Help Button */}
-            <HelpTooltip 
-              content={{
-                text: "Use Ctrl+← and Ctrl+→ to navigate between steps. Press Ctrl+Enter to proceed when step is validated. Press Escape to close the wizard.",
-                links: [
-                  { text: "TrustQuery Documentation", url: "#" },
-                  { text: "Elasticsearch Setup Guide", url: "https://www.elastic.co/guide/en/elasticsearch/reference/current/setup.html" }
-                ]
-              }}
-              position="bottom"
-              interactive={true}
-            >
-              <button className="text-neutral-400 hover:text-blue-400 transition-colors">
-                <FontAwesomeIcon icon={faLightbulb} className="text-xl" />
-              </button>
-            </HelpTooltip>
-            
             {/* Close Button */}
             <button
               onClick={onClose}
@@ -2189,69 +1812,34 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
 
             {/* Step Content */}
             <div className="bg-neutral-900 rounded-lg p-6 min-h-96 relative">
-            {setupType === 'vps-setup' ? (
+            {setupType === 'vps-setup' && (
               <>
-            {currentStep === 1 && renderVPSSystemInfoStep()}
-            {currentStep === 2 && renderVPSConfigurationStep()}
-            {currentStep === 3 && renderVPSSetupCompleteStep()}
-            {currentStep > 3 && (
-              <div className="flex flex-col items-center justify-center min-h-64">
-                <FontAwesomeIcon icon={faCheckCircle} className="text-5xl text-green-500 mb-4" />
-                <h2 className="text-2xl font-bold text-white mb-2">Setup Complete!</h2>
-                <p className="text-neutral-300 mb-4">TrustQuery is now configured and ready to use.</p>
-                <button
-                  onClick={onClose}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg"
-                >
-                  Close Wizard
-                </button>
-              </div>
-            )}
-              </>
-            ) : (
-              <>
-                {currentStep === 1 && renderStep1()}
-                {currentStep === 2 && renderStep2()}
-                {currentStep === 3 && renderStep3()}
+                {currentStep === 1 && renderSystemInfoStep()}
+                {currentStep === 2 && renderConfigurationStep()}
+                {currentStep === 3 && renderCompleteStep()}
+                {currentStep > 3 && (
+                  <div className="flex flex-col items-center justify-center min-h-64">
+                    <FontAwesomeIcon icon={faCheckCircle} className="text-5xl text-green-500 mb-4" />
+                    <h2 className="text-2xl font-bold text-white mb-2">Setup Complete!</h2>
+                    <p className="text-neutral-300 mb-4">TrustQuery is now configured and ready to use.</p>
+                  </div>
+                )}
               </>
             )}
           </div>
 
           {/* Enhanced Footer with statistics */}
           <div className="mt-4 text-center space-y-2">
-            
+            <div className="text-red-400 text-sm font-semibold mb-2">
+              The TrustQuery setup wizard must be completed before you can use the admin dashboard.<br />
+              <span className="text-neutral-300 font-normal">Please follow the guided setup to configure your environment.</span>
+            </div>
             {performanceMetrics.totalTime && (
               <div className="text-xs text-neutral-600">
                 Setup time: {Math.floor(performanceMetrics.totalTime / 1000)}s
                 {performanceMetrics.avgStepTime && ` • Avg step: ${Math.floor(performanceMetrics.avgStepTime / 1000)}s`}
               </div>
             )}
-            
-            {/* Quick actions */}
-            <div className="flex items-center justify-center space-x-4 text-xs">
-              
-              {currentStep > 1 && setupType === 'vps-setup' && (
-                <button
-                  onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
-                  disabled={Object.values(loadingStates).some(Boolean)}
-                  className="text-neutral-500 hover:text-blue-400 disabled:opacity-50"
-                >
-                  <FontAwesomeIcon icon={faArrowLeft} className="mr-1" />
-                  Previous
-                </button>
-              )}
-              
-              {setupType === 'vps-setup' && currentStep < 4 && stepProgress[currentStep]?.validated && (
-                <button
-                  onClick={() => setCurrentStep(prev => Math.min(4, prev + 1))}
-                  disabled={Object.values(loadingStates).some(Boolean)}
-                  className="text-neutral-500 hover:text-blue-400 disabled:opacity-50"
-                >
-                  Next
-                  <FontAwesomeIcon icon={faArrowRight} className="ml-1" />
-                </button>
-              )}
-            </div>
           </div>
         </div>
       </div>

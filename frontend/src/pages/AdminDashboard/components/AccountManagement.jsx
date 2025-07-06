@@ -18,7 +18,8 @@ import {
 export default function AccountManagement({ 
   showNotification,
   isAnyTaskRunning,
-  enhancedNodesData = {}
+  enhancedNodesData = {},
+  disabled = false
 }) {
   const [accounts, setAccounts] = useState([]);
   const [selected, setSelected] = useState([]);
@@ -286,7 +287,7 @@ export default function AccountManagement({
               ? "bg-primary text-white"
               : "bg-neutral-700 hover:bg-neutral-600 text-neutral-300"
           }`}
-          disabled={loading}
+          disabled={disabled || loading}
         >
           {i}
         </button>
@@ -329,7 +330,7 @@ export default function AccountManagement({
             </button>
             <button
               onClick={handleDeleteSelected}
-              disabled={selected.length === 0 || isAnyTaskRunning || loading}
+              disabled={disabled || selected.length === 0 || isAnyTaskRunning || loading}
               className="bg-danger hover:bg-red-600 text-white px-4 py-2 rounded-lg disabled:opacity-50 transition duration-150 ease-in-out flex items-center space-x-2"
             >
               {loading ? (
@@ -357,7 +358,7 @@ export default function AccountManagement({
                 value={selectedNode}
                 onChange={(e) => setSelectedNode(e.target.value)}
                 className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                disabled={loading}
+                disabled={disabled || loading}
               >
                 <option value="">All Nodes</option>
                 {availableNodes.map(node => (
@@ -375,7 +376,7 @@ export default function AccountManagement({
                 value={selectedIndex}
                 onChange={(e) => setSelectedIndex(e.target.value)}
                 className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                disabled={loading}
+                disabled={disabled || loading}
               >
                 <option value="">All Indices</option>
                 {availableIndices
@@ -394,7 +395,7 @@ export default function AccountManagement({
                 setPage(1);
                 fetchAccounts();
               }}
-              disabled={loading}
+              disabled={disabled || loading}
               className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded transition duration-150 ease-in-out flex items-center space-x-1"
             >
               <FontAwesomeIcon icon={faRefresh} />
@@ -522,7 +523,7 @@ export default function AccountManagement({
                           <div className="flex space-x-3">
                             <button
                               onClick={() => handleEditClick(account)}
-                              disabled={editLoading || deletingAccountIds.has(account.id)}
+                              disabled={disabled || editLoading || deletingAccountIds.has(account.id)}
                               className="bg-primary hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Edit Account"
                             >
@@ -530,7 +531,7 @@ export default function AccountManagement({
                             </button>
                             <button
                               onClick={() => handleDeleteAccount(account.id)}
-                              disabled={loading || deletingAccountIds.has(account.id)}
+                              disabled={disabled || loading || deletingAccountIds.has(account.id)}
                               className="bg-danger hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Delete Account"
                             >
@@ -553,7 +554,7 @@ export default function AccountManagement({
             <div className="mt-6 flex justify-center items-center space-x-2">
               <button
                 onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                disabled={page === 1 || loading}
+                disabled={disabled || page === 1 || loading}
                 className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
               >
                 Previous
@@ -561,7 +562,7 @@ export default function AccountManagement({
               {renderPaginationButtons()}
               <button
                 onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-                disabled={page === totalPages || loading}
+                disabled={disabled || page === totalPages || loading}
                 className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
               >
                 Next
@@ -646,7 +647,7 @@ export default function AccountManagement({
               <button
                 onClick={handleSaveEdit}
                 className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50"
-                disabled={editLoading}
+                disabled={disabled || editLoading}
               >
                 {editLoading ? (
                   <FontAwesomeIcon
@@ -659,7 +660,7 @@ export default function AccountManagement({
               <button
                 onClick={handleCancelEdit}
                 className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out"
-                disabled={editLoading}
+                disabled={disabled || editLoading}
               >
                 Cancel
               </button>

@@ -114,11 +114,23 @@ async function setConfig(key, value) {
   }
   await saveConfig();
 }
+// Overwrite the entire config file with a new config object
+async function setFullConfig(newConfig) {
+  try {
+    config = { ...newConfig };
+    await saveConfig();
+    console.log('✅ Full config overwritten.');
+  } catch (error) {
+    console.error('❌ Error overwriting full config:', error);
+    throw error;
+  }
+}
 
 module.exports = {
   loadConfig,
   saveConfig,
   getConfig,
   setConfig,
+  setFullConfig,
   DEFAULT_CONFIG
 };

@@ -17,7 +17,8 @@ import {
 export default function ConfigurationManagement({ 
   showNotification,
   enhancedNodesData = {},
-  setShowSetupWizard
+  setShowSetupWizard,
+  disabled = false
 }) {
   const [config, setConfig] = useState(null);
   const [configLoading, setConfigLoading] = useState(false);
@@ -507,8 +508,8 @@ export default function ConfigurationManagement({
             {/* Action Buttons */}
             <div className="flex space-x-4 mt-8 pt-6 border-t border-neutral-600">
               <button
-                onClick={saveSystemSettings}
-                disabled={!hasUnsavedSystemChanges || isSavingSettings}
+                onClick={disabled ? undefined : saveSystemSettings}
+                disabled={disabled || !hasUnsavedSystemChanges || isSavingSettings}
                 className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
               >
                 {isSavingSettings ? (
@@ -520,8 +521,8 @@ export default function ConfigurationManagement({
               </button>
               
               <button
-                onClick={resetSystemSettings}
-                disabled={!hasUnsavedSystemChanges}
+                onClick={disabled ? undefined : resetSystemSettings}
+                disabled={disabled || !hasUnsavedSystemChanges}
                 className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
               >
                 <FontAwesomeIcon icon={faTimes} className="mr-2" />

@@ -24,6 +24,10 @@ import TaskDetails from "./AdminDashboard/components/TaskDetails";
 import NodeDetailsModal from "./AdminDashboard/components/NodeDetailsModal";
 
 export default function AdminDashboard({ onLogout }) {
+  // First time use detection
+  const [firstTimeCheck, setFirstTimeCheck] = useState(true);
+  // Track setup completion
+  const [setupCompleted, setSetupCompleted] = useState(false);
   // Use shared dashboard hooks
   const {
     notification,
@@ -56,7 +60,7 @@ export default function AdminDashboard({ onLogout }) {
   // Custom hook for cluster management
   const clusterManagement = useClusterManagement(showNotification);
 
-  // Fetch tasks on mount
+  // Fetch tasks on mount and check first time use
   useEffect(() => {
     const initializeDashboard = async () => {
       setIsInitializing(true);
@@ -65,14 +69,22 @@ export default function AdminDashboard({ onLogout }) {
           fetchAllTasks(),
           clusterManagement.fetchLocalNodes()
         ]);
+        // Check first time use and setup completion from backend
+        const status = await axiosClient.get("/api/setup-wizard/status");
+        if (status.data) {
+          setSetupCompleted(!!status.data.setupCompleted);
+          if (status.data.isFirstTimeUse) {
+            setShowSetupWizard(true);
+          }
+        }
       } catch (error) {
         console.error("Failed to initialize dashboard:", error);
         showNotification("error", "Failed to initialize dashboard", faExclamationTriangle);
       } finally {
         setIsInitializing(false);
+        setFirstTimeCheck(false);
       }
     };
-
     initializeDashboard();
   }, [fetchAllTasks]);
 
@@ -139,8 +151,11 @@ export default function AdminDashboard({ onLogout }) {
 
   // Removed periodic refreshing - data will be refreshed on-demand through user actions
 
+  // Overlay lockout if setup is not completed and wizard is not open
+  const showLockout = !setupCompleted && !showSetupWizard && !isInitializing;
+
   return (
-    <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans">
+    <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans relative">
       {/* Notification banner */}
       {notification.isVisible && (
         <div
@@ -176,6 +191,23 @@ export default function AdminDashboard({ onLogout }) {
         </div>
       ) : (
         <>
+          {/* Lockout overlay if setup not completed */}
+          {showLockout && (
+            <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black bg-opacity-80">
+              <FontAwesomeIcon icon={faCog} spin className="text-5xl text-blue-400 mb-6" />
+              <h2 className="text-3xl font-bold text-white mb-2">Complete Initial Setup</h2>
+              <p className="text-lg text-neutral-300 mb-6 max-w-xl text-center">
+                The TrustQuery setup wizard must be completed before you can use the admin dashboard.<br />
+                Please follow the guided setup to configure your environment.
+              </p>
+              <button
+                className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-lg text-lg font-semibold shadow-lg"
+                onClick={() => setShowSetupWizard(true)}
+              >
+                Launch Setup Wizard
+              </button>
+            </div>
+          )}
           <div className="max-w-12xl mx-auto px-4 sm:px-6 lg:px-8 py-8 bg-neutral-900 shadow-2xl rounded-xl border border-neutral-700">
         <div className="flex justify-between items-center mb-10 pb-4 border-b border-neutral-700">
           <h1 className="text-5xl font-extrabold text-primary">
@@ -195,42 +227,46 @@ export default function AdminDashboard({ onLogout }) {
         <div className="mb-8 border-b border-neutral-700">
           <nav className="flex space-x-8">
             <button
-              onClick={() => setActiveTab("files")}
+              onClick={() => setupCompleted && setActiveTab("files")}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
                 activeTab === "files"
                   ? "border-primary text-primary"
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
-              }`}
+              } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!setupCompleted}
             >
               File Management
             </button>
             <button
-              onClick={() => setActiveTab("cluster")}
+              onClick={() => setupCompleted && setActiveTab("cluster")}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
                 activeTab === "cluster"
                   ? "border-primary text-primary"
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
-              }`}
+              } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!setupCompleted}
             >
               Node Management
             </button>
             <button
-              onClick={() => setActiveTab("configuration")}
+              onClick={() => setupCompleted && setActiveTab("configuration")}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
                 activeTab === "configuration"
                   ? "border-primary text-primary"
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
-              }`}
+              } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!setupCompleted}
             >
               Configuration
             </button>
             <button
-              onClick={() => setActiveTab("accounts")}
+              onClick={() => setupCompleted && setActiveTab("accounts")}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
                 activeTab === "accounts"
                   ? "border-primary text-primary"
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
-              }`}
+              } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!setupCompleted}
             >
               Account Management
             </button>
@@ -249,19 +285,18 @@ export default function AdminDashboard({ onLogout }) {
           <FilesManagement 
             showNotification={showNotification}
             isAnyTaskRunning={isAnyTaskRunning}
-            showEditModal={false} // Files management doesn't have edit modal
+            showEditModal={false}
             setTasksList={setTasksList}
             setCurrentRunningTaskId={setCurrentRunningTaskId}
-            // Add cluster data for parsing options (indices are fetched per node)
             availableNodes={clusterManagement.localNodes || []}
             enhancedNodesData={clusterManagement.enhancedNodesData || {}}
+            disabled={!setupCompleted}
           />
         )}
 
         {/* Node Management Tab */}
         {activeTab === "cluster" && (
           <ClusterManagement 
-            // Local node state
             localNodes={clusterManagement.localNodes}
             enhancedNodesData={clusterManagement.enhancedNodesData}
             clusterLoading={clusterManagement.clusterLoading}
@@ -270,14 +305,13 @@ export default function AdminDashboard({ onLogout }) {
             handleStartLocalNode={clusterManagement.handleStartLocalNode}
             handleStopLocalNode={clusterManagement.handleStopLocalNode}
             handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
-            // Modal controls
-            setShowLocalNodeManager={setShowLocalNodeManager}
-            // Other
+            setShowLocalNodeManager={setupCompleted ? setShowLocalNodeManager : () => {}}
             isAnyTaskRunning={isAnyTaskRunning}
             formatBytes={formatBytes}
-            onEditNode={handleEditNode}
-            onOpenNodeDetails={handleOpenNodeDetails}
+            onEditNode={setupCompleted ? handleEditNode : () => {}}
+            onOpenNodeDetails={setupCompleted ? handleOpenNodeDetails : () => {}}
             showNotification={showNotification}
+            disabled={!setupCompleted}
           />
         )}
 
@@ -286,7 +320,8 @@ export default function AdminDashboard({ onLogout }) {
           <ConfigurationManagement 
             showNotification={showNotification}
             enhancedNodesData={clusterManagement.enhancedNodesData || {}}
-            setShowSetupWizard={setShowSetupWizard}
+            setShowSetupWizard={setupCompleted ? setShowSetupWizard : () => {}}
+            disabled={!setupCompleted}
           />
         )}
 
@@ -296,29 +331,31 @@ export default function AdminDashboard({ onLogout }) {
             showNotification={showNotification}
             isAnyTaskRunning={isAnyTaskRunning}
             enhancedNodesData={clusterManagement.enhancedNodesData || {}}
+            disabled={!setupCompleted}
           />
         )}
       </div>
 
       {/* Modals Section - Moved outside main container for proper overlay */}
       {/* Local Node Manager */}
-      {showLocalNodeManager && (
+      {showLocalNodeManager && setupCompleted && (
         <LocalNodeManager
           isOpen={showLocalNodeManager}
           onClose={() => {
             setShowLocalNodeManager(false);
-            setNodeToEdit(null); // Reset on close
+            setNodeToEdit(null);
           }}
           clusterManagement={clusterManagement}
           nodeToEdit={nodeToEdit}
           mode={nodeToEdit ? 'edit' : 'create'}
+          disabled={!setupCompleted}
         />
       )}
 
 
 
       {/* Advanced Add Node Modal */}
-      {showAddNodeModal && (
+      {showAddNodeModal && setupCompleted && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
           <div className="bg-neutral-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl border border-neutral-700 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
@@ -342,6 +379,7 @@ export default function AdminDashboard({ onLogout }) {
                   onChange={(e) => clusterManagement.setNewNodeUrl(e.target.value)}
                   placeholder="http://localhost:9200"
                   className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={!setupCompleted}
                 />
                 <p className="text-sm text-neutral-400 mt-1">
                   Enter the complete URL including protocol (http/https) and port
@@ -359,15 +397,18 @@ export default function AdminDashboard({ onLogout }) {
                 <button
                   onClick={() => setShowAddNodeModal(false)}
                   className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out"
+                  disabled={!setupCompleted}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => {
-                    clusterManagement.handleAddNode();
-                    setShowAddNodeModal(false);
+                    if (setupCompleted) {
+                      clusterManagement.handleAddNode();
+                      setShowAddNodeModal(false);
+                    }
                   }}
-                  disabled={!clusterManagement.newNodeUrl.trim()}
+                  disabled={!clusterManagement.newNodeUrl.trim() || !setupCompleted}
                   className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Add Node
@@ -379,12 +420,13 @@ export default function AdminDashboard({ onLogout }) {
       )}
 
       <NodeDetailsModal 
-        show={showNodeDetailsModal}
+        show={showNodeDetailsModal && setupCompleted}
         onClose={handleCloseNodeDetails}
         node={selectedNodeForDetails}
         formatBytes={formatBytes}
         enhancedNodesData={clusterManagement.enhancedNodesData || {}}
         onRefreshNodes={clusterManagement.fetchLocalNodes}
+        disabled={!setupCompleted}
       />
 
       {/* Cluster Setup Wizard */}
@@ -394,6 +436,7 @@ export default function AdminDashboard({ onLogout }) {
           onClose={() => setShowSetupWizard(false)}
           onComplete={() => {
             setShowSetupWizard(false);
+            setSetupCompleted(true); // Instantly unlock dashboard after /initialize
             clusterManagement.fetchLocalNodes(); // Refresh nodes after setup
             showNotification("success", "Cluster setup completed successfully!", faCheckCircle);
           }}
