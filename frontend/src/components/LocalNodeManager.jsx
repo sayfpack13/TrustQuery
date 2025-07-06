@@ -51,8 +51,13 @@ const LocalNodeManager = ({
   const [isCopying, setIsCopying] = useState(false);
 
   const updatePathsForNewName = (newName, oldName, currentDataPath, currentLogsPath, setDataPath, setLogsPath) => {
-    const defaultDataPath = (name) => `C:\\elasticsearch\\nodes\\${name}\\data`;
-    const defaultLogsPath = (name) => `C:\\elasticsearch\\nodes\\${name}\\logs`;
+    // Dynamically get base path from backend config (window.trustqueryConfig is set by backend if available)
+    let basePath = 'C://elasticsearch';
+    if (window.trustqueryConfig && window.trustqueryConfig.elasticsearchBasePath) {
+      basePath = window.trustqueryConfig.elasticsearchBasePath;
+    }
+    const defaultDataPath = (name) => `${basePath}\\nodes\\${name}\\data`;
+    const defaultLogsPath = (name) => `${basePath}\\nodes\\${name}\\logs`;
 
     if (oldName !== newName) {
         // Update data path if it's empty or was the default for the old name

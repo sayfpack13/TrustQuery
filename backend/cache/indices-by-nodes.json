@@ -1,1 +1,14 @@
-{}
+{
+  "test": {
+    "status": "offline",
+    "last_updated": null,
+    "indices": {},
+    "isRunning": false
+  },
+  "test2": {
+    "status": "offline",
+    "last_updated": null,
+    "indices": {},
+    "isRunning": false
+  }
+}

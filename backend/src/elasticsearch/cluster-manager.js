@@ -7,7 +7,14 @@ const yaml = require('yaml');
 
 class ElasticsearchClusterManager {
   constructor() {
-    this.baseElasticsearchPath = 'C:\\elasticsearch'; // Default path
+    // Dynamically load base path from config.json (set by setup-wizard)
+    const { getConfig } = require('../config');
+    const config = getConfig();
+    // Try to get from setupWizard or elasticsearchConfig, fallback to C:\elasticsearch
+    this.baseElasticsearchPath =
+      (config.setupWizard && config.setupWizard.basePath) ||
+      (config.elasticsearchConfig && config.elasticsearchConfig.basePath) ||
+      'C:\\elasticsearch';
     this.javaPath = 'java'; // Assumes Java is in PATH
   }
 
