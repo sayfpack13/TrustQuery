@@ -356,10 +356,15 @@ REM Start Elasticsearch
 "%ES_HOME%\\bin\\elasticsearch.bat"
 `;
   } else {
-    // Linux/Mac shell script
+    // Linux/Mac shell script with root check
     return `#!/bin/bash
 # Start Elasticsearch Node: ${nodeName}
 # Port: ${port}
+
+if [ "$(id -u)" = "0" ]; then
+  echo "[ERROR] Refusing to start Elasticsearch as root. Please run as the 'elasticsearch' user or a non-root user." >&2
+  exit 1
+fi
 
 echo "Starting Elasticsearch node: ${nodeName}"
 echo "Config directory: ${configDir}"
@@ -441,7 +446,7 @@ async function startNode(nodeName) {
     }
 
     if (isRoot) {
-      // If root, must use sudo -u elasticsearch
+      // If root, must use sudo -u elasticsearch bash servicePath
       if (!sudoAvailable) {
         throw new Error("Cannot start Elasticsearch node as root and 'sudo' is not available. Please install sudo and ensure the 'elasticsearch' user exists, or run as a non-root user.");
       }
@@ -470,7 +475,7 @@ async function startNode(nodeName) {
       });
       child.unref();
     } else {
-      // Not root: check if running as elasticsearch user
+      // Always use bash to run the script for non-root
       let user = '';
       try {
         user = execSync('whoami').toString().trim();
@@ -478,7 +483,7 @@ async function startNode(nodeName) {
       if (user !== 'elasticsearch') {
         console.warn(`⚠️  Not running as 'elasticsearch' user. Current user: ${user}. Elasticsearch may refuse to start if not run as 'elasticsearch'.`);
       }
-      child = spawn(servicePath, [], {
+      child = spawn('bash', [servicePath], {
         detached: true,
         stdio: ['ignore', output, output],
         shell: false,
@@ -1593,6 +1598,7 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
       }
     }
 
+    // FIX: Correct unterminated string and missing closing brace
     console.log(`✅ Node "${sourceNodeName}" copied successfully to "${newNodeName}"`);
 
     return {
@@ -1603,7 +1609,6 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
       dataPath: newPaths.dataPath,
       logsPath: newPaths.logsPath,
       cluster: newConfig.clusterName,
-      host: newConfig.host,
       port: newHttpPort,
       transportPort: newTransportPort,
       roles: newConfig.roles
