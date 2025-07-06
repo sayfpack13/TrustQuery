@@ -22,6 +22,7 @@ import ConfigurationManagement from "./AdminDashboard/components/ConfigurationMa
 import AccountManagement from "./AdminDashboard/components/AccountManagement";
 import TaskDetails from "./AdminDashboard/components/TaskDetails";
 import NodeDetailsModal from "./AdminDashboard/components/NodeDetailsModal";
+import { formatBytes } from "../utils/format";
 
 export default function AdminDashboard({ onLogout }) {
   // First time use detection
@@ -101,14 +102,7 @@ export default function AdminDashboard({ onLogout }) {
 
   // (REMOVED) Hide setup banner if nodes are configured
 
-  // Helper function to format bytes
-  function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  }
+
 
   // REMOVE: Setup wizard notification/banner from dashboard UI. It is now only accessible from the Configuration tab.
 
@@ -395,13 +389,6 @@ export default function AdminDashboard({ onLogout }) {
               
               <div className="flex justify-end space-x-3 mt-6">
                 <button
-                  onClick={() => setShowAddNodeModal(false)}
-                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out"
-                  disabled={!setupCompleted}
-                >
-                  Cancel
-                </button>
-                <button
                   onClick={() => {
                     if (setupCompleted) {
                       clusterManagement.handleAddNode();
@@ -412,6 +399,13 @@ export default function AdminDashboard({ onLogout }) {
                   className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Add Node
+                </button>
+                                <button
+                  onClick={() => setShowAddNodeModal(false)}
+                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out"
+                  disabled={!setupCompleted}
+                >
+                  Cancel
                 </button>
               </div>
             </div>

@@ -364,6 +364,24 @@ const LocalNodeManager = ({
           </button>
         </div>
 
+
+        {/* Running Node Warning - Show only in edit mode when node is running */}
+        {mode === 'edit' && nodeToEdit?.isRunning && (
+          <div className="mt-3 mb-3 p-4 bg-amber-900 rounded-lg border border-amber-700">
+            <h3 className="text-lg font-semibold text-amber-100 mb-2 flex items-center">
+              <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
+              Node is Currently Running
+            </h3>
+            <p className="text-amber-200 text-sm mb-3">
+              All configuration fields are disabled while the node is running. Stop the node first to make any changes to its configuration. Changes to a running node would require a restart to take effect anyway.
+            </p>
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+              <span className="text-amber-200 text-sm font-medium">Status: Running on port {nodeToEdit.port}</span>
+            </div>
+          </div>
+        )}
+
         {/* Content */}
         <div className="p-6 space-y-6">
           {/* Basic Configuration */}
@@ -647,38 +665,9 @@ const LocalNodeManager = ({
             </div>
           </div>
 
-          {/* Help Text */}
-          <div className="p-4 bg-neutral-900 rounded-lg border border-dashed border-neutral-700">
-            <div className="flex items-start space-x-3">
-              <FontAwesomeIcon icon={faInfoCircle} className="text-blue-400 mt-1" />
-              <div>
-                <h4 className="text-blue-200 font-medium mb-2">Local Node Management</h4>
-                <p className="text-blue-200 text-sm">
-                  This creates a fully configured Elasticsearch node that can run independently. 
-                  Each node has its own configuration file, data directory, and startup script.
-                  Nodes can be started, stopped, and managed individually without affecting others.
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
 
-        {/* Running Node Warning - Show only in edit mode when node is running */}
-        {mode === 'edit' && nodeToEdit?.isRunning && (
-          <div className="mt-6 p-4 bg-amber-900 rounded-lg border border-amber-700">
-            <h3 className="text-lg font-semibold text-amber-100 mb-2 flex items-center">
-              <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
-              Node is Currently Running
-            </h3>
-            <p className="text-amber-200 text-sm mb-3">
-              All configuration fields are disabled while the node is running. Stop the node first to make any changes to its configuration. Changes to a running node would require a restart to take effect anyway.
-            </p>
-            <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-amber-200 text-sm font-medium">Status: Running on port {nodeToEdit.port}</span>
-            </div>
-          </div>
-        )}
+
 
         {/* Validation Section - Show validation errors and suggestions for both create and edit modes */}
         {showValidationErrors && validationErrors.length > 0 && (
@@ -748,12 +737,6 @@ const LocalNodeManager = ({
 
         {/* Footer */}
         <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">
-          <button
-            onClick={onClose}
-            className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
-          >
-            Cancel
-          </button>
           <button
             onClick={async () => {
               if (mode === 'create') {
@@ -846,6 +829,12 @@ const LocalNodeManager = ({
             <FontAwesomeIcon icon={isValidating ? faSpinner : faServer} className={`mr-2 ${isValidating ? 'fa-spin' : ''}`} />
             {isValidating ? 'Validating...' : isApplyingSuggestions ? 'Applying Changes...' : (mode === 'create' ? 'Create Node' : 'Update Node')}
           </button>
+                    <button
+            onClick={onClose}
+            className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
+          >
+            Cancel
+          </button>
         </div>
       </div>
 
@@ -929,12 +918,6 @@ const LocalNodeManager = ({
 
             <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">
               <button
-                onClick={() => setShowMoveModal(false)}
-                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
-              >
-                Cancel
-              </button>
-              <button
                 onClick={async () => {
                   if (!moveTargetPath.trim()) {
                     return;
@@ -957,6 +940,12 @@ const LocalNodeManager = ({
               >
                 <FontAwesomeIcon icon={isMoving ? faSpinner : faArrowRight} className={`mr-2 ${isMoving ? 'fa-spin' : ''}`} />
                 {isMoving ? 'Moving...' : 'Move Node'}
+              </button>
+                            <button
+                onClick={() => setShowMoveModal(false)}
+                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
+              >
+                Cancel
               </button>
             </div>
           </div>
@@ -1046,12 +1035,6 @@ const LocalNodeManager = ({
 
             <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">
               <button
-                onClick={() => setShowCopyModal(false)}
-                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
-              >
-                Cancel
-              </button>
-              <button
                 onClick={async () => {
                   if (!copyNodeName.trim() || !copyTargetPath.trim()) {
                     return;
@@ -1075,6 +1058,12 @@ const LocalNodeManager = ({
               >
                 <FontAwesomeIcon icon={isCopying ? faSpinner : faCopy} className={`mr-2 ${isCopying ? 'fa-spin' : ''}`} />
                 {isCopying ? 'Copying...' : 'Copy Node'}
+              </button>
+                            <button
+                onClick={() => setShowCopyModal(false)}
+                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
+              >
+                Cancel
               </button>
             </div>
           </div>

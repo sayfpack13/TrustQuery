@@ -669,12 +669,6 @@ export default function FilesManagement({
             {/* Modal Actions */}
             <div className="flex justify-end space-x-3 mt-8">
               <button
-                onClick={closeParsingOptionsModal}
-                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out"
-              >
-                Cancel
-              </button>
-              <button
                 onClick={executeParsingTask}
                 className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={
@@ -695,6 +689,12 @@ export default function FilesManagement({
               >
                 <FontAwesomeIcon icon={faPlay} className="mr-2" />
                 Start Parsing
+              </button>
+                            <button
+                onClick={closeParsingOptionsModal}
+                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out"
+              >
+                Cancel
               </button>
             </div>
           </div>

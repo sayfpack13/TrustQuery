@@ -545,16 +545,22 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
             </div>
             
             {showCreateIndexForm && (
-              <div className="bg-neutral-700 p-4 rounded-lg mb-4">
-                <h4 className="text-lg font-semibold mb-2">New Index</h4>
-                <div className="space-y-2">
-                  <div>
+              <div className="bg-neutral-700 p-6 rounded-lg mb-4 shadow-lg border border-neutral-600 max-w-lg mx-auto">
+                <h4 className="text-xl font-bold mb-4 text-primary flex items-center">
+                  <FontAwesomeIcon icon={faPlus} className="mr-2" />
+                  Create New Index
+                </h4>
+                <form onSubmit={e => { e.preventDefault(); handleCreateIndex(); }}>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-neutral-200 mb-1" htmlFor="index-name">Index Name</label>
                     <input
+                      id="index-name"
                       type="text"
                       value={newIndexName}
                       onChange={(e) => setNewIndexName(e.target.value)}
-                      placeholder="Enter index name (lowercase, no spaces)"
-                      className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 ${
+                      placeholder="e.g. logs-2025"
+                      autoFocus
+                      className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
                         newIndexName && !isValidIndexName 
                           ? 'border-red-500 focus:ring-red-500' 
                           : 'border-neutral-600 focus:ring-blue-500'
@@ -562,19 +568,20 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                     />
                     {newIndexName && !isValidIndexName && (
                       <p className="text-red-400 text-xs mt-1">
-                        Index name must be lowercase with no spaces or special characters
+                        Index name must be lowercase, no spaces or uppercase letters
                       </p>
                     )}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-4 mb-4">
                     <div>
+                      <label className="block text-sm font-medium text-neutral-200 mb-1" htmlFor="index-shards">Shards</label>
                       <input
+                        id="index-shards"
                         type="number"
                         value={newIndexShards}
                         onChange={(e) => setNewIndexShards(e.target.value)}
-                        placeholder="Shards"
                         min="1"
-                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 ${
+                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
                           !isValidShards 
                             ? 'border-red-500 focus:ring-red-500' 
                             : 'border-neutral-600 focus:ring-blue-500'
@@ -585,13 +592,14 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                       )}
                     </div>
                     <div>
+                      <label className="block text-sm font-medium text-neutral-200 mb-1" htmlFor="index-replicas">Replicas</label>
                       <input
+                        id="index-replicas"
                         type="number"
                         value={newIndexReplicas}
                         onChange={(e) => setNewIndexReplicas(e.target.value)}
-                        placeholder="Replicas"
                         min="0"
-                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 ${
+                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
                           !isValidReplicas 
                             ? 'border-red-500 focus:ring-red-500' 
                             : 'border-neutral-600 focus:ring-blue-500'
@@ -602,21 +610,29 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                       )}
                     </div>
                   </div>
-                </div>
-                <div className="flex justify-end mt-2 space-x-2">
-                  <button onClick={() => setShowCreateIndexForm(false)} className="bg-neutral-600 px-3 py-1 rounded">Cancel</button>
-                  <button 
-                    onClick={handleCreateIndex} 
-                    className="bg-primary px-3 py-1 rounded w-24 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600" 
-                    disabled={disabled || isCreatingIndex || !node.isRunning || !isFormValid}
-                    title={
-                      !node.isRunning ? "Node must be running to create indices" : 
-                      !isFormValid ? "Please fix validation errors" : ""
-                    }
-                  >
-                    {isCreatingIndex ? <FontAwesomeIcon icon={faCircleNotch} spin /> : 'Confirm'}
-                  </button>
-                </div>
+                  <div className="flex justify-end gap-2 mt-6">
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateIndexForm(false)}
+                      className="px-4 py-2 rounded bg-neutral-600 hover:bg-neutral-500 text-white font-medium transition-colors"
+                      disabled={isCreatingIndex}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 rounded bg-primary hover:bg-blue-500 text-white font-semibold shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600 flex items-center gap-2"
+                      disabled={disabled || isCreatingIndex || !node.isRunning || !isFormValid}
+                      title={
+                        !node.isRunning ? "Node must be running to create indices" : 
+                        !isFormValid ? "Please fix validation errors" : ""
+                      }
+                    >
+                      {isCreatingIndex ? <FontAwesomeIcon icon={faCircleNotch} spin /> : <FontAwesomeIcon icon={faPlus} />} 
+                      {isCreatingIndex ? 'Creating...' : 'Create Index'}
+                    </button>
+                  </div>
+                </form>
               </div>
             )}
             
@@ -793,11 +809,11 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
               Are you sure you want to delete the index <span className="font-bold text-white">{indexToDelete?.index}</span>? This action cannot be undone.
             </p>
             <div className="flex justify-end space-x-4">
-              <button onClick={() => setShowDeleteModal(false)} className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg">
-                Cancel
-              </button>
               <button onClick={confirmDelete} className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg">
                 Delete
+              </button>
+                            <button onClick={() => setShowDeleteModal(false)} className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg">
+                Cancel
               </button>
             </div>
           </div>

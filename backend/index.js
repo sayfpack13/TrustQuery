@@ -15,18 +15,8 @@ const { loadConfig: loadCentralizedConfig, getConfig, setConfig, saveConfig } = 
 
 // Configuration state will be managed by centralized config module
 
-// Helper to format bytes into a human-readable string
-function formatBytes(bytes, decimals = 2) {
-    if (!+bytes) return '0 Bytes'
-
-    const k = 1024
-    const dm = decimals < 0 ? 0 : decimals
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
-
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`
-}
+// Use shared formatBytes utility
+const { formatBytes } = require('./src/utils/format');
 
 const app = express();
 const PORT = process.env.PORT || 5000;

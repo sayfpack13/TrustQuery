@@ -69,16 +69,8 @@ export default function ClusterManagement({
   const getTotalStorage = (nodeData) => {
     if (!nodeData.indices || !Array.isArray(nodeData.indices)) return 0;
     return nodeData.indices.reduce((total, index) => {
-      if (index.storeSize) return total + index.storeSize;
-      if (index["store.size"]) {
-        // Parse size string like "1.2kb", "5.6mb", etc.
-        const sizeStr = index["store.size"].toLowerCase();
-        const value = parseFloat(sizeStr);
-        if (sizeStr.includes("kb")) return total + value * 1024;
-        if (sizeStr.includes("mb")) return total + value * 1024 * 1024;
-        if (sizeStr.includes("gb")) return total + value * 1024 * 1024 * 1024;
-        if (sizeStr.includes("b")) return total + value;
-      }
+      // Use store_size (number, in bytes) from backend
+      if (typeof index.store_size === 'number') return total + index.store_size;
       return total;
     }, 0);
   };

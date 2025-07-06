@@ -34,21 +34,29 @@ async function setCache(data) {
     await fs.writeFile(CACHE_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
-async function refreshCacheForRunningNodes() {
+/**
+ * Refresh cache for running nodes. Accepts an optional node list to avoid redundant listNodes() calls.
+ * @param {Array} nodes Optional array of node objects (with isRunning, host, port, etc)
+ */
+async function refreshCacheForRunningNodes(nodes) {
     // Reduced logging for regular refresh operations
     const currentCache = await getCache();
 
     let runningNodes;
-    try {
-        const allNodes = await clusterManager.listNodes();
-        runningNodes = allNodes || [];
-        // Only log if there are running nodes to avoid spam
-        if (runningNodes.filter(n => n.isRunning).length > 0) {
-            console.log(`Found ${runningNodes.length} configured nodes, ${runningNodes.filter(n => n.isRunning).length} running`);
+    if (Array.isArray(nodes)) {
+        runningNodes = nodes;
+    } else {
+        try {
+            const allNodes = await clusterManager.listNodes();
+            runningNodes = allNodes || [];
+            // Only log if there are running nodes to avoid spam
+            if (runningNodes.filter(n => n.isRunning).length > 0) {
+                console.log(`Found ${runningNodes.length} configured nodes, ${runningNodes.filter(n => n.isRunning).length} running`);
+            }
+        } catch (error) {
+            console.error('Could not get running nodes from Elasticsearch. Assuming all are offline.', error);
+            runningNodes = [];
         }
-    } catch (error) {
-        console.error('Could not get running nodes from Elasticsearch. Assuming all are offline.', error);
-        runningNodes = [];
     }
 
     const newCache = {};
