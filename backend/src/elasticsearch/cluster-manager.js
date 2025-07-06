@@ -409,10 +409,22 @@ async function startNode(nodeName) {
       windowsHide: true,
     });
   } else {
-    child = spawn('bash', [servicePath], {
+    // On Linux/Mac, execute the script directly (must be executable)
+    try {
+      await fs.chmod(servicePath, 0o755); // Ensure executable
+    } catch (chmodErr) {
+      console.warn(`Could not chmod service script: ${servicePath} - ${chmodErr.message}`);
+    }
+    child = spawn(servicePath, [], {
       detached: true,
       stdio: ['ignore', output, output],
       shell: false,
+      env: {
+        ...process.env,
+        ES_HOME: env.baseElasticsearchPath,
+        ES_PATH_CONF: path.dirname(servicePath),
+        ES_JAVA_OPTS: '-Xms1g -Xmx1g',
+      },
     });
   }
   child.unref();

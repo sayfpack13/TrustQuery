@@ -1287,32 +1287,56 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
   try {
     console.log(`🔍 Retrieving stats for node: ${req.params.nodeName}`);
     const { nodeName } = req.params;
-    
+
     // Get the Elasticsearch client
     const es = getES();
-    
-    // Get node stats specifically for this node
-    const nodeStats = await es.nodes.stats({
-      metric: ['fs', 'os', 'jvm'],
-      node_id: nodeName
-    });
-    
-    // If no stats found for the exact node name, try to find by node name
+
+    // Defensive: Await node stats, handle undefined/null response
+    let nodeStats;
+    try {
+      nodeStats = await es.nodes.stats({
+        metric: ['fs', 'os', 'jvm'],
+        node_id: nodeName
+      });
+    } catch (err) {
+      console.warn(`Failed to get node stats for ${nodeName} by node_id:`, err.message);
+      nodeStats = null;
+    }
+
     let targetNodeStats = null;
-    const nodeIds = Object.keys(nodeStats.nodes);
-    
-    if (nodeIds.length === 0) {
+    let nodeIds = [];
+    if (nodeStats && nodeStats.nodes && typeof nodeStats.nodes === 'object') {
+      nodeIds = Object.keys(nodeStats.nodes);
+    }
+
+    if (!nodeStats || !nodeStats.nodes || nodeIds.length === 0) {
       // Try to find the node by name in the cluster
-      const nodesInfo = await es.nodes.info();
-      const nodeEntry = Object.entries(nodesInfo.nodes).find(([, info]) => info.name === nodeName);
-      
+      let nodesInfo;
+      try {
+        nodesInfo = await es.nodes.info();
+      } catch (err) {
+        console.warn(`Failed to get nodes.info for fallback:`, err.message);
+        nodesInfo = null;
+      }
+      let nodeEntry = null;
+      if (nodesInfo && nodesInfo.nodes && typeof nodesInfo.nodes === 'object') {
+        nodeEntry = Object.entries(nodesInfo.nodes).find(([, info]) => info.name === nodeName);
+      }
       if (nodeEntry) {
         const [nodeId] = nodeEntry;
-        const specificStats = await es.nodes.stats({
-          metric: ['fs', 'os', 'jvm'],
-          node_id: nodeId
-        });
-        targetNodeStats = specificStats.nodes[nodeId];
+        let specificStats;
+        try {
+          specificStats = await es.nodes.stats({
+            metric: ['fs', 'os', 'jvm'],
+            node_id: nodeId
+          });
+        } catch (err) {
+          console.warn(`Failed to get node stats for fallback nodeId ${nodeId}:`, err.message);
+          specificStats = null;
+        }
+        if (specificStats && specificStats.nodes && specificStats.nodes[nodeId]) {
+          targetNodeStats = specificStats.nodes[nodeId];
+        }
       }
     } else {
       // Use the first (and likely only) node in the response
@@ -1322,32 +1346,32 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
     if (!targetNodeStats) {
       return res.status(404).json({ error: `No statistics found for node "${nodeName}"` });
     }
-    
+
     // Format disk information
-    const diskInfo = targetNodeStats.fs && targetNodeStats.fs.data ? 
+    const diskInfo = targetNodeStats.fs && Array.isArray(targetNodeStats.fs.data) ?
       targetNodeStats.fs.data.map(disk => ({
         path: disk.path,
         total: disk.total_in_bytes,
         free: disk.free_in_bytes,
         available: disk.available_in_bytes,
         used: disk.total_in_bytes - disk.free_in_bytes,
-        usedPercent: Math.round(((disk.total_in_bytes - disk.free_in_bytes) / disk.total_in_bytes) * 100)
+        usedPercent: disk.total_in_bytes > 0 ? Math.round(((disk.total_in_bytes - disk.free_in_bytes) / disk.total_in_bytes) * 100) : 0
       })) : [];
-    
+
     // Format OS information if available
     const osInfo = targetNodeStats.os ? {
       cpu: targetNodeStats.os.cpu,
       mem: targetNodeStats.os.mem,
       swap: targetNodeStats.os.swap
     } : null;
-    
+
     // Format JVM information if available
-    const jvmInfo = targetNodeStats.jvm ? {
+    const jvmInfo = targetNodeStats.jvm && targetNodeStats.jvm.mem ? {
       heap_used_percent: targetNodeStats.jvm.mem.heap_used_percent,
       heap_used: targetNodeStats.jvm.mem.heap_used_in_bytes,
       heap_max: targetNodeStats.jvm.mem.heap_max_in_bytes
     } : null;
-    
+
     res.json({
       nodeName,
       diskInfo,
@@ -1355,7 +1379,7 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
       jvmInfo,
       timestamp: new Date().toISOString()
     });
-    
+
   } catch (error) {
     console.error("Error getting node stats:", error);
     res.status(500).json({ error: "Failed to get node statistics: " + error.message });
