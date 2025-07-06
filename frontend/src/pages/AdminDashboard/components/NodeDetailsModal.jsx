@@ -612,14 +612,6 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                   </div>
                   <div className="flex justify-end gap-2 mt-6">
                     <button
-                      type="button"
-                      onClick={() => setShowCreateIndexForm(false)}
-                      className="px-4 py-2 rounded bg-neutral-600 hover:bg-neutral-500 text-white font-medium transition-colors"
-                      disabled={isCreatingIndex}
-                    >
-                      Cancel
-                    </button>
-                    <button
                       type="submit"
                       className="px-5 py-2 rounded bg-primary hover:bg-blue-500 text-white font-semibold shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600 flex items-center gap-2"
                       disabled={disabled || isCreatingIndex || !node.isRunning || !isFormValid}
@@ -630,6 +622,14 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                     >
                       {isCreatingIndex ? <FontAwesomeIcon icon={faCircleNotch} spin /> : <FontAwesomeIcon icon={faPlus} />} 
                       {isCreatingIndex ? 'Creating...' : 'Create Index'}
+                    </button>
+                                        <button
+                      type="button"
+                      onClick={() => setShowCreateIndexForm(false)}
+                      className="px-4 py-2 rounded bg-neutral-600 hover:bg-neutral-500 text-white font-medium transition-colors"
+                      disabled={isCreatingIndex}
+                    >
+                      Cancel
                     </button>
                   </div>
                 </form>

@@ -378,149 +378,171 @@ export ES_JAVA_OPTS="-Xms1g -Xmx1g"
  * Start an Elasticsearch node
  */
 async function startNode(nodeName) {
+  const env = getEnvAndConfig();
+  const metadata = getNodeMetadata(nodeName);
+  let servicePath;
+  if (metadata && metadata.servicePath) {
+    servicePath = metadata.servicePath;
+  } else {
+    const serviceFileName = env.isWindows ? 'start-node.bat' : 'start-node.sh';
+    servicePath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', serviceFileName);
+  }
+  // Ensure service file exists
   try {
-    const env = getEnvAndConfig();
-    // Get the correct service path from metadata
-    const metadata = getNodeMetadata(nodeName);
-    let servicePath;
-    if (metadata && metadata.servicePath) {
-      servicePath = metadata.servicePath;
-      console.log(`🔍 Using service path from metadata: ${servicePath}`);
-    } else {
-      // Fallback to new organized path structure
-      const serviceFileName = env.isWindows ? 'start-node.bat' : 'start-node.sh';
-      servicePath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', serviceFileName);
-      console.log(`🔍 Using new organized service path: ${servicePath}`);
+    await fs.access(servicePath);
+  } catch (error) {
+    throw new Error(`Service file not found: ${servicePath}`);
+  }
+  // Get node config for port and log path
+  const nodeConfig = await getNodeConfig(nodeName);
+  const logDir = (await getNodeMetadata(nodeName)).logsPath;
+  await fs.mkdir(logDir, { recursive: true });
+  const startupLogPath = path.join(logDir, 'startup.log');
+  const output = await fs.open(startupLogPath, 'a');
+  // Spawn process
+  let child;
+  if (env.isWindows) {
+    child = spawn(servicePath, [], {
+      detached: true,
+      stdio: ['ignore', output, output],
+      shell: true,
+      windowsHide: true,
+    });
+  } else {
+    child = spawn('bash', [servicePath], {
+      detached: true,
+      stdio: ['ignore', output, output],
+      shell: false,
+    });
+  }
+  child.unref();
+  // Write PID file immediately
+  let nodeConfigDir;
+  if (metadata && metadata.configPath) {
+    nodeConfigDir = path.dirname(metadata.configPath);
+  } else {
+    nodeConfigDir = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config');
+  }
+  const pidFilePath = path.join(nodeConfigDir, 'pid.json');
+  await fs.writeFile(pidFilePath, JSON.stringify({ pid: child.pid }), 'utf8');
+  // Poll for port readiness (background, not blocking PID file)
+  const port = nodeConfig.http.port;
+  let foundPid = null;
+  for (let i = 0; i < 60; i++) { // up to 60s
+    foundPid = await findPidByPort(port);
+    if (foundPid) break;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  await output.close();
+  if (foundPid) {
+    // Optionally update PID file if different
+    if (foundPid !== child.pid) {
+      await fs.writeFile(pidFilePath, JSON.stringify({ pid: foundPid }), 'utf8');
     }
-
-    // Verify the service file exists
+    // Re-initialize clients
     try {
-      await fs.access(servicePath);
-      console.log(`✅ Service file found: ${servicePath}`);
-    } catch (error) {
-      throw new Error(`Service file not found: ${servicePath}. Error: ${error.message}`);
-    }
-
-    // Get node config early to have access to paths
-    const nodeConfig = await getNodeConfig(nodeName);
-
-    // Create a log file for startup output in the correct logs directory
-    const logDir = (await getNodeMetadata(nodeName)).logsPath;
-    await fs.mkdir(logDir, { recursive: true });
-    const startupLogPath = path.join(logDir, 'startup.log');
-    const output = await fs.open(startupLogPath, 'a');
-
-    console.log(`🚀 Starting node ${nodeName} using: ${servicePath}`);
-    console.log(`📁 Logs will be written to: ${startupLogPath}`);
-    console.log(`🔧 Node will run on port: ${nodeConfig.http.port}`);
-
-    // Use correct spawn logic for platform
-    let child;
-    if (env.isWindows) {
-      child = spawn(servicePath, [], {
-        detached: true,
-        stdio: ['ignore', output, output],
-        shell: true,
-        windowsHide: true,
-      });
-    } else if (env.isLinux) {
-      // Ensure 'elasticsearch' user exists
-      const { execSync } = require('child_process');
-      try {
-        execSync('id -u elasticsearch', { stdio: 'ignore' });
-      } catch (e) {
-        // User does not exist, create it
-        try {
-          execSync('sudo useradd -r -s /usr/sbin/nologin elasticsearch', { stdio: 'ignore' });
-          console.log('Created elasticsearch user.');
-        } catch (err) {
-          console.error('Failed to create elasticsearch user:', err.message);
-          throw new Error('Failed to create elasticsearch user. Please create it manually or run as root.');
-        }
-      }
-      // Start as elasticsearch user
-      child = spawn('sudo', ['-u', 'elasticsearch', 'bash', servicePath], {
-        detached: true,
-        stdio: ['ignore', output, output],
-        shell: false,
-      });
-    } else {
-      // Mac or other
-      child = spawn('bash', [servicePath], {
-        detached: true,
-        stdio: ['ignore', output, output],
-        shell: false,
-      });
-    }
-
-    console.log(`🆔 Child process spawned with PID: ${child.pid}`);
-    child.unref();
-
-    console.log(`🚀 Start command issued for ${nodeName}. Tailing startup log at: ${startupLogPath}`);
-
-    // Give Elasticsearch more time to initialize before we start checking
-    console.log(`⏳ Waiting 10 seconds for Elasticsearch to initialize...`);
-    await new Promise(resolve => setTimeout(resolve, 10000));
-
-    // Find the real PID by polling the port
-    const port = nodeConfig.http.port;
-    if (!port) {
-      throw new Error(`Could not determine port for node ${nodeName}.`);
-    }
-
-    console.log(`🔍 Checking for process on port ${port}...`);
-    const pid = await findPidByPort(port);
-    if (pid) {
-      // Get the config directory from the service path or metadata
-      let nodeConfigDir;
-      if (metadata && metadata.configPath) {
-        nodeConfigDir = path.dirname(metadata.configPath);
-      } else {
-        nodeConfigDir = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config');
-      }
-
-      const pidFilePath = path.join(nodeConfigDir, 'pid.json');
-      await fs.writeFile(pidFilePath, JSON.stringify({ pid }), 'utf8');
-      console.log(`✅ Started Elasticsearch node: ${nodeName} with PID: ${pid} on port ${port}`);
-
-      // Re-initialize clients so the app can connect
       const { initializeElasticsearchClients } = require('./client');
       initializeElasticsearchClients();
-
-      // Refresh indices cache after successful node start
-      try {
-        const { refreshCache, syncSearchIndices } = require('../cache/indices-cache');
-        const config = getConfig();
-        await refreshCache(config);
-        await syncSearchIndices(config);
-        console.log(`🔄 Persistent indices cache and searchIndices synchronized after starting node ${nodeName}`);
-      } catch (cacheError) {
-        console.warn(`⚠️ Failed to refresh persistent indices cache after starting node ${nodeName}:`, cacheError.message);
-      }
-
-      await output.close();
-      return { success: true, pid };
-    } else {
-      await output.close();
-      // If the process isn't found, read the startup log to provide more context
-      console.log(`📋 Reading startup log for debugging...`);
-      const startupLog = await fs.readFile(startupLogPath, 'utf8').catch(() => "Could not read startup.log.");
-
-      // Also, try to read the actual Elasticsearch log file for more detailed errors.
-      const esLogPath = path.join(nodeConfig.path.logs, 'elasticsearch.log');
-      console.log(`📋 Reading elasticsearch log for debugging...`);
-      const esLog = await fs.readFile(esLogPath, 'utf8').catch(() => "Could not read elasticsearch.log.");
-
-      console.log(`📋 Startup Log Content:\n${startupLog.slice(-1000)}`); // Last 1000 chars
-      console.log(`📋 Elasticsearch Log Content:\n${esLog.slice(-1000)}`); // Last 1000 chars
-
-      throw new Error(`Failed to confirm node start for ${nodeName}. Could not find process on port ${port}.\n\nLast 1000 chars of Startup Log:\n${startupLog.slice(-1000)}\n\nLast 1000 chars of Elasticsearch Log:\n${esLog.slice(-1000)}`);
-    }
-
-  } catch (error) {
-    console.error(`❌ Failed to start node ${nodeName}:`, error);
-    throw error;
+    } catch {}
+    // Refresh cache
+    try {
+      const { refreshCache, syncSearchIndices } = require('../cache/indices-cache');
+      const config = getConfig();
+      await refreshCache(config);
+      await syncSearchIndices(config);
+    } catch {}
+    return { success: true, pid: foundPid };
+  } else {
+    // Read logs for debugging
+    let startupLog = '';
+    let esLog = '';
+    try {
+      startupLog = await fs.readFile(startupLogPath, 'utf8');
+    } catch {}
+    try {
+      esLog = await fs.readFile(path.join(nodeConfig.path.logs, 'elasticsearch.log'), 'utf8');
+    } catch {}
+    throw new Error(`Failed to confirm node start for ${nodeName}.\nStartup log:\n${startupLog.slice(-1000)}\nES log:\n${esLog.slice(-1000)}`);
   }
+}
+
+// --- CLEAN, ROBUST CROSS-PLATFORM PORT-TO-PID DETECTION ---
+async function findPidByPort(port) {
+  const { isWindows } = getEnvAndConfig();
+  try {
+    if (isWindows) {
+      let output = '';
+      try {
+        output = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', stdio: 'pipe' });
+      } catch (e) {
+        output = '';
+      }
+      const lines = output.trim().split(/\r?\n/);
+      for (const line of lines) {
+        // Accept any line with :PORT and LISTENING (IPv4 or IPv6)
+        if (line.includes(`:${port}`) && /LISTENING/i.test(line)) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parseInt(parts[parts.length - 1], 10);
+          if (pid > 0) {
+            console.log(`[findPidByPort] Windows: Matched line: ${line}`);
+            return pid;
+          }
+        }
+      }
+    } else {
+      // Try netstat -tulnp (tcp and tcp6)
+      let output = '';
+      try {
+        output = execSync('netstat -tulnp', { encoding: 'utf8', stdio: 'pipe' });
+      } catch (e) {
+        try {
+          output = execSync('ss -tulnp', { encoding: 'utf8', stdio: 'pipe' });
+        } catch (e2) {
+          try {
+            output = execSync(`lsof -i :${port} -n -P`, { encoding: 'utf8', stdio: 'pipe' });
+          } catch (e3) {
+            output = '';
+          }
+        }
+      }
+      const lines = output.trim().split(/\r?\n/);
+      for (const line of lines) {
+        // Accept both tcp and tcp6, and all interfaces
+        if (line.match(new RegExp(`(tcp|tcp6).*[:.]${port}\\b`, 'i'))) {
+          // netstat: last column is PID/Program
+          const pidMatch = line.match(/\s(\d+)\/(java|elasticsearch|node|python|[a-zA-Z]+)/);
+          if (pidMatch) {
+            const pid = parseInt(pidMatch[1], 10);
+            if (pid > 0) {
+              console.log(`[findPidByPort] Linux: Matched line: ${line}`);
+              return pid;
+            }
+          }
+          // ss: users:(('java',pid=1359846,fd=123))
+          const ssPidMatch = line.match(/pid=(\d+)/);
+          if (ssPidMatch) {
+            const pid = parseInt(ssPidMatch[1], 10);
+            if (pid > 0) {
+              console.log(`[findPidByPort] Linux(ss): Matched line: ${line}`);
+              return pid;
+            }
+          }
+          // lsof: second column is PID
+          const lsofPidMatch = line.match(/^\S+\s+(\d+)\s/);
+          if (lsofPidMatch) {
+            const pid = parseInt(lsofPidMatch[1], 10);
+            if (pid > 0) {
+              console.log(`[findPidByPort] Linux(lsof): Matched line: ${line}`);
+              return pid;
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`[findPidByPort] Error: ${e.message}`);
+  }
+  return null;
 }
 
 /**
@@ -1011,88 +1033,6 @@ async function isNodeRunning(nodeName) {
     // If file doesn't exist or any other error, assume not running
     return false;
   }
-}
-
-async function findPidByPort(port) {
-  // Improved: Check both IPv4 and IPv6, and match 127.0.0.1, 0.0.0.0, ::1, and all interfaces
-  const pollInterval = 1000; // Check every 1 second
-  const timeout = 60000; // 60 seconds - Elasticsearch can take a while to start
-  const startTime = Date.now();
-
-  console.log(`🔍 Polling for process on port ${port} for up to ${timeout / 1000} seconds...`);
-
-  while (Date.now() - startTime < timeout) {
-    try {
-      // Try netstat first (works on most Linux distros)
-      let output = '';
-      try {
-        output = execSync('netstat -tulnp', { encoding: 'utf8', stdio: 'pipe' });
-      } catch (e) {
-        // netstat may not be available, try ss
-        try {
-          output = execSync(`ss -tulnp`, { encoding: 'utf8', stdio: 'pipe' });
-        } catch (e2) {
-          // fallback to lsof
-          try {
-            output = execSync(`lsof -i :${port} -n -P`, { encoding: 'utf8', stdio: 'pipe' });
-          } catch (e3) {
-            output = '';
-          }
-        }
-      }
-
-      const lines = output.trim().split(/\r?\n/);
-      // Try to match lines with the port (IPv4 or IPv6)
-      for (const line of lines) {
-        // netstat: tcp        0      0 127.0.0.1:9200          0.0.0.0:*               LISTEN      1359846/java
-        // netstat: tcp6       0      0 :::9200                 :::*                    LISTEN      1359846/java
-        // ss:      LISTEN 0      4096   127.0.0.1:9200  0.0.0.0:*    users:(('java',pid=1359846,fd=123))
-        // lsof:    java    1359846 elasticsearch   123u  IPv6 0x...      0t0  TCP 127.0.0.1:9200 (LISTEN)
-        if (
-          line.match(new RegExp(`(127\\.0\\.0\\.1|0\\.0\\.0\\.0|::1|\\[::1\\]|::|\\*)[:.]${port}\\b`)) ||
-          line.match(new RegExp(`:${port}\\b`))
-        ) {
-          // Try to extract PID
-          // netstat: last column is PID/Program
-          const pidMatch = line.match(/\s(\d+)\/(java|elasticsearch|node|python|[a-zA-Z]+)/);
-          if (pidMatch) {
-            const pid = parseInt(pidMatch[1], 10);
-            if (pid > 0) {
-              console.log(`✅ Found process on port ${port}: PID ${pid}`);
-              return pid;
-            }
-          }
-          // ss: users:(('java',pid=1359846,fd=123))
-          const ssPidMatch = line.match(/pid=(\d+)/);
-          if (ssPidMatch) {
-            const pid = parseInt(ssPidMatch[1], 10);
-            if (pid > 0) {
-              console.log(`✅ Found process on port ${port}: PID ${pid}`);
-              return pid;
-            }
-          }
-          // lsof: second column is PID
-          const lsofPidMatch = line.match(/^\S+\s+(\d+)\s/);
-          if (lsofPidMatch) {
-            const pid = parseInt(lsofPidMatch[1], 10);
-            if (pid > 0) {
-              console.log(`✅ Found process on port ${port}: PID ${pid}`);
-              return pid;
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.log(`⚠️ Error running port detection: ${e.message}`);
-    }
-
-    const elapsed = Math.round((Date.now() - startTime) / 1000);
-    console.log(`⏱️ Still waiting for port ${port}... (${elapsed}s elapsed)`);
-    await new Promise(resolve => setTimeout(resolve, pollInterval));
-  }
-
-  console.log(`❌ Timeout reached after ${timeout / 1000} seconds. No process found on port ${port}`);
-  return null; // Timeout reached
 }
 
 /**
