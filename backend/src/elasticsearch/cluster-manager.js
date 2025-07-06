@@ -411,7 +411,29 @@ export ES_JAVA_OPTS="-Xms1g -Xmx1g"
           shell: true,
           windowsHide: true,
         });
+      } else if (this.isLinux) {
+        // Ensure 'elasticsearch' user exists
+        const { execSync } = require('child_process');
+        try {
+          execSync('id -u elasticsearch', { stdio: 'ignore' });
+        } catch (e) {
+          // User does not exist, create it
+          try {
+            execSync('sudo useradd -r -s /usr/sbin/nologin elasticsearch', { stdio: 'ignore' });
+            console.log('Created elasticsearch user.');
+          } catch (err) {
+            console.error('Failed to create elasticsearch user:', err.message);
+            throw new Error('Failed to create elasticsearch user. Please create it manually or run as root.');
+          }
+        }
+        // Start as elasticsearch user
+        child = spawn('sudo', ['-u', 'elasticsearch', 'bash', servicePath], {
+          detached: true,
+          stdio: ['ignore', output, output],
+          shell: false,
+        });
       } else {
+        // Mac or other
         child = spawn('bash', [servicePath], {
           detached: true,
           stdio: ['ignore', output, output],
