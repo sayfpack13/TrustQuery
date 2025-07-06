@@ -7,6 +7,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
   const [localNodes, setLocalNodes] = useState([]);
   const [clusterLoading, setClusterLoading] = useState(false);
   const [nodeActionLoading, setNodeActionLoading] = useState([]);
+  const [enhancedNodesData, setEnhancedNodesData] = useState({});
 
   // State for node creation/editing form
   const [newNodeName, setNewNodeName] = useState('');
@@ -38,11 +39,15 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
   }, [showNotification]);
 
   // Fetch all locally managed node configurations
-  const fetchLocalNodes = useCallback(async () => {
+  const fetchLocalNodes = useCallback(async (forceRefresh = false) => {
     setClusterLoading(true);
     try {
-      const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
+      const url = forceRefresh 
+        ? '/api/admin/cluster-advanced/local-nodes?forceRefresh=true'
+        : '/api/admin/cluster-advanced/local-nodes';
+      const response = await axiosClient.get(url);
       setLocalNodes(response.data.nodes || []);
+      setEnhancedNodesData(response.data.indicesByNodes || {});
     } catch (error) {
       console.error('Error fetching local nodes:', error);
       showNotificationRef.current('error', 'Failed to fetch local node configuration', faExclamationTriangle);
@@ -156,12 +161,16 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
           await new Promise(resolve => setTimeout(resolve, interval));
           
           try {
-            // Fetch updated node status
-            await fetchLocalNodes();
+            // Use cached data for polling to reduce load
+            const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=false');
+            const freshNodes = response.data.nodes || [];
+            const freshEnhancedData = response.data.indicesByNodes || {};
             
-            // Check if node is actually running
-            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
-            const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
+            // Update state with fresh data
+            setLocalNodes(freshNodes);
+            setEnhancedNodesData(freshEnhancedData);
+            
+            const targetNode = freshNodes.find(n => n.name === nodeName);
             
             if (targetNode?.isRunning) {
               showNotificationRef.current('success', `Node "${nodeName}" started successfully!`, faCheckCircle);
@@ -209,12 +218,16 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
           await new Promise(resolve => setTimeout(resolve, interval));
           
           try {
-            // Fetch updated node status
-            await fetchLocalNodes();
+            // Use cached data for polling to reduce load
+            const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=false');
+            const freshNodes = response.data.nodes || [];
+            const freshEnhancedData = response.data.indicesByNodes || {};
             
-            // Check if node is actually stopped
-            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
-            const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
+            // Update state with fresh data
+            setLocalNodes(freshNodes);
+            setEnhancedNodesData(freshEnhancedData);
+            
+            const targetNode = freshNodes.find(n => n.name === nodeName);
             
             if (!targetNode?.isRunning) {
               showNotificationRef.current('success', `Node "${nodeName}" stopped successfully!`, faCheckCircle);
@@ -320,6 +333,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
 
   return {
     localNodes,
+    enhancedNodesData,
     clusterLoading,
     nodeActionLoading,
     fetchLocalNodes,

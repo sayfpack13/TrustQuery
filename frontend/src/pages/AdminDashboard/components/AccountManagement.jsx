@@ -17,7 +17,8 @@ import {
 
 export default function AccountManagement({ 
   showNotification,
-  isAnyTaskRunning
+  isAnyTaskRunning,
+  enhancedNodesData = {}
 }) {
   const [accounts, setAccounts] = useState([]);
   const [selected, setSelected] = useState([]);
@@ -27,11 +28,35 @@ export default function AccountManagement({
   const pageSize = 20;
 
   // Node and index filtering state
-  const [availableNodes, setAvailableNodes] = useState([]);
   const [selectedNode, setSelectedNode] = useState('');
   const [selectedIndex, setSelectedIndex] = useState('');
-  const [availableIndices, setAvailableIndices] = useState([]);
-  const [indicesLoading, setIndicesLoading] = useState(false);
+  
+  // Use enhancedNodesData prop to extract available nodes and indices
+  const availableNodes = React.useMemo(() => {
+    return Object.entries(enhancedNodesData).map(([nodeName, nodeData]) => ({
+      name: nodeName,
+      url: nodeData.nodeUrl,
+      isRunning: nodeData.isRunning,
+      indices: nodeData.indices || []
+    }));
+  }, [enhancedNodesData]);
+  
+  const availableIndices = React.useMemo(() => {
+    const allIndices = [];
+    Object.entries(enhancedNodesData).forEach(([nodeName, nodeData]) => {
+      if (nodeData.indices) {
+        nodeData.indices.forEach(index => {
+          if (!allIndices.find(idx => idx.index === index.index)) {
+            allIndices.push({
+              ...index,
+              nodeName: nodeName
+            });
+          }
+        });
+      }
+    });
+    return allIndices;
+  }, [enhancedNodesData]);
 
   // Password visibility state for the main table (per-row, overridden by global toggle)
   const [hiddenPasswords, setHiddenPasswords] = useState({});
@@ -52,47 +77,6 @@ export default function AccountManagement({
 
   // State for page input in pagination
   const [pageInput, setPageInput] = useState("1");
-
-  // Fetch available nodes and indices
-  const fetchNodesAndIndices = useCallback(async () => {
-    try {
-      setIndicesLoading(true);
-      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
-      const indicesByNodes = response.data.indicesByNodes || {};
-      
-      // Extract nodes and their indices
-      const nodes = [];
-      const allIndices = [];
-      
-      Object.entries(indicesByNodes).forEach(([nodeName, nodeData]) => {
-        nodes.push({
-          name: nodeName,
-          url: nodeData.nodeUrl,
-          isRunning: nodeData.isRunning,
-          indices: nodeData.indices || []
-        });
-        
-        if (nodeData.indices) {
-          nodeData.indices.forEach(index => {
-            if (!allIndices.find(idx => idx.index === index.index)) {
-              allIndices.push({
-                ...index,
-                nodeName: nodeName
-              });
-            }
-          });
-        }
-      });
-      
-      setAvailableNodes(nodes);
-      setAvailableIndices(allIndices);
-    } catch (error) {
-      console.error("Failed to fetch nodes and indices:", error);
-      showNotification("error", "Failed to load nodes and indices data", faTimes);
-    } finally {
-      setIndicesLoading(false);
-    }
-  }, [showNotification]);
 
   // Fetch accounts data
   const fetchAccounts = useCallback(async () => {
@@ -126,10 +110,6 @@ export default function AccountManagement({
       setLoading(false);
     }
   }, [page, pageSize, showNotification, selectedNode, selectedIndex, availableNodes]);
-
-  useEffect(() => {
-    fetchNodesAndIndices();
-  }, [fetchNodesAndIndices]);
 
   useEffect(() => {
     if (availableNodes.length > 0) {
@@ -350,7 +330,7 @@ export default function AccountManagement({
                 value={selectedNode}
                 onChange={(e) => setSelectedNode(e.target.value)}
                 className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                disabled={indicesLoading}
+                disabled={loading}
               >
                 <option value="">All Nodes</option>
                 {availableNodes.map(node => (
@@ -368,7 +348,7 @@ export default function AccountManagement({
                 value={selectedIndex}
                 onChange={(e) => setSelectedIndex(e.target.value)}
                 className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                disabled={indicesLoading}
+                disabled={loading}
               >
                 <option value="">All Indices</option>
                 {availableIndices
@@ -387,7 +367,7 @@ export default function AccountManagement({
                 setPage(1);
                 fetchAccounts();
               }}
-              disabled={loading || indicesLoading}
+              disabled={loading}
               className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded transition duration-150 ease-in-out flex items-center space-x-1"
             >
               <FontAwesomeIcon icon={faRefresh} />

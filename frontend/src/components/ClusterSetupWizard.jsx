@@ -223,7 +223,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             await fetchLocalNodes();
             
             // Check if node is actually running
-            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
+            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=false');
             const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
             
             if (targetNode?.isRunning) {
@@ -264,7 +264,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             await fetchLocalNodes();
             
             // Check if node is actually stopped
-            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
+            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=false');
             const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
             
             if (!targetNode?.isRunning) {

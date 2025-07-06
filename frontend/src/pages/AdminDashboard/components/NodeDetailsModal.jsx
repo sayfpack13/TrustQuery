@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleNotch, faHdd, faPlus, faTrash, faExclamationTriangle } from '@fortawesome/free-solid-svg-icons';
+import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleInfo, faPlus, faTrash, faExclamationTriangle, faHdd, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../../../api/axiosClient';
 
-export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
+export default function NodeDetailsModal({ show, onClose, node, formatBytes, enhancedNodesData = {}, onRefreshNodes }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [configContent, setConfigContent] = useState('');
   const [configLoading, setConfigLoading] = useState(false);
@@ -26,18 +26,21 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
 
+  // Ref to track if a refresh operation is in progress to prevent race conditions
+  const refreshInProgress = useRef(false);
+
   // Add validation for form inputs
   const isValidIndexName = newIndexName.trim().length > 0 && !/[A-Z\s]/.test(newIndexName);
   const isValidShards = parseInt(newIndexShards) > 0;
   const isValidReplicas = parseInt(newIndexReplicas) >= 0;
   const isFormValid = isValidIndexName && isValidShards && isValidReplicas;
 
-  // Fetch cached indices from backend
-  const fetchCachedNodeIndices = async () => {
+  // Fetch cached indices from prop instead of API
+  const fetchCachedNodeIndices = useCallback(() => {
+    if (!node?.name) return;
+    
     try {
-      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
-      const indicesByNodes = response.data.indicesByNodes || {};
-      const nodeData = indicesByNodes[node.name];
+      const nodeData = enhancedNodesData[node.name];
       
       if (nodeData && nodeData.indices) {
         // Convert indices object to array format expected by the UI
@@ -48,6 +51,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
               'docs.count': indexData.doc_count?.toString() || '0',
               'store.size': indexData.store_size ? `${indexData.store_size}b` : '0b',
               docCount: indexData.doc_count || 0,
+              storeSize: indexData.store_size || 0,
               health: 'green', // Default value since cache doesn't store health
               status: 'open', // Default value since cache doesn't store status
               uuid: indexName, // Use index name as fallback UUID for cache
@@ -70,10 +74,10 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
       setIndicesError('Failed to load indices data');
       setNodeIndices([]);
     }
-  };
+  }, [enhancedNodesData, node?.name]);
 
   // Fetch live indices directly from node (fallback or explicit refresh)  
-  const fetchLiveNodeIndices = async (showLoading = true) => {
+  const fetchLiveNodeIndices = useCallback(async (showLoading = true) => {
     if (node) {
       if (showLoading) setIndicesLoading(true);
       setIndicesError(null);
@@ -90,20 +94,20 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
         if (showLoading) setIndicesLoading(false);
       }
     }
-  };
+  }, [node?.name]);
 
   // Primary fetch function - uses cached data by default
-  const fetchNodeIndices = async (showLoading = true, forceLive = false) => {
+  const fetchNodeIndices = useCallback((showLoading = true, forceLive = false) => {
     if (forceLive) {
-      await fetchLiveNodeIndices(showLoading);
+      return fetchLiveNodeIndices(showLoading);
     } else {
       if (showLoading) setIndicesLoading(true);
-      await fetchCachedNodeIndices();
+      fetchCachedNodeIndices();
       if (showLoading) setIndicesLoading(false);
     }
-  };
+  }, [fetchLiveNodeIndices, fetchCachedNodeIndices]);
 
-  const fetchDiskStats = async () => {
+  const fetchDiskStats = useCallback(async () => {
     if (node && node.isRunning) {
       setDiskStatsLoading(true);
       setDiskStatsError(null);
@@ -122,8 +126,16 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
       setDiskStats(null);
       setDiskStatsError(null);
     }
-  };
+  }, [node?.name, node?.isRunning]);
 
+  // Update indices when enhancedNodesData changes (for cached data updates)
+  useEffect(() => {
+    if (activeTab === 'indices' && node && !refreshInProgress.current) {
+      fetchCachedNodeIndices();
+    }
+  }, [enhancedNodesData, activeTab, node?.name, fetchCachedNodeIndices]);
+
+  // Primary tab content loading effect
   useEffect(() => {
     if (activeTab === 'configuration' && node) {
       const fetchConfig = async () => {
@@ -138,12 +150,12 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
         }
       };
       fetchConfig();
-    } else if (activeTab === 'indices' && node) {
+    } else if (activeTab === 'indices' && node && !refreshInProgress.current) {
       fetchNodeIndices();
     } else if (activeTab === 'overview' && node) {
       fetchDiskStats();
     }
-  }, [activeTab, node]);
+  }, [activeTab, node?.name, fetchNodeIndices, fetchDiskStats]);
 
   // Hide create index form if node stops running
   useEffect(() => {
@@ -170,10 +182,11 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
   }, [show]);
 
   const handleCreateIndex = async () => {
-    if (!isFormValid) {
+    if (!isFormValid || refreshInProgress.current) {
       return;
     }
 
+    refreshInProgress.current = true;
     setIsCreatingIndex(true);
     try {
       await axiosClient.post(`/api/admin/cluster-advanced/${node.name}/indices`, {
@@ -188,21 +201,27 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
       setNewIndexShards('1');
       setNewIndexReplicas('0');
       
-      // Refresh with live data after creation, then trigger cache refresh
-      await fetchNodeIndices(false, true); // Get live data immediately        // Clear the backend cache to force fresh data on next cached request
-        try {
-          await axiosClient.post("/api/admin/cluster-advanced/local-nodes/refresh");
-
-          // Dispatch custom event to notify other components
-          window.dispatchEvent(new CustomEvent('indicesCacheRefreshed'));
-        } catch (cacheError) {
-          console.error("Failed to refresh cache:", cacheError);
-        }
+      // Backend already refreshes cache after index creation, so we:
+      // 1. Get fresh live data for the modal immediately
+      // 2. Wait briefly for backend to settle
+      // 3. Refresh centralized data once to update other components
+      
+      // Get fresh live data for the modal immediately
+      await fetchLiveNodeIndices(false);
+      
+      // Wait for backend cache update to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Single centralized refresh to update all components
+      if (onRefreshNodes) {
+        await onRefreshNodes(true);
+      }
     } catch (error) {
       console.error("Failed to create index", error);
       // Error handling could be improved with notifications
     } finally {
       setIsCreatingIndex(false);
+      refreshInProgress.current = false;
     }
   };
 
@@ -212,41 +231,49 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
   };
 
   const confirmDelete = async () => {
-    if (indexToDelete) {
-      setIsDeletingIndex(indexToDelete.index);
-      try {
-        // Use the correct node-specific API endpoint
-        await axiosClient.delete(`/api/admin/cluster-advanced/${node.name}/indices/${indexToDelete.index}`);
-        
-        // Refresh with live data after deletion
-        await fetchNodeIndices(false); // Get updated data immediately
-        
-        // Refresh backend cache after deletion
-        try {
-          await axiosClient.post("/api/admin/cluster-advanced/local-nodes/refresh");
+    if (!indexToDelete || refreshInProgress.current) {
+      return;
+    }
 
-          // Dispatch custom event to notify other components
-          window.dispatchEvent(new CustomEvent('indicesCacheRefreshed'));
-        } catch (cacheError) {
-          console.error("Failed to refresh cache:", cacheError);
-        }
-      } catch (err) {
-        console.error("Error deleting index", err);
-        // Show error notification or alert if needed
-        alert(`Failed to delete index: ${err.response?.data?.error || err.message}`);
-      } finally {
-        setShowDeleteModal(false);
-        setIndexToDelete(null);
-        setIsDeletingIndex(null);
+    refreshInProgress.current = true;
+    setIsDeletingIndex(indexToDelete.index);
+    try {
+      // Use the correct node-specific API endpoint
+      await axiosClient.delete(`/api/admin/cluster-advanced/${node.name}/indices/${indexToDelete.index}`);
+      
+      // Backend already refreshes cache after index deletion, so we:
+      // 1. Update local modal state with fresh data
+      // 2. Wait briefly for backend cache to settle
+      // 3. Refresh centralized data once to update other components
+      
+      // Get fresh live data for the modal immediately
+      await fetchLiveNodeIndices(false);
+      
+      // Wait for backend cache update to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Single centralized refresh to update all components
+      if (onRefreshNodes) {
+        await onRefreshNodes(true);
       }
+    } catch (err) {
+      console.error("Error deleting index", err);
+      // Show error notification or alert if needed
+      alert(`Failed to delete index: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setShowDeleteModal(false);
+      setIndexToDelete(null);
+      setIsDeletingIndex(null);
+      refreshInProgress.current = false;
     }
   };
 
-  // Listen for cache refresh events
+  // Listen for cache refresh events - but don't trigger fetch if we just updated
   useEffect(() => {
     const handleCacheRefresh = () => {
-      if (activeTab === 'indices') {
-        fetchNodeIndices(false); // Refresh without showing loading
+      // Only refresh if we're not in the middle of a refresh operation
+      if (activeTab === 'indices' && node && !refreshInProgress.current) {
+        fetchCachedNodeIndices(); // Use cached data refresh instead of API call
       }
     };
 
@@ -254,7 +281,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes }) {
     return () => {
       window.removeEventListener('indicesCacheRefreshed', handleCacheRefresh);
     };
-  }, [activeTab]);
+  }, [activeTab, node, fetchCachedNodeIndices]); // Fixed dependencies
 
   if (!show || !node) {
     return null;

@@ -77,13 +77,13 @@ export default function AdminDashboard({ onLogout }) {
     initializeDashboard();
   }, [fetchAllTasks]);
 
-  // Fetch additional data when cluster tab is active
+  // Fetch additional data when cluster tab is active (only if data is stale)
   useEffect(() => {
-    if (activeTab === "cluster") {
-      // Refresh local nodes (which includes cluster info if available)
-      clusterManagement.fetchLocalNodes();
-    } else if (activeTab === "files") {
-      // Fetch cluster nodes for parsing options (indices are loaded per node)
+    // Only fetch cluster data if we don't have any nodes loaded yet
+    // This prevents unnecessary API calls when switching between tabs
+    if ((activeTab === "cluster" || activeTab === "files") && 
+        !clusterManagement.clusterLoading && 
+        (!clusterManagement.localNodes || clusterManagement.localNodes.length === 0)) {
       clusterManagement.fetchLocalNodes();
     }
   }, [activeTab]); // Remove clusterManagement.fetchLocalNodes from dependency array to prevent loops
@@ -134,21 +134,7 @@ export default function AdminDashboard({ onLogout }) {
     setShowNodeDetailsModal(false);
   };
 
-  useEffect(() => {
-    // Node-specific ES data management is now handled in ClusterManagement component
-    // We only need to refresh local nodes data when nodes are available
-    if (activeTab === "cluster" && clusterManagement.localNodes && clusterManagement.localNodes.length > 0) {
-      // Optional: Refresh nodes periodically if needed, but only if there are running nodes
-      const runningNodes = clusterManagement.localNodes.filter(n => n.isRunning);
-      if (runningNodes.length > 0) {
-        const interval = setInterval(() => {
-          clusterManagement.fetchLocalNodes();
-        }, 60000); // Every minute instead of 30 seconds for better performance
-        
-        return () => clearInterval(interval);
-      }
-    }
-  }, [clusterManagement.localNodes, activeTab]);
+  // Removed periodic refreshing - data will be refreshed on-demand through user actions
 
   return (
     <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans">
@@ -263,6 +249,7 @@ export default function AdminDashboard({ onLogout }) {
             setCurrentRunningTaskId={setCurrentRunningTaskId}
             // Add cluster data for parsing options (indices are fetched per node)
             availableNodes={clusterManagement.localNodes || []}
+            enhancedNodesData={clusterManagement.enhancedNodesData || {}}
           />
         )}
 
@@ -271,6 +258,7 @@ export default function AdminDashboard({ onLogout }) {
           <ClusterManagement 
             // Local node state
             localNodes={clusterManagement.localNodes}
+            enhancedNodesData={clusterManagement.enhancedNodesData}
             clusterLoading={clusterManagement.clusterLoading}
             nodeActionLoading={clusterManagement.nodeActionLoading}
             fetchLocalNodes={clusterManagement.fetchLocalNodes}
@@ -293,6 +281,7 @@ export default function AdminDashboard({ onLogout }) {
         {activeTab === "configuration" && (
           <ConfigurationManagement 
             showNotification={showNotification}
+            enhancedNodesData={clusterManagement.enhancedNodesData || {}}
           />
         )}
 
@@ -301,6 +290,7 @@ export default function AdminDashboard({ onLogout }) {
           <AccountManagement 
             showNotification={showNotification}
             isAnyTaskRunning={isAnyTaskRunning}
+            enhancedNodesData={clusterManagement.enhancedNodesData || {}}
           />
         )}
       </div>
@@ -399,6 +389,8 @@ export default function AdminDashboard({ onLogout }) {
         onClose={handleCloseNodeDetails}
         node={selectedNodeForDetails}
         formatBytes={formatBytes}
+        enhancedNodesData={clusterManagement.enhancedNodesData || {}}
+        onRefreshNodes={clusterManagement.fetchLocalNodes}
       />
         </>
       )}

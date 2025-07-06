@@ -626,19 +626,19 @@ REM Start Elasticsearch
         await fs.mkdir(nodesDir, { recursive: true });
         
         const nodeDirs = await fs.readdir(nodesDir, { withFileTypes: true });
-        console.log(`📁 Listing nodes from: ${nodesDir}`);
+        // Reduced logging - only log when in debug mode or if there are issues
 
         for (const dirent of nodeDirs) {
             if (dirent.isDirectory()) {
                 const nodeDirName = dirent.name;
-                console.log(`📋 Processing node directory: ${nodeDirName}`);
+                // Reduced logging for normal operations
                 
                 try {
                     const config = await this.getNodeConfig(nodeDirName);
 
                     // The true name comes from the config file itself.
                     const definitiveNodeName = config.node.name;
-                    console.log(`🔍 Found node config for: ${definitiveNodeName}`);
+                    // Only log significant events, not every node discovery
                     
                     const metadata = this.getNodeMetadata(definitiveNodeName);
             
@@ -659,7 +659,10 @@ REM Start Elasticsearch
             }
         }
         
-        console.log(`✅ Listed ${nodes.length} nodes from new directory structure`);
+        // Only log summary when nodes are found, reduce spam
+        if (nodes.length > 0) {
+            console.log(`✅ Listed ${nodes.length} nodes from directory structure`);
+        }
         return nodes;
     } catch (error) {
         if (error.code === 'ENOENT') {

@@ -22,10 +22,6 @@ const DEFAULT_CONFIG = {
   // Admin UI settings
   adminSettings: {
   },
-  
-  // Task management
-  autoRefreshInterval: 30000,
-  maxTaskHistory: 100
 };
 
 // Configuration state

@@ -15,13 +15,14 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 
 export default function ConfigurationManagement({ 
-  showNotification
+  showNotification,
+  enhancedNodesData = {}
 }) {
   const [config, setConfig] = useState(null);
   const [configLoading, setConfigLoading] = useState(false);
   const [selectedSearchIndices, setSelectedSearchIndices] = useState([]);
-  const [indicesByNodes, setIndicesByNodes] = useState({});
-  const [indicesLoading, setIndicesLoading] = useState(false);
+  // Use enhancedNodesData prop instead of local state
+  const indicesByNodes = enhancedNodesData;
   const [indicesCacheInfo, setIndicesCacheInfo] = useState({});
   
   // Simplified System Settings State
@@ -64,30 +65,14 @@ export default function ConfigurationManagement({
     }
   }, []); // Empty dependency array to prevent re-creation
 
-  const fetchIndicesByNodes = useCallback(async () => {
-    try {
-      setIndicesLoading(true);
-      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
-      
-      console.log("Indices by nodes response:", response.data);
-      
-      setIndicesByNodes(response.data.indicesByNodes || {});
-      setIndicesCacheInfo({
-        totalNodes: response.data.totalNodes,
-        runningNodes: response.data.runningNodes
-      });
-    } catch (err) {
-      console.error("Failed to fetch indices by nodes:", err);
-      showNotification("error", err.response?.data?.error || "Failed to fetch indices data", faTimes);
-    } finally {
-      setIndicesLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     fetchConfig();
-    fetchIndicesByNodes();
-  }, [fetchConfig, fetchIndicesByNodes]);
+  }, [fetchConfig]);
+
+  // Update indices data when enhancedNodesData prop changes
+  useEffect(() => {
+    // This effect ensures the component re-renders when node indices are updated
+  }, [enhancedNodesData]);
 
   const handleSystemSettingChange = (key, value) => {
     setTempSystemSettings(prev => ({
@@ -200,7 +185,7 @@ export default function ConfigurationManagement({
               </div>
             )}
             
-            {indicesLoading ? (
+            {configLoading ? (
               <div className="text-center py-6 text-neutral-400">
                 <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
                 Loading indices data...
@@ -359,14 +344,14 @@ export default function ConfigurationManagement({
                           setSelectedSearchIndices(allIndices);
                         }}
                         className="text-xs px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition"
-                        disabled={indicesLoading}
+                        disabled={configLoading}
                       >
                         Select All Indices
                       </button>
                       <button
                         onClick={() => setSelectedSearchIndices([])}
                         className="text-xs px-3 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded transition"
-                        disabled={indicesLoading}
+                        disabled={configLoading}
                       >
                         Clear All
                       </button>

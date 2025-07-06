@@ -26,8 +26,6 @@
   "maskingRatio": 0.2,
   "usernameMaskingRatio": 0.4,
   "adminSettings": {},
-  "autoRefreshInterval": 30000,
-  "maxTaskHistory": 100,
   "selectedIndex": "accounts",
   "writeNode": null,
   "nodeAttributes": {

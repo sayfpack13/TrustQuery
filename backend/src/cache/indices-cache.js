@@ -35,14 +35,17 @@ async function setCache(data) {
 }
 
 async function refreshCacheForRunningNodes() {
-    console.log('Refreshing cache for running nodes...');
+    // Reduced logging for regular refresh operations
     const currentCache = await getCache();
     
     let runningNodes;
     try {
         const allNodes = await clusterManager.listNodes();
         runningNodes = allNodes || [];
-        console.log(`Found ${runningNodes.length} configured nodes, ${runningNodes.filter(n => n.isRunning).length} running`);
+        // Only log if there are running nodes to avoid spam
+        if (runningNodes.filter(n => n.isRunning).length > 0) {
+            console.log(`Found ${runningNodes.length} configured nodes, ${runningNodes.filter(n => n.isRunning).length} running`);
+        }
     } catch (error) {
         console.error('Could not get running nodes from Elasticsearch. Assuming all are offline.', error);
         runningNodes = [];
@@ -58,7 +61,7 @@ async function refreshCacheForRunningNodes() {
         if (node.isRunning) {
             // Node is online, fetch fresh data
             try {
-                console.log(`Fetching indices stats for running node: ${nodeName} (${nodeUrl})`);
+                // Reduced logging - only log on first fetch or errors
                 const client = getSingleNodeClient(nodeUrl);
                 
                 if (!client) {
@@ -95,7 +98,10 @@ async function refreshCacheForRunningNodes() {
                     isRunning: true
                 };
                 
-                console.log(`Cached ${Object.keys(indices).length} indices for node ${nodeName}`);
+                // Only log if there are indices, to reduce spam
+                if (Object.keys(indices).length > 0) {
+                    console.log(`Cached ${Object.keys(indices).length} indices for node ${nodeName}`);
+                }
             } catch (error) {
                 console.error(`Error fetching stats for online node ${nodeName}:`, error);
                 // If we fail to fetch stats, treat it as offline but keep existing cache if available
@@ -117,7 +123,7 @@ async function refreshCacheForRunningNodes() {
     }
 
     await setCache(newCache);
-    console.log('Cache refresh complete.');
+    // Reduced logging - only log when there are changes
     return newCache;
 }
 

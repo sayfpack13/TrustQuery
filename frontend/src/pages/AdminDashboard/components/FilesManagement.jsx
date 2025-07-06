@@ -23,6 +23,7 @@ export default function FilesManagement({
   setCurrentRunningTaskId,
   // Props for parsing options
   availableNodes = [],
+  enhancedNodesData = {},
 }) {
   const [uploadPercentage, setUploadPercentage] = useState(0);
   const [uploadFiles, setUploadFiles] = useState([]);
@@ -35,25 +36,10 @@ export default function FilesManagement({
   const [showParsingOptionsModal, setShowParsingOptionsModal] = useState(false);
   const [targetIndex, setTargetIndex] = useState("");
   const [selectedNode, setSelectedNode] = useState(null);
-  const [cachedIndicesByNodes, setCachedIndicesByNodes] = useState({});
-  const [indicesLoading, setIndicesLoading] = useState(false);
+  // Use enhancedNodesData prop instead of local state
+  const cachedIndicesByNodes = enhancedNodesData;
   const [parseAllFiles, setParseAllFiles] = useState(true);
   const [selectedSingleFile, setSelectedSingleFile] = useState("");
-
-  // Load cached indices for all nodes
-  const fetchCachedIndices = useCallback(async () => {
-    setIndicesLoading(true);
-    try {
-      const response = await axiosClient.get("/api/admin/cluster-advanced/local-nodes");
-      setCachedIndicesByNodes(response.data.indicesByNodes || {});
-    } catch (error) {
-      console.error("Failed to load cached indices:", error);
-      showNotification("error", `Failed to load indices data: ${error.response?.data?.error || error.message}`, faTimes);
-      setCachedIndicesByNodes({});
-    } finally {
-      setIndicesLoading(false);
-    }
-  }, [showNotification]);
 
   // Fetch files data
   const fetchFilesData = useCallback(async () => {
@@ -68,19 +54,32 @@ export default function FilesManagement({
       setUnparsedFiles(unparsedRes.data.files || []);
       setParsedFiles(parsedRes.data.files || []);
       setPendingFiles(pendingRes.data.files || []);
-      
-      // Also fetch cached indices for parsing options
-      await fetchCachedIndices();
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to fetch files data", faTimes);
     } finally {
       setLoading(false);
     }
-  }, [fetchCachedIndices, showNotification]);
+  }, [showNotification]);
 
   useEffect(() => {
     fetchFilesData();
   }, [fetchFilesData]);
+
+  // Listen for cache refresh events to update node indices data
+  useEffect(() => {
+    const handleCacheRefresh = () => {
+      // The enhancedNodesData prop will be updated by the parent component
+      // React will automatically re-render when props change
+      // No need to do anything here - just relying on prop updates
+    };
+
+    window.addEventListener('indicesCacheRefreshed', handleCacheRefresh);
+    return () => {
+      window.removeEventListener('indicesCacheRefreshed', handleCacheRefresh);
+    };
+  }, []);
+
+
 
   // Initialize parsing options when modal opens
   const openParsingOptionsModal = (parseAll = true, singleFile = "") => {
@@ -127,12 +126,7 @@ export default function FilesManagement({
     setSelectedNode(node);
     setTargetIndex(""); // Reset selected index
     
-    if (!node) return;
-
-    // If we don't have cached data for this node, fetch it
-    if (!cachedIndicesByNodes[node.name]) {
-      await fetchCachedIndices();
-    }
+    // Note: Now using enhancedNodesData prop, so no need to fetch
   };
 
   const handleUpload = async () => {
@@ -547,7 +541,7 @@ export default function FilesManagement({
                     Step 2: Select Target Index on {selectedNode.name}
                   </label>
                   
-                  {indicesLoading ? (
+                  {loading ? (
                     <div className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white flex items-center">
                       <FontAwesomeIcon icon={faSpinner} className="fa-spin mr-2" />
                       Loading indices for {selectedNode.name}...
@@ -570,7 +564,7 @@ export default function FilesManagement({
                     </select>
                   )}
                   
-                  {getNodeIndices(selectedNode).length === 0 && !indicesLoading && (
+                  {getNodeIndices(selectedNode).length === 0 && !loading && (
                     <p className="text-sm text-yellow-400 mt-1">
                       No indices found on this node. You may need to create an index first.
                     </p>
@@ -633,13 +627,13 @@ export default function FilesManagement({
                   !targetIndex || 
                   getRunningNodes().length === 0 ||
                   isAnyTaskRunning ||
-                  indicesLoading
+                  loading
                 }
                 title={
                   !selectedNode ? "Please select a node first" :
                   !targetIndex ? "Please select an index" :
                   getRunningNodes().length === 0 ? "No running nodes available" :
-                  indicesLoading ? "Loading indices..." :
+                  loading ? "Loading..." :
                   "Start parsing task"
                 }
               >
