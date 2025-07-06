@@ -408,10 +408,46 @@ async function startNode(nodeName) {
       shell: true,
       windowsHide: true,
     });
-  } else {
-    // On Linux/Mac, execute the script directly (must be executable)
+  } else if (env.isLinux) {
+    // Ensure the service script is executable
     try {
-      await fs.chmod(servicePath, 0o755); // Ensure executable
+      await fs.chmod(servicePath, 0o755);
+    } catch (chmodErr) {
+      console.warn(`Could not chmod service script: ${servicePath} - ${chmodErr.message}`);
+    }
+    // Ensure 'elasticsearch' user exists, create if missing
+    try {
+      execSync('id -u elasticsearch', { stdio: 'ignore' });
+    } catch (e) {
+      try {
+        execSync('sudo useradd -r -s /usr/sbin/nologin elasticsearch', { stdio: 'ignore' });
+        console.log('Created elasticsearch user.');
+      } catch (err) {
+        console.error('Failed to create elasticsearch user:', err.message);
+        throw new Error('Failed to create elasticsearch user. Please create it manually or run as root.');
+      }
+    }
+    // Start as elasticsearch user
+    console.log(`🚀 Starting node ${nodeName} as 'elasticsearch' user using: sudo -u elasticsearch bash ${servicePath}`);
+    child = spawn('sudo', ['-u', 'elasticsearch', 'bash', servicePath], {
+      detached: true,
+      stdio: ['ignore', output, output],
+      shell: false,
+      env: {
+        ...process.env,
+        ES_HOME: env.baseElasticsearchPath,
+        ES_PATH_CONF: path.dirname(servicePath),
+        ES_JAVA_OPTS: '-Xms1g -Xmx1g',
+      },
+    });
+    child.unref();
+    // Give Elasticsearch more time to initialize before we start checking
+    console.log(`⏳ Waiting 10 seconds for Elasticsearch to initialize...`);
+    await new Promise(resolve => setTimeout(resolve, 10000));
+  } else {
+    // Mac or other Unix
+    try {
+      await fs.chmod(servicePath, 0o755);
     } catch (chmodErr) {
       console.warn(`Could not chmod service script: ${servicePath} - ${chmodErr.message}`);
     }
@@ -426,8 +462,11 @@ async function startNode(nodeName) {
         ES_JAVA_OPTS: '-Xms1g -Xmx1g',
       },
     });
+    child.unref();
+    // Give Elasticsearch more time to initialize before we start checking
+    console.log(`⏳ Waiting 10 seconds for Elasticsearch to initialize...`);
+    await new Promise(resolve => setTimeout(resolve, 10000));
   }
-  child.unref();
   // Write PID file immediately
   let nodeConfigDir;
   if (metadata && metadata.configPath) {
