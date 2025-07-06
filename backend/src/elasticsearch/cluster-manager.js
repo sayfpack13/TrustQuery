@@ -10,11 +10,14 @@ class ElasticsearchClusterManager {
     // Dynamically load base path from config.json (set by setup-wizard)
     const { getConfig } = require('../config');
     const config = getConfig();
-    // Try to get from setupWizard or elasticsearchConfig, fallback to C:\elasticsearch
+    this.isWindows = process.platform === 'win32';
+    this.isLinux = process.platform === 'linux';
+    this.isMac = process.platform === 'darwin';
+    // Try to get from setupWizard or elasticsearchConfig, fallback to platform default
     this.baseElasticsearchPath =
       (config.setupWizard && config.setupWizard.basePath) ||
       (config.elasticsearchConfig && config.elasticsearchConfig.basePath) ||
-      'C:\\elasticsearch';
+      (this.isWindows ? 'C:\\elasticsearch' : '/usr/share/elasticsearch');
     this.javaPath = 'java'; // Assumes Java is in PATH
   }
 
@@ -45,7 +48,8 @@ class ElasticsearchClusterManager {
    */
   async checkElasticsearchInstallation() {
     try {
-      const elasticsearchBin = path.join(this.baseElasticsearchPath, 'bin', 'elasticsearch.bat');
+      const binName = this.isWindows ? 'elasticsearch.bat' : 'elasticsearch';
+      const elasticsearchBin = path.join(this.baseElasticsearchPath, 'bin', binName);
       await fs.access(elasticsearchBin);
       return true;
     } catch (error) {
@@ -146,25 +150,20 @@ xpack.security.http.ssl.enabled: false
         clusterName = 'trustquery-cluster'
       } = nodeConfig;
 
-      // Validate required fields - use provided paths or generate default ones
       if (!name) {
         throw new Error('Node name is required');
       }
 
-      // Use provided paths or generate default ones under base path
       const nodeBaseDir = path.join(this.baseElasticsearchPath, 'nodes', name);
       const finalDataPath = dataPath || path.join(nodeBaseDir, 'data');
       const finalLogsPath = logsPath || path.join(nodeBaseDir, 'logs');
 
-      // Create node-specific directories
       await fs.mkdir(finalDataPath, { recursive: true });
       await fs.mkdir(finalLogsPath, { recursive: true });
 
-      // Create node configuration directory
       const nodeConfigDir = path.join(nodeBaseDir, 'config');
       await fs.mkdir(nodeConfigDir, { recursive: true });
 
-      // Generate and save node configuration
       const configContent = this.generateNodeConfig({
         name,
         host,
@@ -179,20 +178,23 @@ xpack.security.http.ssl.enabled: false
       const configPath = path.join(nodeConfigDir, 'elasticsearch.yml');
       await fs.writeFile(configPath, configContent);
 
-      // Create JVM options file
       const jvmOptions = this.generateJVMOptions();
       const jvmPath = path.join(nodeConfigDir, 'jvm.options');
       await fs.writeFile(jvmPath, jvmOptions);
 
-      // Create log4j2.properties file (IMPORTANT - this was missing!)
       const log4j2Config = this.generateLog4j2Config(finalLogsPath);
       const log4j2Path = path.join(nodeConfigDir, 'log4j2.properties');
       await fs.writeFile(log4j2Path, log4j2Config);
 
-      // Create Windows service script
+      // Create service script for the correct platform
       const serviceScript = this.generateServiceScript(name, nodeConfigDir, port);
-      const servicePath = path.join(nodeConfigDir, 'start-node.bat');
+      const serviceFileName = this.isWindows ? 'start-node.bat' : 'start-node.sh';
+      const servicePath = path.join(nodeConfigDir, serviceFileName);
       await fs.writeFile(servicePath, serviceScript);
+      if (!this.isWindows) {
+        // Set executable permissions for .sh
+        await fs.chmod(servicePath, 0o755);
+      }
 
       console.log(`✅ Created node configuration: ${name}`);
 
@@ -203,7 +205,9 @@ xpack.security.http.ssl.enabled: false
           dataPath: finalDataPath,
           logsPath: finalLogsPath,
           clusterName,
-          port
+          port,
+          configPath,
+          servicePath
         }
       };
 
@@ -320,10 +324,11 @@ logger.netty.level = warn
   }
 
   /**
-   * Generate Windows service script
+   * Generate cross-platform service script for node startup
    */
   generateServiceScript(nodeName, configDir, port) {
-    return `@echo off
+    if (this.isWindows) {
+      return `@echo off
 REM Start Elasticsearch Node: ${nodeName}
 REM Port: ${port}
 
@@ -339,6 +344,23 @@ set ES_JAVA_OPTS=-Xms1g -Xmx1g
 REM Start Elasticsearch
 "%ES_HOME%\\bin\\elasticsearch.bat"
 `;
+    } else {
+      // Linux/Mac shell script
+      return `#!/bin/bash
+# Start Elasticsearch Node: ${nodeName}
+# Port: ${port}
+
+echo "Starting Elasticsearch node: ${nodeName}"
+echo "Config directory: ${configDir}"
+echo "Port: ${port}"
+
+export ES_HOME="${this.baseElasticsearchPath}"
+export ES_PATH_CONF="${configDir}"
+export ES_JAVA_OPTS="-Xms1g -Xmx1g"
+
+"$ES_HOME/bin/elasticsearch" &
+`;
+    }
   }
 
   /**
@@ -349,16 +371,16 @@ REM Start Elasticsearch
       // Get the correct service path from metadata
       const metadata = this.getNodeMetadata(nodeName);
       let servicePath;
-      
       if (metadata && metadata.servicePath) {
         servicePath = metadata.servicePath;
         console.log(`🔍 Using service path from metadata: ${servicePath}`);
       } else {
         // Fallback to new organized path structure
-        servicePath = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config', 'start-node.bat');
+        const serviceFileName = this.isWindows ? 'start-node.bat' : 'start-node.sh';
+        servicePath = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config', serviceFileName);
         console.log(`🔍 Using new organized service path: ${servicePath}`);
       }
-      
+
       // Verify the service file exists
       try {
         await fs.access(servicePath);
@@ -366,98 +388,101 @@ REM Start Elasticsearch
       } catch (error) {
         throw new Error(`Service file not found: ${servicePath}. Error: ${error.message}`);
       }
-      
+
       // Get node config early to have access to paths
       const nodeConfig = await this.getNodeConfig(nodeName);
 
       // Create a log file for startup output in the correct logs directory
       const logDir = (await this.getNodeMetadata(nodeName)).logsPath;
       await fs.mkdir(logDir, { recursive: true });
-        const startupLogPath = path.join(logDir, 'startup.log');
-        const output = await fs.open(startupLogPath, 'a');
+      const startupLogPath = path.join(logDir, 'startup.log');
+      const output = await fs.open(startupLogPath, 'a');
 
-        console.log(`🚀 Starting node ${nodeName} using: ${servicePath}`);
-        console.log(`📁 Logs will be written to: ${startupLogPath}`);
-        console.log(`🔧 Node will run on port: ${nodeConfig.http.port}`);
+      console.log(`🚀 Starting node ${nodeName} using: ${servicePath}`);
+      console.log(`📁 Logs will be written to: ${startupLogPath}`);
+      console.log(`🔧 Node will run on port: ${nodeConfig.http.port}`);
 
-        // This simpler spawn is more reliable on Windows
-        const child = spawn(servicePath, [], {
-        detached: true,
-            stdio: ['ignore', output, output], // Redirect stdout and stderr to the log file
-            shell: true,
-            windowsHide: true,
-      });
-      
-      // Log child process information
+      // Use correct spawn logic for platform
+      let child;
+      if (this.isWindows) {
+        child = spawn(servicePath, [], {
+          detached: true,
+          stdio: ['ignore', output, output],
+          shell: true,
+          windowsHide: true,
+        });
+      } else {
+        child = spawn('bash', [servicePath], {
+          detached: true,
+          stdio: ['ignore', output, output],
+          shell: false,
+        });
+      }
+
       console.log(`🆔 Child process spawned with PID: ${child.pid}`);
-      
       child.unref();
-      
-        console.log(`🚀 Start command issued for ${nodeName}. Tailing startup log at: ${startupLogPath}`);
 
-        // Give Elasticsearch more time to initialize before we start checking
-        console.log(`⏳ Waiting 10 seconds for Elasticsearch to initialize...`);
-        await new Promise(resolve => setTimeout(resolve, 10000)); 
+      console.log(`🚀 Start command issued for ${nodeName}. Tailing startup log at: ${startupLogPath}`);
 
-        // Find the real PID by polling the port
-        const port = nodeConfig.http.port;
-        if (!port) {
-            throw new Error(`Could not determine port for node ${nodeName}.`);
-        }
+      // Give Elasticsearch more time to initialize before we start checking
+      console.log(`⏳ Waiting 10 seconds for Elasticsearch to initialize...`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
 
-        console.log(`🔍 Checking for process on port ${port}...`);
-        const pid = await this.findPidByPort(port);
-        if (pid) {
-            // Get the config directory from the service path or metadata
-            let nodeConfigDir;
-            if (metadata && metadata.configPath) {
-              nodeConfigDir = path.dirname(metadata.configPath);
-            } else {
-              // Use new organized path structure
-              nodeConfigDir = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config');
-            }
-            
-            const pidFilePath = path.join(nodeConfigDir, 'pid.json');
-            await fs.writeFile(pidFilePath, JSON.stringify({ pid }), 'utf8');
-            console.log(`✅ Started Elasticsearch node: ${nodeName} with PID: ${pid} on port ${port}`);
-            
-            // Re-initialize clients so the app can connect
-            const { initializeElasticsearchClients } = require('./client');
-            initializeElasticsearchClients();
+      // Find the real PID by polling the port
+      const port = nodeConfig.http.port;
+      if (!port) {
+        throw new Error(`Could not determine port for node ${nodeName}.`);
+      }
 
-            // Refresh indices cache after successful node start
-            try {
-              const { refreshCache, syncSearchIndices } = require('../cache/indices-cache');
-              const { getConfig } = require('../config');
-              const config = getConfig();
-              await refreshCache(config);
-              await syncSearchIndices(config);
-              console.log(`🔄 Persistent indices cache and searchIndices synchronized after starting node ${nodeName}`);
-            } catch (cacheError) {
-              console.warn(`⚠️ Failed to refresh persistent indices cache after starting node ${nodeName}:`, cacheError.message);
-              // Don't fail the node start if cache refresh fails
-            }
-
-            // Close the file handle
-            await output.close();
-            return { success: true, pid };
+      console.log(`🔍 Checking for process on port ${port}...`);
+      const pid = await this.findPidByPort(port);
+      if (pid) {
+        // Get the config directory from the service path or metadata
+        let nodeConfigDir;
+        if (metadata && metadata.configPath) {
+          nodeConfigDir = path.dirname(metadata.configPath);
         } else {
-            // Close the file handle before reading
-            await output.close();
-            // If the process isn't found, read the startup log to provide more context
-            console.log(`📋 Reading startup log for debugging...`);
-            const startupLog = await fs.readFile(startupLogPath, 'utf8').catch(() => "Could not read startup.log.");
-
-            // Also, try to read the actual Elasticsearch log file for more detailed errors.
-            const esLogPath = path.join(nodeConfig.path.logs, 'elasticsearch.log');
-            console.log(`📋 Reading elasticsearch log for debugging...`);
-            const esLog = await fs.readFile(esLogPath, 'utf8').catch(() => "Could not read elasticsearch.log.");
-
-            console.log(`📋 Startup Log Content:\n${startupLog.slice(-1000)}`); // Last 1000 chars
-            console.log(`📋 Elasticsearch Log Content:\n${esLog.slice(-1000)}`); // Last 1000 chars
-
-            throw new Error(`Failed to confirm node start for ${nodeName}. Could not find process on port ${port}.\n\nLast 1000 chars of Startup Log:\n${startupLog.slice(-1000)}\n\nLast 1000 chars of Elasticsearch Log:\n${esLog.slice(-1000)}`);
+          nodeConfigDir = path.join(this.baseElasticsearchPath, 'nodes', nodeName, 'config');
         }
+
+        const pidFilePath = path.join(nodeConfigDir, 'pid.json');
+        await fs.writeFile(pidFilePath, JSON.stringify({ pid }), 'utf8');
+        console.log(`✅ Started Elasticsearch node: ${nodeName} with PID: ${pid} on port ${port}`);
+
+        // Re-initialize clients so the app can connect
+        const { initializeElasticsearchClients } = require('./client');
+        initializeElasticsearchClients();
+
+        // Refresh indices cache after successful node start
+        try {
+          const { refreshCache, syncSearchIndices } = require('../cache/indices-cache');
+          const { getConfig } = require('../config');
+          const config = getConfig();
+          await refreshCache(config);
+          await syncSearchIndices(config);
+          console.log(`🔄 Persistent indices cache and searchIndices synchronized after starting node ${nodeName}`);
+        } catch (cacheError) {
+          console.warn(`⚠️ Failed to refresh persistent indices cache after starting node ${nodeName}:`, cacheError.message);
+        }
+
+        await output.close();
+        return { success: true, pid };
+      } else {
+        await output.close();
+        // If the process isn't found, read the startup log to provide more context
+        console.log(`📋 Reading startup log for debugging...`);
+        const startupLog = await fs.readFile(startupLogPath, 'utf8').catch(() => "Could not read startup.log.");
+
+        // Also, try to read the actual Elasticsearch log file for more detailed errors.
+        const esLogPath = path.join(nodeConfig.path.logs, 'elasticsearch.log');
+        console.log(`📋 Reading elasticsearch log for debugging...`);
+        const esLog = await fs.readFile(esLogPath, 'utf8').catch(() => "Could not read elasticsearch.log.");
+
+        console.log(`📋 Startup Log Content:\n${startupLog.slice(-1000)}`); // Last 1000 chars
+        console.log(`📋 Elasticsearch Log Content:\n${esLog.slice(-1000)}`); // Last 1000 chars
+
+        throw new Error(`Failed to confirm node start for ${nodeName}. Could not find process on port ${port}.\n\nLast 1000 chars of Startup Log:\n${startupLog.slice(-1000)}\n\nLast 1000 chars of Elasticsearch Log:\n${esLog.slice(-1000)}`);
+      }
 
     } catch (error) {
       console.error(`❌ Failed to start node ${nodeName}:`, error);
@@ -687,20 +712,18 @@ REM Start Elasticsearch
   getNodeMetadata(nodeName) {
     const config = getConfig();
     const nodeMetadata = config.nodeMetadata || {};
-    // Find the metadata by iterating through the values
     const metadata = Object.values(nodeMetadata).find(m => m.name === nodeName);
-
     if (metadata) {
-        return metadata;
+      return metadata;
     }
-    
     // Return default paths using new organized structure if not in metadata
     const nodeBaseDir = path.join(this.baseElasticsearchPath, 'nodes', nodeName);
+    const serviceFileName = this.isWindows ? 'start-node.bat' : 'start-node.sh';
     return {
-        dataPath: path.join(nodeBaseDir, 'data'),
-        logsPath: path.join(nodeBaseDir, 'logs'),
-        configPath: path.join(nodeBaseDir, 'config', 'elasticsearch.yml'),
-        servicePath: path.join(nodeBaseDir, 'config', 'start-node.bat'),
+      dataPath: path.join(nodeBaseDir, 'data'),
+      logsPath: path.join(nodeBaseDir, 'logs'),
+      configPath: path.join(nodeBaseDir, 'config', 'elasticsearch.yml'),
+      servicePath: path.join(nodeBaseDir, 'config', serviceFileName),
     };
   }
 
@@ -1217,7 +1240,7 @@ REM Start Elasticsearch
         await fs.copyFile(oldLog4j2Path, newLog4j2Path);
       }
       
-      // Move/copy data if requested
+      // Copy data if requested
       if (preserveData) {
         const dataExists = await fs.access(oldPaths.dataPath).then(() => true).catch(() => false);
         if (dataExists) {
