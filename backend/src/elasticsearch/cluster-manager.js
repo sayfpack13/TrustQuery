@@ -995,12 +995,18 @@ async function isNodeRunning(nodeName) {
 
     if (!pid) return false;
 
-    // Check if process with PID is running (Windows specific)
-    const command = `tasklist /FI "PID eq ${pid}"`;
-    const result = execSync(command, { encoding: 'utf8' });
-
-    // tasklist will include the PID in the output if it's found
-    return result.includes(pid);
+    if (env.isWindows) {
+      // Windows: use tasklist
+      const command = `tasklist /FI "PID eq ${pid}"`;
+      const result = execSync(command, { encoding: 'utf8' });
+      return result.includes(pid);
+    } else {
+      // Linux/Mac: use ps
+      const command = `ps -p ${pid}`;
+      const result = execSync(command, { encoding: 'utf8' });
+      // The output will include the PID if the process is running
+      return result.split('\n').some(line => line.trim().startsWith(pid.toString()));
+    }
   } catch (error) {
     // If file doesn't exist or any other error, assume not running
     return false;
