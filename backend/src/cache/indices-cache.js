@@ -245,6 +245,19 @@ async function getCacheFiltered(config) {
     return processedCache;
 }
 
+// Ensure the cache file exists at startup
+(async () => {
+  try {
+    await fs.mkdir(path.dirname(CACHE_FILE), { recursive: true });
+    await fs.access(CACHE_FILE);
+  } catch (err) {
+    // If file does not exist, create it as an empty object
+    if (err.code === 'ENOENT') {
+      await fs.writeFile(CACHE_FILE, '{}', 'utf8');
+    }
+  }
+})();
+
 module.exports = {
   getOrSetCache,
   refreshCache,
