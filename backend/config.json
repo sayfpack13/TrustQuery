@@ -1,6 +1,8 @@
 {
   "searchIndices": [],
-  "elasticsearchNodes": [],
+  "elasticsearchNodes": [
+    "http://localhost:9200"
+  ],
   "nodeMetadata": {},
   "batchSize": 1000,
   "minVisibleChars": 2,
@@ -9,7 +11,7 @@
   "adminSettings": {},
   "setupWizard": {
     "completed": true,
-    "completedAt": "2025-07-06T09:38:22.609Z",
+    "completedAt": "2025-07-06T09:57:52.581Z",
     "os": "win32",
     "basePath": "C:\\elasticsearch",
     "detectedPaths": {

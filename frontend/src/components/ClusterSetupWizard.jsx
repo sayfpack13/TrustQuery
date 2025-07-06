@@ -26,82 +26,29 @@ import axiosClient from '../api/axiosClient';
 
 const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   const [currentStep, setCurrentStep] = useState(1);
-  const [setupType, setSetupType] = useState('vps-setup'); // 'vps-setup', 'local-cluster', or 'production'
-  // Removed deploymentType state
   const [systemInfo, setSystemInfo] = useState(null);
-  const [setupPaths, setSetupPaths] = useState(null);
   const [basePath, setBasePath] = useState('');
-  // Removed installationGuide state
   const [validationResult, setValidationResult] = useState(null);
-  const [connectionTest, setConnectionTest] = useState(null);
-  
-  // Enhanced loading states with progress tracking
   const [loadingStates, setLoadingStates] = useState({
     systemInfo: false,
-    installationGuide: false,
     validation: false,
     connectionTest: false,
     initialization: false
   });
-  
-  // Progress tracking with detailed status
   const [stepProgress, setStepProgress] = useState({
     1: { completed: false, validated: false, progress: 0 },
     2: { completed: false, validated: false, progress: 0 },
-    3: { completed: false, validated: false, progress: 0 },
-    4: { completed: false, validated: false, progress: 0 }
+    3: { completed: false, validated: false, progress: 0 }
   });
-  
-  // Auto-save state with conflict detection
   const [saveConflict, setSaveConflict] = useState(false);
-  
-  // Enhanced error handling with categorization
   const [errors, setErrors] = useState({});
   const [retryCount, setRetryCount] = useState({});
   const [criticalError, setCriticalError] = useState(null);
-  
-  // Real-time validation with suggestions
   const [realtimeValidation, setRealtimeValidation] = useState({
     basePath: { valid: null, message: '', checking: false, suggestions: [] }
   });
-  
-  // Performance metrics
-  const [performanceMetrics, setPerformanceMetrics] = useState({
-    stepTimes: {},
-    totalTime: null,
-    avgStepTime: null
-  });
-  
-  // Background tasks
-  const [backgroundTasks, setBackgroundTasks] = useState([]);
-  const [healthChecks, setHealthChecks] = useState({
-    system: null,
-    elasticsearch: null,
-    network: null,
-    permissions: null
-  });
-  
-  // UI state
-
-  const [clusterConfig, setClusterConfig] = useState({
-    clusterName: 'trustquery-cluster',
-    nodes: [
-      {
-        name: 'node-1',
-        host: 'localhost',
-        port: 9200,
-        transportPort: 9300,
-        dataPath: 'C:\\elasticsearch\\nodes\\node-1\\data',
-        logsPath: 'C:\\elasticsearch\\nodes\\node-1\\logs',
-        roles: { master: true, data: true, ingest: true }
-      }
-    ]
-  });
+  // Removed performanceMetrics state (no timing/metrics in minimal wizard)
   const [loading, setLoading] = useState(false);
-  const [activeNodes, setActiveNodes] = useState([]);
-  const [connectionTests, setConnectionTests] = useState({});
-  const [localNodes, setLocalNodes] = useState([]);
-  const [setupGuide, setSetupGuide] = useState(null);
 
   // Enhanced utility functions for advanced UX
   const updateLoadingState = (key, value, progress = null) => {
@@ -119,8 +66,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   };
 
   const getCurrentStep = () => {
-    if (setupType === 'vps-setup') return currentStep;
-    return Math.min(currentStep, 3);
+    return currentStep;
   };
 
   const setError = (key, message, isCritical = false) => {
@@ -145,48 +91,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     setRetryCount(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
   };
 
-  const addBackgroundTask = (task) => {
-    const newTask = { ...task, id: Date.now(), startTime: Date.now() };
-    setBackgroundTasks(prev => [...prev, newTask]);
-    return newTask.id;
-  };
-
-  const removeBackgroundTask = (id) => {
-    setBackgroundTasks(prev => prev.filter(task => task.id !== id));
-  };
-
-  const trackStepTime = (step, action = 'start') => {
-    const now = Date.now();
-    if (action === 'start') {
-      setPerformanceMetrics(prev => ({
-        ...prev,
-        stepTimes: { ...prev.stepTimes, [step]: { start: now } }
-      }));
-    } else if (action === 'end') {
-      setPerformanceMetrics(prev => {
-        const stepTime = prev.stepTimes[step];
-        if (stepTime?.start) {
-          const duration = now - stepTime.start;
-          const newStepTimes = {
-            ...prev.stepTimes,
-            [step]: { ...stepTime, end: now, duration }
-          };
-          const completedSteps = Object.values(newStepTimes).filter(t => t.duration);
-          const avgStepTime = completedSteps.length > 0 
-            ? completedSteps.reduce((sum, t) => sum + t.duration, 0) / completedSteps.length 
-            : null;
-          
-          return {
-            ...prev,
-            stepTimes: newStepTimes,
-            avgStepTime,
-            totalTime: Object.values(newStepTimes).reduce((sum, t) => sum + (t.duration || 0), 0)
-          };
-        }
-        return prev;
-      });
-    }
-  };
 
   const loadSavedState = () => {
     try {
@@ -198,10 +102,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         const now = new Date();
         if (now - savedTime < 24 * 60 * 60 * 1000) {
           setCurrentStep(state.currentStep || 1);
-          setSetupType(state.setupType || 'vps-setup');
           setBasePath(state.basePath || '');
           setStepProgress(state.stepProgress || {});
-          if (state.performanceMetrics) setPerformanceMetrics(state.performanceMetrics);
+          // Removed setPerformanceMetrics (no metrics in minimal wizard)
           return true;
         }
       }
@@ -293,14 +196,12 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         onClose();
       } else if (event.key === 'Enter' && event.ctrlKey) {
         // Ctrl+Enter to proceed to next step
-        if (setupType === 'vps-setup') {
-          if (currentStep < 4 && stepProgress[currentStep]?.validated) {
-            setCurrentStep(prev => prev + 1);
-          }
+        if (currentStep < 4 && stepProgress[currentStep]?.validated) {
+          setCurrentStep(prev => prev + 1);
         }
       } else if (event.key === 'ArrowRight' && event.ctrlKey) {
         // Ctrl+Right Arrow to go to next step
-        if (setupType === 'vps-setup' && currentStep < 4) {
+        if (currentStep < 4) {
           setCurrentStep(prev => prev + 1);
         }
       } else if (event.key === 'ArrowLeft' && event.ctrlKey) {
@@ -313,7 +214,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
 
     document.addEventListener('keydown', handleKeyPress);
     return () => document.removeEventListener('keydown', handleKeyPress);
-  }, [isOpen, currentStep, stepProgress, setupType, loadingStates]);
+  }, [isOpen, currentStep, stepProgress, loadingStates]);
 
   // Real-time path validation
   useEffect(() => {
@@ -333,17 +234,12 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       updateLoadingState('systemInfo', false);
       return;
     }
-    let healthTaskId = null;
     let progressInterval = null;
     try {
-      trackStepTime(step, 'start');
+      // Removed trackStepTime (no metrics in minimal wizard)
       clearError(retryKey);
       // Add background task for system health monitoring
-      healthTaskId = addBackgroundTask({
-        name: 'System Health Check',
-        type: 'health-check',
-        progress: 0
-      });
+      // Removed addBackgroundTask (no background tasks in minimal wizard)
       // Simulate progressive loading for better UX
       progressInterval = setInterval(() => {
         updateLoadingState('systemInfo', true, Math.min(90, (Date.now() % 5000) / 50));
@@ -361,18 +257,13 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       // Enhanced system information processing
       const defaultBasePath = response.data.isWindows ? 'C:\\elasticsearch' : '/opt/elasticsearch';
       setBasePath(defaultBasePath);
-      setSetupPaths(response.data.defaultPaths);
-      // Update health checks
-      setHealthChecks(prev => ({
-        ...prev,
-        system: response.data.systemChecks || { status: 'unknown' }
-      }));
+      // Removed setHealthChecks (no health checks in minimal wizard)
       updateStepProgress(step, { completed: true, validated: true, progress: 100 });
-      trackStepTime(step, 'end');
-      if (healthTaskId) removeBackgroundTask(healthTaskId);
+      // Removed trackStepTime (no metrics in minimal wizard)
+      // Removed removeBackgroundTask (no background tasks in minimal wizard)
     } catch (error) {
       if (progressInterval) clearInterval(progressInterval);
-      trackStepTime(step, 'end');
+      // Removed trackStepTime (no metrics in minimal wizard)
       console.error('Error fetching system info:', error);
       incrementRetry(retryKey);
       const errorMessage = error.code === 'ECONNABORTED' 
@@ -389,99 +280,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     }
   };
 
-  // Removed fetchInstallationGuide
 
-  const validateConfiguration = async (retry = false) => {
-    const maxRetries = 2;
-    const retryKey = 'validation';
-    
-    if (!basePath.trim()) {
-      setError(retryKey, 'Please enter the Elasticsearch base path');
-      return;
-    }
-    
-    if (!retry && retryCount[retryKey] >= maxRetries) {
-      setError(retryKey, `Validation failed after ${maxRetries} attempts.`);
-      return;
-    }
-
-    try {
-      updateLoadingState('validation', true);
-      clearError(retryKey);
-      
-      // Use the comprehensive validation function
-      const validationData = await validateElasticsearchInstallation(basePath.trim(), retry);
-      
-      if (validationData && validationData.valid) {
-        updateStepProgress(3, { completed: true, validated: true });
-        // Auto-proceed to completion step since all files are validated
-        setTimeout(() => {
-          if (currentStep === 3) {
-            setCurrentStep(4);
-          }
-        }, 1500);
-      } else {
-        updateStepProgress(3, { completed: true, validated: false });
-        if (validationData && validationData.errors.length > 0) {
-          setError(retryKey, validationData.errors.join('; '));
-        }
-      }
-      
-    } catch (error) {
-      console.error('Error validating configuration:', error);
-      incrementRetry(retryKey);
-      const errorMessage = error.response?.data?.error || error.message;
-      setError(retryKey, `Failed to validate configuration: ${errorMessage}`);
-    } finally {
-      updateLoadingState('validation', false);
-    }
-  };
-
-  const testElasticsearchConnection = async (host = 'localhost', port = 9200, retry = false) => {
-    const maxRetries = 3;
-    const retryKey = 'connectionTest';
-    
-    if (!retry && retryCount[retryKey] >= maxRetries) {
-      setError(retryKey, `Connection test failed after ${maxRetries} attempts.`);
-      return;
-    }
-
-    try {
-      updateLoadingState('connectionTest', true);
-      clearError(retryKey);
-      
-      const response = await axiosClient.post('/api/setup-wizard/test-connection', {
-        host,
-        port
-      });
-      
-      setConnectionTest(response.data);
-      
-      if (response.data.connected) {
-        updateStepProgress(4, { completed: true, validated: true });
-        // Auto-proceed if connection successful
-        setTimeout(() => {
-          if (currentStep === 4) {
-            setCurrentStep(5);
-          }
-        }, 1500);
-      } else {
-        updateStepProgress(4, { completed: true, validated: false });
-      }
-      
-    } catch (error) {
-      console.error('Error testing connection:', error);
-      incrementRetry(retryKey);
-      const errorMessage = error.response?.data?.error || error.message;
-      setConnectionTest({
-        connected: false,
-        message: `Connection test failed: ${errorMessage}`
-      });
-      setError(retryKey, `Connection test failed: ${errorMessage}`);
-    } finally {
-      updateLoadingState('connectionTest', false);
-    }
-  };
 
   const initializeSetup = async (retry = false) => {
     const maxRetries = 2;
@@ -638,11 +437,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
                     <div className="text-xs text-neutral-500">
                       {step.description}
                     </div>
-                    {status === 'active' && performanceMetrics.stepTimes[step.number]?.start && (
-                      <div className="text-xs text-blue-400">
-                        {Math.floor((Date.now() - performanceMetrics.stepTimes[step.number].start) / 1000)}s
-                      </div>
-                    )}
+                    {/* Removed performanceMetrics display (no metrics in minimal wizard) */}
                   </div>
                   
                   {/* Connector Line */}
@@ -658,18 +453,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             })}
           </div>
         </div>
-        
-        {/* Performance Metrics */}
-        {performanceMetrics.totalTime && (
-          <div className="mb-4 p-3 bg-neutral-800 border border-neutral-700 rounded-lg">
-            <div className="flex items-center justify-between text-xs text-neutral-400">
-              <span>Total Time: {Math.floor(performanceMetrics.totalTime / 1000)}s</span>
-              {performanceMetrics.avgStepTime && (
-                <span>Avg Step: {Math.floor(performanceMetrics.avgStepTime / 1000)}s</span>
-              )}
-            </div>
-          </div>
-        )}
         
         {/* Critical Error Alert */}
         {criticalError && (
@@ -725,21 +508,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           </div>
         )}
 
-        {/* Background Tasks Indicator */}
-        {backgroundTasks.length > 0 && (
-          <div className="mb-4 p-3 bg-blue-900/30 border border-blue-700 rounded-lg">
-            <div className="text-blue-400 text-sm font-medium mb-2">
-              <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />
-              Background Tasks ({backgroundTasks.length})
-            </div>
-            {backgroundTasks.map((task) => (
-              <div key={task.id} className="text-blue-300 text-xs ml-6 flex items-center justify-between">
-                <span>• {task.name}</span>
-                <span>{Math.floor((Date.now() - task.startTime) / 1000)}s</span>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Removed Background Tasks Indicator (no background tasks in minimal wizard) */}
 
         {/* Save Conflict Warning */}
         {saveConflict && (
@@ -775,86 +544,12 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   };
 
   // Enhanced Help Tooltip Component with interactive features
-  const HelpTooltip = ({ content, children, position = 'bottom', interactive = false }) => {
-    const [show, setShow] = useState(false);
-    const [userDismissed, setUserDismissed] = useState(false);
-    
-    const positionClasses = {
-      top: 'bottom-full mb-2',
-      bottom: 'top-full mt-2',
-      left: 'right-full mr-2',
-      right: 'left-full ml-2'
-    };
-    
-    const arrowClasses = {
-      top: 'top-full left-1/2 transform -translate-x-1/2 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-neutral-600',
-      bottom: 'bottom-full left-1/2 transform -translate-x-1/2 border-l-4 border-r-4 border-b-4 border-l-transparent border-r-transparent border-b-neutral-600',
-      left: 'left-full top-1/2 transform -translate-y-1/2 border-t-4 border-b-4 border-l-4 border-t-transparent border-b-transparent border-l-neutral-600',
-      right: 'right-full top-1/2 transform -translate-y-1/2 border-t-4 border-b-4 border-r-4 border-t-transparent border-b-transparent border-r-neutral-600'
-    };
-    
-    const shouldShow = show && !userDismissed;
-    
-    return (
-      <div className="relative inline-block">
-        <div
-          onMouseEnter={() => setShow(true)}
-          onMouseLeave={() => !interactive && setShow(false)}
-          onClick={() => interactive && setShow(!show)}
-          className="cursor-help"
-        >
-          {children}
-        </div>
-        {shouldShow && (
-          <div className={`absolute z-50 w-80 p-4 bg-neutral-900 border border-neutral-600 rounded-lg shadow-xl ${positionClasses[position]} transform transition-all duration-200`}>
-            <div className="flex items-start justify-between mb-2">
-              <div className="text-sm text-neutral-300 flex-1 pr-2">
-                {typeof content === 'string' ? content : (content?.text || String(content || ''))}
-              </div>
-              {interactive && (
-                <button
-                  onClick={() => {
-                    setUserDismissed(true);
-                    setShow(false);
-                  }}
-                  className="text-neutral-500 hover:text-neutral-300 text-xs"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-            
-            {/* Additional help features */}
-            {typeof content === 'object' && content.links && (
-              <div className="mt-3 space-y-2">
-                {content.links.map((link, index) => (
-                  <a
-                    key={index}
-                    href={link.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-xs text-blue-400 hover:text-blue-300 underline"
-                  >
-                    {link.text} →
-                  </a>
-                ))}
-              </div>
-            )}
-            
-            <div className={`absolute ${arrowClasses[position]} w-0 h-0`}></div>
-          </div>
-        )}
-      </div>
-    );
-  };
+
 
   // Enhanced loading overlay with progress animations and details
   const LoadingOverlay = ({ show, message, progress, details }) => {
     if (!show) return null;
-    
-    const currentTask = backgroundTasks.find(task => task.type === 'active') || {};
-    const displayProgress = progress !== undefined ? progress : currentTask.progress || 0;
-    
+    const displayProgress = progress !== undefined ? progress : 0;
     return (
       <div className="absolute inset-0 bg-black bg-opacity-85 flex items-center justify-center z-50 rounded-xl backdrop-blur-sm">
         <div className="bg-neutral-800 p-8 rounded-xl border border-neutral-700 text-center min-w-80 max-w-md shadow-2xl">
@@ -870,15 +565,12 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               <div className="absolute inset-2 rounded-full border-2 border-blue-400 opacity-50 animate-spin-slow"></div>
             </div>
           </div>
-          
           {/* Message */}
           <div className="text-white font-medium mb-4 text-lg">{message}</div>
-          
           {/* Details */}
           {details && (
             <div className="text-neutral-400 text-sm mb-4">{details}</div>
           )}
-          
           {/* Progress Bar */}
           {displayProgress !== undefined && displayProgress > 0 && (
             <div className="mb-4">
@@ -895,147 +587,20 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               </div>
             </div>
           )}
-          
-          {/* Background Tasks */}
-          {backgroundTasks.length > 0 && (
-            <div className="mb-4 text-left">
-              <div className="text-neutral-400 text-xs mb-2">Background tasks:</div>
-              {backgroundTasks.slice(0, 3).map((task, index) => (
-                <div key={task.id} className="flex items-center justify-between text-xs text-neutral-500 mb-1">
-                  <span className="truncate">• {task.name}</span>
-                  <span>{Math.floor((Date.now() - task.startTime) / 1000)}s</span>
-                </div>
-              ))}
-              {backgroundTasks.length > 3 && (
-                <div className="text-xs text-neutral-600">
-                  ...and {backgroundTasks.length - 3} more
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* Estimated Time */}
-          {performanceMetrics.avgStepTime && displayProgress > 0 && displayProgress < 100 && (
-            <div className="text-neutral-500 text-xs">
-              Estimated time remaining: {Math.ceil((100 - displayProgress) * performanceMetrics.avgStepTime / 100 / 1000)}s
-            </div>
-          )}
-          
-          {/* Cancel Option for Long Running Tasks */}
-          {currentTask.cancelable && (
-            <button
-              onClick={() => {
-                // Implement cancellation logic
-                removeBackgroundTask(currentTask.id);
-                setErrors({});
-                clearError('all');
-              }}
-              className="mt-4 text-xs text-red-400 hover:text-red-300 underline"
-            >
-              Cancel Operation
-            </button>
-          )}
-          
           <div className="text-neutral-500 text-sm mt-4">Please wait...</div>
         </div>
       </div>
     );
   };
 
-  const checkActiveNodes = async () => {
-    try {
-      const response = await axiosClient.get('/api/admin/cluster');
-      // Extract nodes from the cluster response
-      const nodes = response.data.nodes || [];
-      setActiveNodes(nodes);
-    } catch (error) {
-      console.error('Error checking active nodes:', error);
-      setActiveNodes([]);
-    }
-  };
-
-  const testNodeConnection = async (nodeUrl) => {
-    setConnectionTests(prev => ({ ...prev, [nodeUrl]: 'testing' }));
-    try {
-      const response = await fetch(`${nodeUrl}/_cluster/health`);
-      if (response.ok) {
-        setConnectionTests(prev => ({ ...prev, [nodeUrl]: 'success' }));
-        return true;
-      } else {
-        setConnectionTests(prev => ({ ...prev, [nodeUrl]: 'failed' }));
-        return false;
-      }
-    } catch (error) {
-      setConnectionTests(prev => ({ ...prev, [nodeUrl]: 'failed' }));
-      return false;
-    }
-  };
-
-  const fetchLocalNodes = async () => {
-    try {
-      const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes');
-      setLocalNodes(response.data.nodes || []);
-    } catch (error) {
-      console.error('Error fetching local nodes:', error);
-    }
-  };
-
-  const fetchSetupGuide = async () => {
-    try {
-      const response = await axiosClient.get('/api/admin/cluster-advanced/setup-guide');
-      setSetupGuide(response.data);
-    } catch (error) {
-      console.error('Error fetching setup guide:', error);
-      // Set a default setup guide if the API is not available
-      setSetupGuide({
-        steps: [
-          {
-            step: 1,
-            title: "Download Elasticsearch",
-            description: "Download Elasticsearch from the official website",
-            commands: [
-              "Visit https://www.elastic.co/downloads/elasticsearch",
-              "Download the Windows ZIP file",
-              "Extract to C:\\elasticsearch"
-            ]
-          },
-          {
-            step: 2,
-            title: "Configure Elasticsearch",
-            description: "Edit the elasticsearch.yml configuration file",
-            commands: [
-              "Edit C:\\elasticsearch\\config\\elasticsearch.yml",
-              "Set cluster.name: trustquery-cluster",
-              "Set node.name: node-1"
-            ]
-          },
-          {
-            step: 3,
-            title: "Start Elasticsearch",
-            description: "Run Elasticsearch from the command line",
-            commands: [
-              "Open PowerShell as Administrator",
-              "cd C:\\elasticsearch",
-              "bin\\elasticsearch.bat"
-            ]
-          }
-        ]
-      });
-    }
-  };
+  // Removed all node/cluster management and setup guide fetching (minimal wizard)
 
   useEffect(() => {
     if (isOpen) {
-      // Load different data based on setup type
-      if (setupType === 'vps-setup') {
-        fetchSystemInfo();
-      } else {
-        checkActiveNodes();
-        fetchLocalNodes();
-        fetchSetupGuide();
-      }
+      // Load system info on open
+      fetchSystemInfo();
     }
-  }, [isOpen, setupType]);
+  }, [isOpen]);
 
   // Handle escape key to close modal
   useEffect(() => {
@@ -1051,159 +616,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     }
   }, [isOpen, onClose]);
 
-  const addNode = () => {
-    const newNodeIndex = clusterConfig.nodes.length + 1;
-    const newNode = {
-      name: `node-${newNodeIndex}`,
-      host: 'localhost',
-      port: 9200 + newNodeIndex - 1,
-      transportPort: 9300 + newNodeIndex - 1,
-      dataPath: `C:\\elasticsearch\\node-${newNodeIndex}\\data`,
-      logsPath: `C:\\elasticsearch\\node-${newNodeIndex}\\logs`,
-      roles: { master: true, data: true, ingest: true }
-    };
-    setClusterConfig(prev => ({
-      ...prev,
-      nodes: [...prev.nodes, newNode]
-    }));
-  };
 
-  const removeNode = (index) => {
-    if (clusterConfig.nodes.length > 1) {
-      setClusterConfig(prev => ({
-        ...prev,
-        nodes: prev.nodes.filter((_, i) => i !== index)
-      }));
-    }
-  };
 
-  const updateNode = (index, field, value) => {
-    setClusterConfig(prev => ({
-      ...prev,
-      nodes: prev.nodes.map((node, i) => 
-        i === index ? { ...node, [field]: value } : node
-      )
-    }));
-  };
-
-  const updateNodeRole = (index, role, value) => {
-    setClusterConfig(prev => ({
-      ...prev,
-      nodes: prev.nodes.map((node, i) => 
-        i === index ? { 
-          ...node, 
-          roles: { ...node.roles, [role]: value } 
-        } : node
-      )
-    }));
-  };
-
-  const createCluster = async () => {
-    setLoading(true);
-    try {
-      const response = await axiosClient.post('/api/admin/cluster-advanced/create', clusterConfig);
-      onComplete(response.data);
-    } catch (error) {
-      console.error('Error creating cluster:', error);
-      alert('Failed to create cluster: ' + (error.response?.data?.error || error.message));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startNode = async (nodeName) => {
-    try {
-      // Call the start endpoint
-      await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/start`);
-      
-      // Poll for actual running status
-      const pollForNodeStart = async (maxAttempts = 20, interval = 3000) => {
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          await new Promise(resolve => setTimeout(resolve, interval));
-          
-          try {
-            // Fetch updated node status
-            await fetchLocalNodes();
-            
-            // Check if node is actually running
-            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=false');
-            const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
-            
-            if (targetNode?.isRunning) {
-              return true;
-            }
-          } catch (error) {
-            console.warn(`Poll attempt ${attempt + 1} failed:`, error);
-          }
-        }
-        
-        // If we get here, the node didn't start within the timeout
-        console.error(`Node "${nodeName}" failed to start within expected time`);
-        await fetchLocalNodes(); // Final refresh to get actual status
-        return false;
-      };
-      
-      // Start polling and wait for result
-      await pollForNodeStart();
-      
-    } catch (error) {
-      console.error('Error starting node:', error);
-      alert('Failed to start node: ' + (error.response?.data?.error || error.message));
-    }
-  };
-
-  const stopNode = async (nodeName) => {
-    try {
-      // Call the stop endpoint
-      await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/stop`);
-      
-      // Poll for actual stopped status
-      const pollForNodeStop = async (maxAttempts = 10, interval = 2000) => {
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          await new Promise(resolve => setTimeout(resolve, interval));
-          
-          try {
-            // Fetch updated node status
-            await fetchLocalNodes();
-            
-            // Check if node is actually stopped
-            const updatedNodes = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=false');
-            const targetNode = updatedNodes.data.nodes?.find(n => n.name === nodeName);
-            
-            if (!targetNode?.isRunning) {
-              return true;
-            }
-          } catch (error) {
-            console.warn(`Poll attempt ${attempt + 1} failed:`, error);
-          }
-        }
-        
-        // If we get here, the node didn't stop within the timeout
-        console.error(`Node "${nodeName}" failed to stop within expected time`);
-        await fetchLocalNodes(); // Final refresh to get actual status
-        return false;
-      };
-      
-      // Start polling and wait for result
-      await pollForNodeStop();
-      
-    } catch (error) {
-      console.error('Error stopping node:', error);
-      alert('Failed to stop node: ' + (error.response?.data?.error || error.message));
-    }
-  };
-
-  const deleteNode = async (nodeName) => {
-    if (window.confirm(`Are you sure you want to delete node "${nodeName}"?`)) {
-      try {
-        await axiosClient.delete(`/api/admin/cluster-advanced/nodes/${nodeName}`);
-        await fetchLocalNodes();
-      } catch (error) {
-        console.error('Error deleting node:', error);
-        alert('Failed to delete node: ' + (error.response?.data?.error || error.message));
-      }
-    }
-  };
+  // Removed all node management functions (minimal wizard)
 
   // Step 1: System Info
   const renderSystemInfoStep = () => (
@@ -1216,7 +631,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         </p>
       </div>
 
-      {/* System Information */}
+      {/* System Information + System Requirements Check */}
       {systemInfo && (
         <div className="bg-neutral-700 rounded-lg p-6">
           <h4 className="text-lg font-semibold text-white mb-4">System Information</h4>
@@ -1243,28 +658,39 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             </div>
           </div>
 
-          {/* System Requirements */}
+          {/* System Requirements Check */}
           {systemInfo.systemChecks && (
-            <div className="mt-4 space-y-2">
-              <h5 className="font-medium text-white">System Requirements</h5>
-              {Object.entries(systemInfo.systemChecks.checks).map(([key, check]) => (
-                <div key={key} className="flex items-center space-x-2">
-                  <FontAwesomeIcon 
-                    icon={check.pass ? faCheckCircle : faExclamationTriangle} 
-                    className={check.pass ? 'text-green-400' : 'text-yellow-400'} 
-                  />
-                  <span className="text-sm text-neutral-300 capitalize">{key}:</span>
-                  <span className="text-sm text-neutral-400">{check.message}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* System Health Check (moved here) */}
-          {systemInfo.systemChecks && (
-            <div className="mt-4 space-y-2">
-              <h5 className="font-medium text-white">System Health Check</h5>
-              <div className="text-sm text-neutral-400">{systemInfo.systemChecks.checks.permissions.message}</div>
+            <div className="mt-6">
+              <h5 className="font-medium text-white mb-2">System Requirements Check</h5>
+              <ul className="space-y-2">
+                {/* Memory */}
+                <li className="flex items-center space-x-2">
+                  <FontAwesomeIcon icon={systemInfo.systemChecks.checks.memory.pass ? faCheckCircle : faExclamationTriangle} className={systemInfo.systemChecks.checks.memory.pass ? 'text-green-400' : 'text-yellow-400'} />
+                  <span className="text-sm text-neutral-300">Memory:</span>
+                  <span className="text-sm text-neutral-400">{systemInfo.systemChecks.checks.memory.message}</span>
+                  <span className="text-xs text-neutral-500 ml-2">(Required: 2GB, Recommended: 4GB+)</span>
+                </li>
+                {/* Java */}
+                <li className="flex items-center space-x-2">
+                  <FontAwesomeIcon icon={systemInfo.systemChecks.checks.java.pass ? faCheckCircle : faExclamationTriangle} className={systemInfo.systemChecks.checks.java.pass ? 'text-green-400' : 'text-yellow-400'} />
+                  <span className="text-sm text-neutral-300">Java:</span>
+                  <span className="text-sm text-neutral-400">{systemInfo.systemChecks.checks.java.message}</span>
+                  <span className="text-xs text-neutral-500 ml-2">(Required: 11+, Recommended: 17+)</span>
+                </li>
+                {/* Ports */}
+                <li className="flex items-center space-x-2">
+                  <FontAwesomeIcon icon={systemInfo.systemChecks.checks.ports.pass ? faCheckCircle : faExclamationTriangle} className={systemInfo.systemChecks.checks.ports.pass ? 'text-green-400' : 'text-yellow-400'} />
+                  <span className="text-sm text-neutral-300">Ports:</span>
+                  <span className="text-sm text-neutral-400">{systemInfo.systemChecks.checks.ports.message}</span>
+                  <span className="text-xs text-neutral-500 ml-2">(Required: 9200, 9300 open)</span>
+                </li>
+                {/* Permissions */}
+                <li className="flex items-center space-x-2">
+                  <FontAwesomeIcon icon={systemInfo.systemChecks.checks.permissions.pass ? faCheckCircle : faExclamationTriangle} className={systemInfo.systemChecks.checks.permissions.pass ? 'text-green-400' : 'text-yellow-400'} />
+                  <span className="text-sm text-neutral-300">Permissions:</span>
+                  <span className="text-sm text-neutral-400">{systemInfo.systemChecks.checks.permissions.message}</span>
+                </li>
+              </ul>
             </div>
           )}
         </div>
@@ -1547,89 +973,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     </div>
   );
 
-  // VPS Connection Test Step
-  const renderVPSConnectionTestStep = () => (
-    <div className="space-y-6">
-      <div className="text-center">
-        <FontAwesomeIcon icon={faServer} className="text-4xl text-green-500 mb-4" />
-        <h3 className="text-2xl font-bold text-white mb-2">Test Elasticsearch Connection</h3>
-        <p className="text-neutral-300">
-          Let's verify that Elasticsearch is running and accessible.
-        </p>
-      </div>
 
-      <div className="bg-neutral-700 rounded-lg p-6">
-        <h4 className="text-lg font-semibold text-white mb-4">Connection Test</h4>
-        
-        <div className="flex space-x-3 mb-4">
-          <button
-            onClick={() => testElasticsearchConnection()}
-            disabled={loading}
-            className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-lg disabled:bg-neutral-600 text-sm flex-1"
-          >
-            {loading ? (
-              <>
-                <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />
-                Testing Connection...
-              </>
-            ) : (
-              <>
-                <FontAwesomeIcon icon={faServer} className="mr-2" />
-                Test Connection
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Connection Test Results */}
-        {connectionTest && (
-          <div className={`rounded-lg p-4 ${
-            connectionTest.connected 
-              ? 'bg-green-900/30 border border-green-700' 
-              : 'bg-red-900/30 border border-red-700'
-          }`}>
-            <div className="flex items-center space-x-2 mb-2">
-              <FontAwesomeIcon 
-                icon={connectionTest.connected ? faCheckCircle : faExclamationTriangle} 
-                className={connectionTest.connected ? 'text-green-400' : 'text-red-400'} 
-              />
-              <span className="text-white font-semibold">
-                {connectionTest.connected ? 'Connection Successful!' : 'Connection Failed'}
-              </span>
-            </div>
-            <p className="text-neutral-300 text-sm">{connectionTest.message}</p>
-            
-            {connectionTest.connected && connectionTest.cluster && (
-              <div className="mt-3 p-3 bg-neutral-800 rounded text-xs">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>Cluster: <span className="text-green-400">{connectionTest.cluster.name}</span></div>
-                  <div>Status: <span className="text-green-400">{connectionTest.cluster.status}</span></div>
-                  <div>Nodes: <span className="text-green-400">{connectionTest.cluster.nodes}</span></div>
-                  <div>Version: <span className="text-green-400">{connectionTest.version}</span></div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="flex justify-between">
-        <button
-          onClick={() => setCurrentStep(3)}
-          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg"
-        >
-          Back
-        </button>
-        <button
-          onClick={() => setCurrentStep(5)}
-          disabled={!connectionTest?.connected}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg disabled:bg-neutral-600 disabled:cursor-not-allowed"
-        >
-          Next: Complete Setup
-        </button>
-      </div>
-    </div>
-  );
 
   // VPS Setup Complete Step
   // Step 3: Complete Setup
@@ -1687,59 +1031,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
 
 
 
-  const renderLocalNodes = () => (
-    <div className="mt-8">
-      <h4 className="text-lg font-semibold text-white mb-4">Local Nodes Management</h4>
-      {localNodes.length === 0 ? (
-        <p className="text-neutral-400">No local nodes configured</p>
-      ) : (
-        <div className="space-y-3">
-          {localNodes.map((node, index) => (
-            <div key={index} className="bg-neutral-700 rounded-lg p-4 flex items-center justify-between">
-              <div>
-                <h5 className="font-medium text-white">{node.name}</h5>
-                <p className="text-sm text-neutral-400">
-                  {node['network.host'] || 'localhost'}:{node['http.port'] || 'N/A'}
-                </p>
-                <p className="text-sm text-neutral-400">
-                  Status: <span className={`font-medium ${node.isRunning ? 'text-green-400' : 'text-red-400'}`}>
-                    {node.status}
-                  </span>
-                </p>
-              </div>
-              <div className="flex space-x-2">
-                {node.isRunning ? (
-                  <button
-                    onClick={() => stopNode(node.name)}
-                    className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-sm"
-                  >
-                    <FontAwesomeIcon icon={faStop} className="mr-1" />
-                    Stop
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => startNode(node.name)}
-                    className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm"
-                  >
-                    <FontAwesomeIcon icon={faPlay} className="mr-1" />
-                    Start
-                  </button>
-                )}
-                <button
-                  onClick={() => deleteNode(node.name)}
-                  className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-sm"
-                >
-                  <FontAwesomeIcon icon={faTrash} className="mr-1" />
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
   // Don't render if not open
   if (!isOpen) return null;
 
@@ -1783,10 +1074,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             <div>
               <h2 className="text-2xl font-bold text-white">TrustQuery Setup Wizard</h2>
               <p className="text-neutral-400 text-sm">
-                {setupType === 'vps-setup' 
-                  ? 'Guided VPS setup for Elasticsearch installation and configuration'
-                  : 'Configure your Elasticsearch cluster for TrustQuery'
-                }
+                Guided setup for Elasticsearch installation and configuration
               </p>
             </div>
           </div>
@@ -1808,43 +1096,33 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="p-6 overflow-y-auto flex-1">
             {/* Progress Indicator */}
-            {setupType === 'vps-setup' && <ProgressIndicator />}
+            <ProgressIndicator />
 
             {/* Step Content */}
             <div className="bg-neutral-900 rounded-lg p-6 min-h-96 relative">
-            {setupType === 'vps-setup' && (
-              <>
-                {currentStep === 1 && renderSystemInfoStep()}
-                {currentStep === 2 && renderConfigurationStep()}
-                {currentStep === 3 && renderCompleteStep()}
-                {currentStep > 3 && (
-                  <div className="flex flex-col items-center justify-center min-h-64">
-                    <FontAwesomeIcon icon={faCheckCircle} className="text-5xl text-green-500 mb-4" />
-                    <h2 className="text-2xl font-bold text-white mb-2">Setup Complete!</h2>
-                    <p className="text-neutral-300 mb-4">TrustQuery is now configured and ready to use.</p>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Enhanced Footer with statistics */}
-          <div className="mt-4 text-center space-y-2">
-            <div className="text-red-400 text-sm font-semibold mb-2">
-              The TrustQuery setup wizard must be completed before you can use the admin dashboard.<br />
-              <span className="text-neutral-300 font-normal">Please follow the guided setup to configure your environment.</span>
+              {currentStep === 1 && renderSystemInfoStep()}
+              {currentStep === 2 && renderConfigurationStep()}
+              {currentStep === 3 && renderCompleteStep()}
+              {currentStep > 3 && (
+                <div className="flex flex-col items-center justify-center min-h-64">
+                  <FontAwesomeIcon icon={faCheckCircle} className="text-5xl text-green-500 mb-4" />
+                  <h2 className="text-2xl font-bold text-white mb-2">Setup Complete!</h2>
+                  <p className="text-neutral-300 mb-4">TrustQuery is now configured and ready to use.</p>
+                </div>
+              )}
             </div>
-            {performanceMetrics.totalTime && (
-              <div className="text-xs text-neutral-600">
-                Setup time: {Math.floor(performanceMetrics.totalTime / 1000)}s
-                {performanceMetrics.avgStepTime && ` • Avg step: ${Math.floor(performanceMetrics.avgStepTime / 1000)}s`}
+
+            {/* Enhanced Footer with statistics */}
+            <div className="mt-4 text-center space-y-2">
+              <div className="text-red-400 text-sm font-semibold mb-2">
+                The TrustQuery setup wizard must be completed before you can use the admin dashboard.<br />
+                <span className="text-neutral-300 font-normal">Please follow the guided setup to configure your environment.</span>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
     </div>
-     </div>
   );
 };
 

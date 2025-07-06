@@ -227,17 +227,6 @@ export default function AdminDashboard({ onLogout }) {
         <div className="mb-8 border-b border-neutral-700">
           <nav className="flex space-x-8">
             <button
-              onClick={() => setupCompleted && setActiveTab("files")}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                activeTab === "files"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
-              } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={!setupCompleted}
-            >
-              File Management
-            </button>
-            <button
               onClick={() => setupCompleted && setActiveTab("cluster")}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
                 activeTab === "cluster"
@@ -247,6 +236,17 @@ export default function AdminDashboard({ onLogout }) {
               disabled={!setupCompleted}
             >
               Node Management
+            </button>
+                        <button
+              onClick={() => setupCompleted && setActiveTab("files")}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+                activeTab === "files"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
+              } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!setupCompleted}
+            >
+              File Management
             </button>
             <button
               onClick={() => setupCompleted && setActiveTab("configuration")}
