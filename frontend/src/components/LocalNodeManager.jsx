@@ -49,15 +49,30 @@ const LocalNodeManager = ({
   const [copyData, setCopyData] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
+  const [backendBasePath, setBackendBasePath] = useState('');
+
+  // Fetch backend-configured base path
+  const fetchBackendBasePath = async () => {
+    try {
+      const response = await axiosClient.get('/api/elasticsearch-config/base-path');
+      if (response.data && response.data.basePath) {
+        setBackendBasePath(response.data.basePath);
+      }
+    } catch (e) {
+      // fallback: do nothing
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchBackendBasePath();
+    }
+  }, [isOpen]);
 
   const updatePathsForNewName = (newName, oldName, currentDataPath, currentLogsPath, setDataPath, setLogsPath) => {
-    // Dynamically get base path from backend config (window.trustqueryConfig is set by backend if available)
-    let basePath = 'C://elasticsearch';
-    if (window.trustqueryConfig && window.trustqueryConfig.elasticsearchBasePath) {
-      basePath = window.trustqueryConfig.elasticsearchBasePath;
-    }
-    const defaultDataPath = (name) => `${basePath}\\nodes\\${name}\\data`;
-    const defaultLogsPath = (name) => `${basePath}\\nodes\\${name}\\logs`;
+    let basePath = backendBasePath || 'C://elasticsearch';
+    const defaultDataPath = (name) => `${basePath}${basePath.endsWith('\\') || basePath.endsWith('/') ? '' : (basePath.includes('\\') ? '\\' : '/') }nodes${basePath.includes('\\') ? '\\' : '/'}${name}${basePath.includes('\\') ? '\\' : '/'}data`;
+    const defaultLogsPath = (name) => `${basePath}${basePath.endsWith('\\') || basePath.endsWith('/') ? '' : (basePath.includes('\\') ? '\\' : '/') }nodes${basePath.includes('\\') ? '\\' : '/'}${name}${basePath.includes('\\') ? '\\' : '/'}logs`;
 
     if (oldName !== newName) {
         // Update data path if it's empty or was the default for the old name
@@ -582,7 +597,7 @@ const LocalNodeManager = ({
                   type="text"
                   value={newNodeDataPath}
                   onChange={mode === 'create' ? (e) => setNewNodeDataPath(e.target.value) : undefined}
-                  placeholder="C:\\elasticsearch\\nodes\\node-name\\data"
+                  placeholder={backendBasePath ? `${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}node-name${backendBasePath.includes('\\') ? '\\' : '/'}data` : 'C:\\elasticsearch\\nodes\\node-name\\data'}
                   disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
                     mode === 'edit' 
@@ -613,7 +628,7 @@ const LocalNodeManager = ({
                   type="text"
                   value={newNodeLogsPath}
                   onChange={mode === 'create' ? (e) => setNewNodeLogsPath(e.target.value) : undefined}
-                  placeholder="C:\\elasticsearch\\nodes\\node-name\\logs"
+                  placeholder={backendBasePath ? `${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}node-name${backendBasePath.includes('\\') ? '\\' : '/'}logs` : 'C:\\elasticsearch\\nodes\\node-name\\logs'}
                   disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
                     mode === 'edit' 

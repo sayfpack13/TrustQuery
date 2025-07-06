@@ -1559,147 +1559,49 @@ export ES_JAVA_OPTS="-Xms1g -Xmx1g"
         let nodeExists = false;
         
         // Check if the node directory structure exists
-        if (metadata.configPath) {
-          try {
-            const fs = require('fs').promises;
-            const path = require('path');
-            
-            // Check if the main node directory exists (parent of config path)
-            const nodeDir = path.dirname(path.dirname(metadata.configPath)); // Go up from config/elasticsearch.yml to node root
-            await fs.access(nodeDir);
-            
-            // Also check if config file exists
-            await fs.access(metadata.configPath);
-            nodeExists = true;
-            
-            console.log(`✅ Node "${nodeName}" directory verified: ${nodeDir}`);
-          } catch (error) {
-            console.log(`❌ Node "${nodeName}" directory not found or inaccessible`);
-            nodeExists = false;
-          }
+        const nodeBaseDir = require('path').join(this.baseElasticsearchPath, 'nodes', nodeName);
+        try {
+          await require('fs').promises.access(nodeBaseDir);
+          nodeExists = true;
+        } catch (e) {
+          nodeExists = false;
         }
         
         if (!nodeExists) {
-          console.log(`🧹 Removing metadata for missing node: ${nodeName}`);
+          removedNodes.push(nodeName);
           delete nodeMetadata[nodeUrl];
           metadataChanged = true;
-          removedNodes.push(nodeName);
-          
-          // Also remove from elasticsearchNodes array
-          const nodeIndex = elasticsearchNodes.indexOf(nodeUrl);
-          if (nodeIndex > -1) {
-            elasticsearchNodes.splice(nodeIndex, 1);
-            nodesChanged = true;
-            console.log(`🧹 Removed node URL from elasticsearchNodes: ${nodeUrl}`);
-          }
         }
       }
       
       // Scan the base nodes directory for any existing nodes not in metadata
-      const baseNodesPath = 'C:\\elasticsearch\\nodes';
+      const baseNodesPath = require('path').join(this.baseElasticsearchPath, 'nodes');
       try {
-        const fs = require('fs').promises;
-        const path = require('path');
-        
-        const dirExists = await fs.access(baseNodesPath).then(() => true).catch(() => false);
-        if (dirExists) {
-          const entries = await fs.readdir(baseNodesPath, { withFileTypes: true });
-          const nodeDirs = entries.filter(entry => entry.isDirectory()).map(entry => entry.name);
-          
-          console.log(`🔍 Found ${nodeDirs.length} directories in ${baseNodesPath}:`, nodeDirs);
-          
-          // Check if any of these directories have valid node configurations
-          for (const dirName of nodeDirs) {
-            const nodeDir = path.join(baseNodesPath, dirName);
-            const configPath = path.join(nodeDir, 'config', 'elasticsearch.yml');
-            
-            // Check if this node is already in metadata
-            const existsInMetadata = Object.values(nodeMetadata).some(meta => 
-              meta.name === dirName || meta.configPath === configPath
-            );
-            
-            if (!existsInMetadata) {
-              // Check if it has a valid config file
-              const configExists = await fs.access(configPath).then(() => true).catch(() => false);
-              if (configExists) {
-                console.log(`⚠️  Found orphaned node directory with config: ${dirName}`);
-                console.log(`   Config file: ${configPath}`);
-                console.log(`   Auto-recreating metadata for orphaned node...`);
-                
-                try {
-                  // Read the config file to extract node information
-                  const configContent = await fs.readFile(configPath, 'utf8');
-                  const config = yaml.parse(configContent);
-                  
-                  // Extract information from config
-                  const nodeName = config['node.name'] || dirName;
-                  const clusterName = config['cluster.name'] || 'trustquery-cluster';
-                  const httpPort = config['http.port'] || 9200;
-                  const transportPort = config['transport.port'] || 9300;
-                  const host = config['network.host'] || 'localhost';
-                  
-                  // Create metadata entry
-                  const nodeUrl = `http://${host}:${httpPort}`;
-                  const newMetadata = {
-                    name: nodeName,
-                    configPath: configPath,
-                    servicePath: path.join(nodeDir, 'config', 'start-node.bat'),
-                    dataPath: path.join(nodeDir, 'data'),
-                    logsPath: path.join(nodeDir, 'logs'),
-                    cluster: clusterName,
-                    host: host,
-                    port: httpPort,
-                    transportPort: transportPort,
-                    roles: {
-                      master: true,
-                      data: true,
-                      ingest: true
-                    }
-                  };
-                  
-                  // Add to metadata
-                  nodeMetadata[nodeUrl] = newMetadata;
-                  metadataChanged = true;
-                  
-                  // Also add to elasticsearchNodes if not present
-                  if (!elasticsearchNodes.includes(nodeUrl)) {
-                    elasticsearchNodes.push(nodeUrl);
-                    nodesChanged = true;
-                  }
-                  
-                  console.log(`✅ Recreated metadata for orphaned node: ${nodeName} at ${nodeUrl}`);
-                } catch (configError) {
-                  console.error(`❌ Failed to recreate metadata for ${dirName}:`, configError.message);
-                  console.log(`   You may want to recreate this node through the UI or manually clean up the directory.`);
-                }
-              }
+        const nodeDirs = await require('fs').promises.readdir(baseNodesPath, { withFileTypes: true });
+        for (const dirent of nodeDirs) {
+          if (dirent.isDirectory()) {
+            const nodeName = dirent.name;
+            const found = Object.values(nodeMetadata).some(m => m.name === nodeName);
+            if (!found) {
+              // Optionally, could add missing nodes to metadata here
+              // For now, just log
+              console.log(`ℹ️ Node directory found with no metadata: ${nodeName}`);
             }
           }
         }
       } catch (error) {
-        console.log(`ℹ️  Could not scan base nodes directory (${baseNodesPath}):`, error.message);
+        if (error.code !== 'ENOENT') {
+          console.error('❌ Error reading nodes directory:', error);
+        }
       }
-      
-      // Save changes if any were made
       if (metadataChanged) {
         await setConfig('nodeMetadata', nodeMetadata);
-        console.log(`✅ Updated node metadata (removed ${removedNodes.length} missing nodes)`);
+        console.log(`🗑️ Removed metadata for nodes: ${removedNodes.join(', ')}`);
       }
-      
-      if (nodesChanged) {
-        await setConfig('elasticsearchNodes', elasticsearchNodes);
-        console.log(`✅ Updated elasticsearchNodes array`);
-      }
-      
-      if (removedNodes.length > 0) {
-        console.log(`🧹 Cleanup summary: Removed metadata for nodes: ${removedNodes.join(', ')}`);
-      } else {
-        console.log(`✅ All node metadata verified - no cleanup needed`);
-      }
-      
+      return { removedNodes };
     } catch (error) {
-      console.error('❌ Error during node metadata verification:', error);
-      // Don't throw - this shouldn't prevent server startup
+      console.error('❌ Error verifying node metadata:', error);
+      throw error;
     }
   }
 }

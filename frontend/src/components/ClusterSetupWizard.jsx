@@ -28,6 +28,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [systemInfo, setSystemInfo] = useState(null);
   const [basePath, setBasePath] = useState('');
+  const [backendBasePath, setBackendBasePath] = useState('');
   const [validationResult, setValidationResult] = useState(null);
   const [loadingStates, setLoadingStates] = useState({
     systemInfo: false,
@@ -180,10 +181,24 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     }
   };
 
+  // Fetch backend-configured base path
+  const fetchBackendBasePath = async () => {
+    try {
+      const response = await axiosClient.get('/api/elasticsearch-config/base-path');
+      if (response.data && response.data.basePath) {
+        setBackendBasePath(response.data.basePath);
+        setBasePath((prev) => prev || response.data.basePath);
+      }
+    } catch (e) {
+      // fallback: do nothing
+    }
+  };
+
   // Load saved state on mount
   useEffect(() => {
     if (isOpen) {
       loadSavedState();
+      fetchBackendBasePath();
     }
   }, [isOpen]);
 
@@ -752,7 +767,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               type="text"
               value={basePath}
               onChange={(e) => setBasePath(e.target.value)}
-              placeholder={systemInfo?.isWindows ? 'C:\\elasticsearch' : '/opt/elasticsearch'}
+              placeholder={backendBasePath || (systemInfo?.isWindows ? 'C:\\elasticsearch' : '/opt/elasticsearch')}
               className={`w-full px-3 py-2 pr-10 bg-neutral-600 border rounded-md text-white focus:outline-none focus:ring-2 font-mono text-sm transition-all ${
                 realtimeValidation.basePath.valid === true 
                   ? 'border-green-500 focus:ring-green-500' 
@@ -803,28 +818,18 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               </div>
             </div>
           )}
-          {/* Common paths based on detected OS */}
-          {systemInfo && (
+          {/* Backend-configured base path suggestion */}
+          {backendBasePath && (
             <div className="mt-3">
-              <p className="text-xs text-neutral-400 mb-2">Common paths for {systemInfo.os.platform}:</p>
+              <p className="text-xs text-neutral-400 mb-2">Configured base path from backend:</p>
               <div className="flex flex-wrap gap-2">
-                {(systemInfo.isWindows ? [
-                  'C:\\elasticsearch',
-                  'C:\\Program Files\\Elasticsearch',
-                  'D:\\elasticsearch'
-                ] : [
-                  '/opt/elasticsearch',
-                  '/usr/share/elasticsearch',
-                  '/home/elastic/elasticsearch'
-                ]).map((suggestedPath) => (
-                  <button
-                    key={suggestedPath}
-                    onClick={() => setBasePath(suggestedPath)}
-                    className="text-xs bg-neutral-800 hover:bg-neutral-600 text-neutral-300 px-2 py-1 rounded transition-colors"
-                  >
-                    {suggestedPath}
-                  </button>
-                ))}
+                <button
+                  key={backendBasePath}
+                  onClick={() => setBasePath(backendBasePath)}
+                  className="text-xs bg-neutral-800 hover:bg-neutral-600 text-neutral-300 px-2 py-1 rounded transition-colors"
+                >
+                  {backendBasePath}
+                </button>
               </div>
             </div>
           )}
