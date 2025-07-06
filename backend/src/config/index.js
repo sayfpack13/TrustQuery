@@ -10,7 +10,7 @@ const DEFAULT_CONFIG = {
   searchIndices: [], // Indices selected for search across all nodes
   
   // Node management
-  elasticsearchNodes: ["http://localhost:9200"],
+  elasticsearchNodes: [],
   nodeMetadata: {}, // Store detailed node configuration
   
   // Search and parsing settings

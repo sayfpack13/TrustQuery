@@ -1,8 +1,6 @@
 {
   "searchIndices": [],
-  "elasticsearchNodes": [
-    "http://localhost:9200"
-  ],
+  "elasticsearchNodes": [],
   "nodeMetadata": {},
   "batchSize": 1000,
   "minVisibleChars": 2,
@@ -11,7 +9,7 @@
   "adminSettings": {},
   "setupWizard": {
     "completed": true,
-    "completedAt": "2025-07-06T10:07:23.570Z",
+    "completedAt": "2025-07-06T10:25:31.952Z",
     "os": "win32",
     "basePath": "C:\\elasticsearch",
     "detectedPaths": {
@@ -32,5 +30,8 @@
     "logsPath": "C:\\elasticsearch\\logs",
     "jvmOptionsPath": "C:\\elasticsearch\\config\\jvm.options",
     "executable": "C:\\elasticsearch\\bin\\elasticsearch.bat"
-  }
+  },
+  "firstRunCompletedMacs": [
+    "1c:bf:ce:0d:c4:8d"
+  ]
 }
