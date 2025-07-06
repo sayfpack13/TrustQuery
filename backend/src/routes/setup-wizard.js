@@ -8,7 +8,6 @@ const { exec } = require("child_process");
 const { promisify } = require("util");
 const { verifyJwt } = require("../middleware/auth");
 const { getConfig, setConfig } = require("../config");
-const clusterManager = require("../elasticsearch/cluster-manager");
 
 const router = express.Router();
 const execAsync = promisify(exec);
@@ -501,6 +500,7 @@ router.post('/initialize', verifyJwt, async (req, res) => {
     };
 
     // Update cluster manager base path
+    const clusterManager = require("../elasticsearch/cluster-manager");
     clusterManager.baseElasticsearchPath = basePath;
 
 

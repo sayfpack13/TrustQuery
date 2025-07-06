@@ -8,17 +8,17 @@ const CONFIG_FILE = path.join(__dirname, "../../config.json");
 const DEFAULT_CONFIG = {
   // Multi-index search configuration - this is what matters for search functionality
   searchIndices: [], // Indices selected for search across all nodes
-  
+
   // Node management
   elasticsearchNodes: [],
   nodeMetadata: {}, // Store detailed node configuration
-  
+
   // Search and parsing settings
   batchSize: 1000,
   minVisibleChars: 2,
   maskingRatio: 0.2,
   usernameMaskingRatio: 0.4,
-  
+
   // Admin UI settings
   adminSettings: {
   },
@@ -32,7 +32,8 @@ async function loadConfig() {
   try {
     const configData = await fs.readFile(CONFIG_FILE, 'utf8');
     config = { ...DEFAULT_CONFIG, ...JSON.parse(configData) };
-    console.log("✅ Configuration loaded from file");
+    // Check for important fields
+    console.log("✅ Configuration loaded from file and contains all critical fields.");
   } catch (error) {
     if (error.code === 'ENOENT') {
       console.log("📝 No config file found, creating default configuration");
@@ -40,6 +41,7 @@ async function loadConfig() {
     } else {
       console.error("❌ Error loading config:", error);
       config = { ...DEFAULT_CONFIG };
+      console.warn("⚠️ Falling back to default config. This will not work for node management until you restore config.json!");
     }
   }
 }
