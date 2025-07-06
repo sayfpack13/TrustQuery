@@ -164,6 +164,21 @@ xpack.security.http.ssl.enabled: false
       const nodeConfigDir = path.join(nodeBaseDir, 'config');
       await fs.mkdir(nodeConfigDir, { recursive: true });
 
+      // --- Linux: Ensure correct permissions and ownership for all node dirs and custom data/logs paths ---
+      if (this.isLinux) {
+        const { execSync } = require('child_process');
+        try {
+          execSync(`chown -R elasticsearch:elasticsearch "${nodeConfigDir}"`);
+          execSync(`chmod -R 770 "${nodeConfigDir}"`);
+          execSync(`chown -R elasticsearch:elasticsearch "${finalDataPath}"`);
+          execSync(`chmod -R 770 "${finalDataPath}"`);
+          execSync(`chown -R elasticsearch:elasticsearch "${finalLogsPath}"`);
+          execSync(`chmod -R 770 "${finalLogsPath}"`);
+        } catch (err) {
+          console.warn('Could not set ownership/permissions for node directories:', err.message);
+        }
+      }
+
       const configContent = this.generateNodeConfig({
         name,
         host,
