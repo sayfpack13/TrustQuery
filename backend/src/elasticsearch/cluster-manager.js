@@ -415,35 +415,83 @@ async function startNode(nodeName) {
     } catch (chmodErr) {
       console.warn(`Could not chmod service script: ${servicePath} - ${chmodErr.message}`);
     }
-    // Ensure 'elasticsearch' user exists, create if missing
+
+    // Check if running as root
+    let isRoot = false;
+    try {
+      isRoot = process.getuid && process.getuid() === 0;
+    } catch {}
+
+    // Check if 'elasticsearch' user exists
+    let esUserExists = false;
     try {
       execSync('id -u elasticsearch', { stdio: 'ignore' });
+      esUserExists = true;
     } catch (e) {
-      try {
-        execSync('sudo useradd -r -s /usr/sbin/nologin elasticsearch', { stdio: 'ignore' });
-        console.log('Created elasticsearch user.');
-      } catch (err) {
-        console.error('Failed to create elasticsearch user:', err.message);
-        throw new Error('Failed to create elasticsearch user. Please create it manually or run as root.');
-      }
+      esUserExists = false;
     }
-    // Start as elasticsearch user
-    console.log(`🚀 Starting node ${nodeName} as 'elasticsearch' user using: sudo -u elasticsearch bash ${servicePath}`);
-    child = spawn('sudo', ['-u', 'elasticsearch', 'bash', servicePath], {
-      detached: true,
-      stdio: ['ignore', output, output],
-      shell: false,
-      env: {
-        ...process.env,
-        ES_HOME: env.baseElasticsearchPath,
-        ES_PATH_CONF: path.dirname(servicePath),
-        ES_JAVA_OPTS: '-Xms1g -Xmx1g',
-      },
-    });
-    child.unref();
-    // Give Elasticsearch more time to initialize before we start checking
-    console.log(`⏳ Waiting 10 seconds for Elasticsearch to initialize...`);
-    await new Promise(resolve => setTimeout(resolve, 10000));
+
+    // Check if 'sudo' is available
+    let sudoAvailable = false;
+    try {
+      execSync('which sudo', { stdio: 'ignore' });
+      sudoAvailable = true;
+    } catch (e) {
+      sudoAvailable = false;
+    }
+
+    if (isRoot) {
+      // If root, must use sudo -u elasticsearch
+      if (!sudoAvailable) {
+        throw new Error("Cannot start Elasticsearch node as root and 'sudo' is not available. Please install sudo and ensure the 'elasticsearch' user exists, or run as a non-root user.");
+      }
+      if (!esUserExists) {
+        // Try to create the user
+        try {
+          execSync('sudo useradd -r -s /usr/sbin/nologin elasticsearch', { stdio: 'ignore' });
+          esUserExists = true;
+          console.log('Created elasticsearch user.');
+        } catch (err) {
+          throw new Error("Cannot create 'elasticsearch' user automatically. Please create it manually and re-run.");
+        }
+      }
+      // Start as elasticsearch user
+      console.log(`🚀 Starting node ${nodeName} as 'elasticsearch' user using: sudo -u elasticsearch bash ${servicePath}`);
+      child = spawn('sudo', ['-u', 'elasticsearch', 'bash', servicePath], {
+        detached: true,
+        stdio: ['ignore', output, output],
+        shell: false,
+        env: {
+          ...process.env,
+          ES_HOME: env.baseElasticsearchPath,
+          ES_PATH_CONF: path.dirname(servicePath),
+          ES_JAVA_OPTS: '-Xms1g -Xmx1g',
+        },
+      });
+      child.unref();
+    } else {
+      // Not root: check if running as elasticsearch user
+      let user = '';
+      try {
+        user = execSync('whoami').toString().trim();
+      } catch {}
+      if (user !== 'elasticsearch') {
+        console.warn(`⚠️  Not running as 'elasticsearch' user. Current user: ${user}. Elasticsearch may refuse to start if not run as 'elasticsearch'.`);
+      }
+      child = spawn(servicePath, [], {
+        detached: true,
+        stdio: ['ignore', output, output],
+        shell: false,
+        env: {
+          ...process.env,
+          ES_HOME: env.baseElasticsearchPath,
+          ES_PATH_CONF: path.dirname(servicePath),
+          ES_JAVA_OPTS: '-Xms1g -Xmx1g',
+        },
+      });
+      child.unref();
+    }
+    // No fixed delay; port polling below will handle readiness
   } else {
     // Mac or other Unix
     try {
@@ -463,9 +511,7 @@ async function startNode(nodeName) {
       },
     });
     child.unref();
-    // Give Elasticsearch more time to initialize before we start checking
-    console.log(`⏳ Waiting 10 seconds for Elasticsearch to initialize...`);
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // No fixed delay; port polling below will handle readiness
   }
   // Write PID file immediately
   let nodeConfigDir;
