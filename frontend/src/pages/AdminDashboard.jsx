@@ -8,9 +8,10 @@ import {
   faCheckCircle,
   faInfoCircle,
   faTimes,
+  faCog,
 } from "@fortawesome/free-solid-svg-icons";
-import ClusterSetupWizard from "../components/ClusterSetupWizard";
 import LocalNodeManager from "../components/LocalNodeManager";
+import ClusterSetupWizard from "../components/ClusterSetupWizard";
 import { useClusterManagement } from "../hooks/useClusterManagement";
 
 // Import new components
@@ -26,14 +27,11 @@ export default function AdminDashboard({ onLogout }) {
   // Use shared dashboard hooks
   const {
     notification,
-    error,
     tasksList,
-    currentRunningTaskId,
     isAnyTaskRunning,
     showNotification,
     hideNotification,
     fetchAllTasks,
-    handleTaskAction,
     estimateRemainingTime,
     removeTask,
     setCurrentRunningTaskId,
@@ -44,15 +42,16 @@ export default function AdminDashboard({ onLogout }) {
   const [activeTab, setActiveTab] = useState("cluster"); // 'files', 'cluster', 'accounts', 'configuration'
 
   // === Advanced Node Configuration State ===
-  const [showClusterWizard, setShowClusterWizard] = useState(false);
   const [showAddNodeModal, setShowAddNodeModal] = useState(false);
   const [showLocalNodeManager, setShowLocalNodeManager] = useState(false);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [nodeToEdit, setNodeToEdit] = useState(null);
   const [showNodeDetailsModal, setShowNodeDetailsModal] = useState(false);
   const [selectedNodeForDetails, setSelectedNodeForDetails] = useState(null);
 
   // === Loading state tracking ===
   const [isInitializing, setIsInitializing] = useState(true);
+  const [showSetupBanner, setShowSetupBanner] = useState(true);
 
   // Custom hook for cluster management
   const clusterManagement = useClusterManagement(showNotification);
@@ -87,6 +86,13 @@ export default function AdminDashboard({ onLogout }) {
       clusterManagement.fetchLocalNodes();
     }
   }, [activeTab]); // Remove clusterManagement.fetchLocalNodes from dependency array to prevent loops
+
+  // Hide setup banner if nodes are configured
+  useEffect(() => {
+    if (clusterManagement.localNodes && clusterManagement.localNodes.length > 0) {
+      setShowSetupBanner(false);
+    }
+  }, [clusterManagement.localNodes]);
 
   // Helper function to format bytes
   function formatBytes(bytes) {
@@ -186,6 +192,51 @@ export default function AdminDashboard({ onLogout }) {
           </button>
         </div>
         
+        {/* System Setup Banner */}
+        {showSetupBanner && (
+          <div className="mb-8 p-6 bg-gradient-to-r from-blue-900/40 to-blue-800/40 rounded-xl border border-blue-700/50 shadow-lg relative">
+            <button
+              onClick={() => setShowSetupBanner(false)}
+              className="absolute top-4 right-4 text-blue-300 hover:text-white transition-colors"
+            >
+              <FontAwesomeIcon icon={faTimes} className="text-lg" />
+            </button>
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between pr-8">
+              <div className="mb-4 lg:mb-0">
+                <h2 className="text-2xl font-bold text-white mb-2 flex items-center">
+                  <FontAwesomeIcon icon={faCog} className="mr-3 text-blue-400" />
+                  System Setup Wizard
+                </h2>
+                <p className="text-blue-100 mb-2">
+                  Need help setting up TrustQuery on your VPS? Our guided setup wizard will help you install and configure Elasticsearch.
+                </p>
+                <div className="flex flex-wrap gap-2 text-sm text-blue-200">
+                  <span className="bg-blue-800/40 px-2 py-1 rounded">✓ Windows & Linux Support</span>
+                  <span className="bg-blue-800/40 px-2 py-1 rounded">✓ Automatic Path Detection</span>
+                  <span className="bg-blue-800/40 px-2 py-1 rounded">✓ Installation Guide</span>
+                  <span className="bg-blue-800/40 px-2 py-1 rounded">✓ Connection Testing</span>
+                </div>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => setShowSetupWizard(true)}
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg transition duration-150 ease-in-out font-semibold shadow-lg transform hover:scale-105 active:scale-95"
+                >
+                  <FontAwesomeIcon icon={faCog} className="mr-2" />
+                  Launch Setup Wizard
+                </button>
+                <button
+                  onClick={() => setActiveTab("configuration")}
+                  className="bg-neutral-700 hover:bg-neutral-600 text-white px-6 py-3 rounded-lg transition duration-150 ease-in-out border border-neutral-600"
+                >
+                  <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
+                  System Configuration
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {/* Tab Navigation */}
         <div className="mb-8 border-b border-neutral-700">
           <nav className="flex space-x-8">
@@ -266,7 +317,6 @@ export default function AdminDashboard({ onLogout }) {
             handleStopLocalNode={clusterManagement.handleStopLocalNode}
             handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
             // Modal controls
-            setShowClusterWizard={setShowClusterWizard}
             setShowLocalNodeManager={setShowLocalNodeManager}
             // Other
             isAnyTaskRunning={isAnyTaskRunning}
@@ -282,6 +332,7 @@ export default function AdminDashboard({ onLogout }) {
           <ConfigurationManagement 
             showNotification={showNotification}
             enhancedNodesData={clusterManagement.enhancedNodesData || {}}
+            setShowSetupWizard={setShowSetupWizard}
           />
         )}
 
@@ -310,18 +361,7 @@ export default function AdminDashboard({ onLogout }) {
         />
       )}
 
-      {/* Cluster Setup Wizard */}
-      {showClusterWizard && (
-        <ClusterSetupWizard
-          isOpen={showClusterWizard}
-          onClose={() => setShowClusterWizard(false)}
-          onComplete={() => {
-            setShowClusterWizard(false);
-            // Refresh local nodes (which includes cluster info if available)
-            clusterManagement.fetchLocalNodes();
-          }}
-        />
-      )}
+
 
       {/* Advanced Add Node Modal */}
       {showAddNodeModal && (
@@ -392,6 +432,20 @@ export default function AdminDashboard({ onLogout }) {
         enhancedNodesData={clusterManagement.enhancedNodesData || {}}
         onRefreshNodes={clusterManagement.fetchLocalNodes}
       />
+
+      {/* Cluster Setup Wizard */}
+      {showSetupWizard && (
+        <ClusterSetupWizard
+          isOpen={showSetupWizard}
+          onClose={() => setShowSetupWizard(false)}
+          onComplete={() => {
+            setShowSetupWizard(false);
+            setShowSetupBanner(false); // Hide setup banner after completion
+            clusterManagement.fetchLocalNodes(); // Refresh nodes after setup
+            showNotification("success", "Cluster setup completed successfully!", faCheckCircle);
+          }}
+        />
+      )}
         </>
       )}
     </div>

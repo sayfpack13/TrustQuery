@@ -142,30 +142,6 @@ export const useAdminDashboard = () => {
     }
   }, [currentRunningTaskId, showNotification, playSuccessSound, playErrorSound]);
 
-  // Notification and error handling for task actions
-  const handleTaskAction = async (action, payload, successMessage, errorMessage) => {
-    setError("");
-    try {
-      const response = await axiosClient.post(`/api/admin/tasks/${action}`, payload);
-      
-      // Some task actions create new tasks, others just manage existing ones
-      if (response.data.taskId) {
-        // Action created a new task
-        const newTaskId = response.data.taskId;
-        localStorage.setItem("currentTaskId", newTaskId);
-        setCurrentRunningTaskId(newTaskId);
-        showNotification("info", successMessage, faCircleNotch, true);
-      } else {
-        // Action just managed existing tasks (like clear)
-        showNotification("success", response.data.message || successMessage, faCheckCircle);
-      }
-      
-      fetchAllTasks(); // Refresh tasks
-    } catch (err) {
-      setError(err.response?.data?.error || errorMessage);
-      playErrorSound();
-    }
-  };
 
   // Function to estimate remaining time for a task
   const estimateRemainingTime = (start, progress, total) => {
@@ -250,7 +226,6 @@ export const useAdminDashboard = () => {
     showNotification,
     hideNotification,
     fetchAllTasks,
-    handleTaskAction,
     estimateRemainingTime,
     removeTask,
     setError,

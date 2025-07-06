@@ -16,7 +16,8 @@ import {
 
 export default function ConfigurationManagement({ 
   showNotification,
-  enhancedNodesData = {}
+  enhancedNodesData = {},
+  setShowSetupWizard
 }) {
   const [config, setConfig] = useState(null);
   const [configLoading, setConfigLoading] = useState(false);
@@ -143,6 +144,28 @@ export default function ConfigurationManagement({
         <FontAwesomeIcon icon={faCogs} className="mr-3 text-primary" />
         System Configuration
       </h2>
+      
+      {/* Setup Wizard Section */}
+      <div className="mb-8 p-6 bg-blue-900/20 rounded-lg border border-blue-800/30">
+        <div className="flex justify-between items-center">
+          <div>
+            <h3 className="text-xl font-semibold text-white flex items-center mb-2">
+              <FontAwesomeIcon icon={faCogs} className="mr-3 text-blue-400" />
+              VPS Setup Wizard
+            </h3>
+            <p className="text-neutral-300">
+              Need help setting up Elasticsearch on your VPS? Use our guided setup wizard for Windows or Linux systems.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowSetupWizard(true)}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg transition duration-150 ease-in-out flex-shrink-0 ml-4"
+          >
+            <FontAwesomeIcon icon={faCogs} className="mr-2" />
+            Launch Setup Wizard
+          </button>
+        </div>
+      </div>
       
       {configLoading ? (
         <div className="text-center py-8">

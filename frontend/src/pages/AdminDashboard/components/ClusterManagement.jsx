@@ -32,7 +32,6 @@ export default function ClusterManagement({
   handleStopLocalNode,
   handleDeleteLocalNode,
   // Modal controls
-  setShowClusterWizard,
   setShowLocalNodeManager,
   // Other
   isAnyTaskRunning,

@@ -12,5 +12,29 @@
   "nodeAttributes": {
     "defaultDiskType": "ssd",
     "defaultZone": "zone1"
+  },
+  "setupWizard": {
+    "completed": true,
+    "completedAt": "2025-07-06T03:08:58.962Z",
+    "os": "win32",
+    "basePath": "C:\\elasticsearch",
+    "detectedPaths": {
+      "elasticsearchBase": "C:\\elasticsearch",
+      "binPath": "C:\\elasticsearch\\bin",
+      "configPath": "C:\\elasticsearch\\config",
+      "dataPath": "C:\\elasticsearch\\data",
+      "logsPath": "C:\\elasticsearch\\logs",
+      "libPath": "C:\\elasticsearch\\lib",
+      "pluginsPath": "C:\\elasticsearch\\plugins"
+    },
+    "skipElasticsearchInstall": true
+  },
+  "elasticsearchConfig": {
+    "basePath": "C:\\elasticsearch",
+    "configFilePath": "C:\\elasticsearch\\config\\elasticsearch.yml",
+    "dataPath": "C:\\elasticsearch\\data",
+    "logsPath": "C:\\elasticsearch\\logs",
+    "jvmOptionsPath": "C:\\elasticsearch\\config\\jvm.options",
+    "executable": "C:\\elasticsearch\\bin\\elasticsearch.bat"
   }
 }

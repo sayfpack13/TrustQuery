@@ -2,8 +2,8 @@
 const express = require("express");
 const { verifyJwt } = require("../middleware/auth");
 const { getConfig, setConfig } = require("../config");
-const { getCache, refreshCache, refreshCacheForRunningNodes, syncSearchIndices } = require('../cache/indices-cache');
-const { getES, initializeElasticsearchClients } = require("../elasticsearch/client");
+const { getCache, refreshCacheForRunningNodes, syncSearchIndices } = require('../cache/indices-cache');
+const { getES } = require("../elasticsearch/client");
 const clusterManager = require("../elasticsearch/cluster-manager");
 
 const router = express.Router();
@@ -34,7 +34,7 @@ async function validateNodePorts(newNodeConfig, editingNodeName = null) {
   const newTransportPort = parseInt(newNodeConfig.transportPort) || 9300;
 
   // Check against existing nodes
-  for (const [nodeUrl, metadata] of Object.entries(existingMetadata)) {
+  for (const [, metadata] of Object.entries(existingMetadata)) {
     // If editing, skip checking the node against itself
     if (editingNodeName && metadata.name === editingNodeName) {
       continue;
@@ -154,7 +154,6 @@ function findAvailableNodeName(existingMetadata, baseName) {
   const suggestions = [];
   
   // Pattern 1: Add number suffix (e.g., node-1 -> node-2, node-3)
-  const baseNameLower = baseName.toLowerCase();
   for (let i = 1; i <= 10; i++) {
     const candidate = `${baseName}-${i}`;
     if (!usedNames.has(candidate.toLowerCase())) {
@@ -786,71 +785,6 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
   }
 });
 
-// GET cluster setup guide
-router.get("/setup-guide", verifyJwt, async (req, res) => {
-  try {
-    const guide = {
-      steps: [
-        {
-          step: 1,
-          title: "Download and Install Elasticsearch",
-          description: "Download Elasticsearch from elastic.co and extract to C:\\elasticsearch",
-          commands: [
-            "Download from: https://www.elastic.co/downloads/elasticsearch",
-            "Extract to: C:\\elasticsearch",
-            "Ensure Java 11+ is installed"
-          ]
-        },
-        {
-          step: 2,
-          title: "Create Your First Cluster",
-          description: "Use the TrustQuery cluster creation wizard",
-          commands: [
-            "Go to Admin Dashboard > Cluster Management",
-            "Click 'Create New Cluster'",
-            "Configure nodes with different ports (9200, 9201, 9202, etc.)",
-            "Set different data paths for each node"
-          ]
-        },
-        {
-          step: 3,
-          title: "Start Nodes",
-          description: "Start each node individually",
-          commands: [
-            "Click 'Start' button for each node in the UI",
-            "Or run the generated start-node.bat files",
-            "Monitor logs for successful startup"
-          ]
-        },
-        {
-          step: 4,
-          title: "Verify Cluster Health",
-          description: "Check that all nodes have joined the cluster",
-          commands: [
-            "Refresh cluster information in the UI",
-            "Verify all nodes show as 'Active'",
-            "Check cluster status is 'green'"
-          ]
-        }
-      ],
-      commonPorts: {
-        node1: { http: 9200, transport: 9300 },
-        node2: { http: 9201, transport: 9301 },
-        node3: { http: 9202, transport: 9302 }
-      },
-      dataPathExamples: {
-        node1: "C:\\elasticsearch-data\\node-1",
-        node2: "C:\\elasticsearch-data\\node-2",
-        node3: "C:\\elasticsearch-data\\node-3"
-      }
-    };
-    
-    res.json(guide);
-  } catch (error) {
-    console.error("Error getting setup guide:", error);
-    res.status(500).json({ error: "Failed to get setup guide: " + error.message });
-  }
-});
 
 // GET local nodes status with indices information
 router.get("/local-nodes", verifyJwt, async (req, res) => {
@@ -1206,7 +1140,6 @@ router.post('/nodes/:nodeName/move', verifyJwt, async (req, res) => {
 
     // Check if destination exists and handle conflicts
     const fs = require('fs').promises;
-    const path = require('path');
     
     const destinationExists = await fs.access(newPath).then(() => true).catch(() => false);
     if (destinationExists) {
@@ -1371,7 +1304,7 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
     if (nodeIds.length === 0) {
       // Try to find the node by name in the cluster
       const nodesInfo = await es.nodes.info();
-      const nodeEntry = Object.entries(nodesInfo.nodes).find(([id, info]) => info.name === nodeName);
+      const nodeEntry = Object.entries(nodesInfo.nodes).find(([, info]) => info.name === nodeName);
       
       if (nodeEntry) {
         const [nodeId] = nodeEntry;

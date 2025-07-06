@@ -72,10 +72,12 @@ const { getCache, getCacheFiltered, getCacheStatus, clearCache, refreshCache, sy
 // Import route modules
 const clusterAdvancedRoutes = require('./src/routes/cluster-advanced');
 const esConfigRoutes = require('./src/routes/elasticsearch-config');
+const setupWizardRoutes = require('./src/routes/setup-wizard');
 
 // Add route middleware
 app.use('/api/admin/cluster-advanced', clusterAdvancedRoutes);
 app.use('/api/admin/es/config', esConfigRoutes);
+app.use('/api/setup-wizard', setupWizardRoutes);
 
 // Initialize Elasticsearch client with configuration
 const { initializeElasticsearchClients, getES, isElasticsearchAvailable } = require('./src/elasticsearch/client');
@@ -1867,68 +1869,3 @@ function applyMaskingForPublicSearch(accountData, config) {
     // Note: raw_line, index, highlight, and sourceFile are intentionally excluded for privacy
   };
 }
-
-// Helper function to check if a specific node is running efficiently using cluster manager
-async function isNodeRunning(nodeUrl) {
-  try {
-    const { clusterManager } = require('./src/elasticsearch/cluster-manager');
-    const config = getConfig();
-    
-    // Find the node name from the URL using nodeMetadata
-    const nodeMetadata = config.nodeMetadata || {};
-    let nodeName = null;
-    
-    for (const [url, metadata] of Object.entries(nodeMetadata)) {
-      if (url === nodeUrl) {
-        nodeName = metadata.name;
-        break;
-      }
-    }
-    
-    if (!nodeName) {
-      console.log(`No node name found for URL: ${nodeUrl}, checking via HTTP ping`);
-      // Fallback to HTTP ping if no node name found
-      const { Client } = require('@elastic/elasticsearch');
-      const client = new Client({ 
-        node: nodeUrl,
-        requestTimeout: 2000,
-        pingTimeout: 1000
-      });
-      await client.ping();
-      return true;
-    }
-    
-    // Use cluster manager's efficient isNodeRunning method
-    return await clusterManager.isNodeRunning(nodeName);
-  } catch (error) {
-    return false;
-  }
-}
-
-// Helper function to check running status for all nodes in cached data using efficient cluster manager approach
-async function updateRunningStatusInCacheEfficient(cachedData) {
-  const updatedData = {};
-  const clusterManager = require('./src/elasticsearch/cluster-manager');
-  
-  for (const [nodeName, nodeData] of Object.entries(cachedData)) {
-    updatedData[nodeName] = {
-      ...nodeData,
-      isRunning: false // Default to false
-    };
-    
-    try {
-      // Use cluster manager's efficient PID-based isNodeRunning method
-      const isRunning = await clusterManager.isNodeRunning(nodeName);
-      updatedData[nodeName].isRunning = isRunning;
-      console.log(`📡 Node ${nodeName}: ${isRunning ? 'Running' : 'Not running'}`);
-    } catch (error) {
-      console.warn(`⚠️ Failed to check status for node ${nodeName}:`, error.message);
-    }
-  }
-  
-  return updatedData;
-}
-
-
-
-
