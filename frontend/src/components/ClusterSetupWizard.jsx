@@ -184,7 +184,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   // Fetch backend-configured base path
   const fetchBackendBasePath = async () => {
     try {
-      const response = await axiosClient.get('/api/elasticsearch-config/base-path');
+      const response = await axiosClient.get('/api/admin/es/config/base-path');
       if (response.data && response.data.basePath) {
         setBackendBasePath(response.data.basePath);
         setBasePath((prev) => prev || response.data.basePath);

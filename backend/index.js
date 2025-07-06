@@ -80,7 +80,7 @@ app.use('/api/admin/es/config', esConfigRoutes);
 app.use('/api/setup-wizard', setupWizardRoutes);
 
 // Initialize Elasticsearch client with configuration
-const { initializeElasticsearchClients, getES, isElasticsearchAvailable } = require('./src/elasticsearch/client');
+const { getES, isElasticsearchAvailable } = require('./src/elasticsearch/client');
 
 // Helper function to get current ES client
 function getCurrentES() {
