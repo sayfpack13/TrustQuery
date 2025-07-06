@@ -1008,7 +1008,7 @@ async function isNodeRunning(nodeName) {
 }
 
 async function findPidByPort(port) {
-  const command = `netstat -ano -p TCP`; // Be more specific to reduce output
+  // Improved: Check both IPv4 and IPv6, and match 127.0.0.1, 0.0.0.0, ::1, and all interfaces
   const pollInterval = 1000; // Check every 1 second
   const timeout = 60000; // 60 seconds - Elasticsearch can take a while to start
   const startTime = Date.now();
@@ -1017,28 +1017,67 @@ async function findPidByPort(port) {
 
   while (Date.now() - startTime < timeout) {
     try {
-      const output = execSync(command, { encoding: 'utf8', stdio: 'pipe' });
+      // Try netstat first (works on most Linux distros)
+      let output = '';
+      try {
+        output = execSync('netstat -tulnp', { encoding: 'utf8', stdio: 'pipe' });
+      } catch (e) {
+        // netstat may not be available, try ss
+        try {
+          output = execSync(`ss -tulnp`, { encoding: 'utf8', stdio: 'pipe' });
+        } catch (e2) {
+          // fallback to lsof
+          try {
+            output = execSync(`lsof -i :${port} -n -P`, { encoding: 'utf8', stdio: 'pipe' });
+          } catch (e3) {
+            output = '';
+          }
+        }
+      }
+
       const lines = output.trim().split(/\r?\n/);
-
+      // Try to match lines with the port (IPv4 or IPv6)
       for (const line of lines) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 5) continue;
-
-        // On Windows, the columns are Proto, Local Address, Foreign Address, State, PID
-        const localAddress = parts[1];
-        const state = parts[3];
-        const pid = parts[4];
-
-        if (state === 'LISTENING' && localAddress.endsWith(':' + port)) {
-          if (pid && pid !== '0') {
-            console.log(`✅ Found process with PID ${pid} listening on port ${port}`);
-            return pid; // Found it
+        // netstat: tcp        0      0 127.0.0.1:9200          0.0.0.0:*               LISTEN      1359846/java
+        // netstat: tcp6       0      0 :::9200                 :::*                    LISTEN      1359846/java
+        // ss:      LISTEN 0      4096   127.0.0.1:9200  0.0.0.0:*    users:(('java',pid=1359846,fd=123))
+        // lsof:    java    1359846 elasticsearch   123u  IPv6 0x...      0t0  TCP 127.0.0.1:9200 (LISTEN)
+        if (
+          line.match(new RegExp(`(127\\.0\\.0\\.1|0\\.0\\.0\\.0|::1|\\[::1\\]|::|\\*)[:.]${port}\\b`)) ||
+          line.match(new RegExp(`:${port}\\b`))
+        ) {
+          // Try to extract PID
+          // netstat: last column is PID/Program
+          const pidMatch = line.match(/\s(\d+)\/(java|elasticsearch|node|python|[a-zA-Z]+)/);
+          if (pidMatch) {
+            const pid = parseInt(pidMatch[1], 10);
+            if (pid > 0) {
+              console.log(`✅ Found process on port ${port}: PID ${pid}`);
+              return pid;
+            }
+          }
+          // ss: users:(('java',pid=1359846,fd=123))
+          const ssPidMatch = line.match(/pid=(\d+)/);
+          if (ssPidMatch) {
+            const pid = parseInt(ssPidMatch[1], 10);
+            if (pid > 0) {
+              console.log(`✅ Found process on port ${port}: PID ${pid}`);
+              return pid;
+            }
+          }
+          // lsof: second column is PID
+          const lsofPidMatch = line.match(/^\S+\s+(\d+)\s/);
+          if (lsofPidMatch) {
+            const pid = parseInt(lsofPidMatch[1], 10);
+            if (pid > 0) {
+              console.log(`✅ Found process on port ${port}: PID ${pid}`);
+              return pid;
+            }
           }
         }
       }
     } catch (e) {
-      console.log(`⚠️ Error running netstat: ${e.message}`);
-      // execSync will throw if the command fails, which we can ignore while polling.
+      console.log(`⚠️ Error running port detection: ${e.message}`);
     }
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
