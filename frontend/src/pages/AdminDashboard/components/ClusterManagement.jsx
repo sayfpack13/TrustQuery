@@ -44,6 +44,9 @@ export default function ClusterManagement({
   // Use the enhanced data from the hook instead of local state
   const enhancedNodesData = enhancedNodesDataProp || {};
 
+  // Loading state for metadata verification
+  const [isVerifyingMetadata, setIsVerifyingMetadata] = useState(false);
+
   // Helper function to get enhanced data for a node
   const getEnhancedNodeData = (nodeName) => {
     return enhancedNodesData[nodeName] || {};
@@ -97,6 +100,46 @@ export default function ClusterManagement({
     return date.toLocaleDateString();
   };
 
+  // Improved metadata verification with loading state
+  const handleVerifyMetadata = async () => {
+    if (isVerifyingMetadata) return; // Prevent double operations
+
+    setIsVerifyingMetadata(true);
+    try {
+      showNotification(
+        "info",
+        "Verifying node metadata...",
+        faCircleNotch,
+        true
+      );
+      const response = await axiosClient.post(
+        "/api/admin/cluster-advanced/nodes/verify-metadata"
+      );
+      console.log(
+        "Metadata verification completed:",
+        response.data
+      );
+      showNotification(
+        "success",
+        "Node metadata verification completed successfully",
+        faCog
+      );
+      // Refresh the nodes list after verification
+      await fetchLocalNodes();
+    } catch (error) {
+      console.error("Failed to verify metadata:", error);
+      showNotification(
+        "error",
+        `Failed to verify metadata: ${
+          error.response?.data?.error || error.message
+        }`,
+        faExclamationCircle
+      );
+    } finally {
+      setIsVerifyingMetadata(false);
+    }
+  };
+
   return (
     <>
       {/* Node Management Section */}
@@ -123,44 +166,13 @@ export default function ClusterManagement({
               Refresh
             </button>
             <button
-              onClick={async () => {
-                try {
-                  showNotification(
-                    "info",
-                    "Verifying node metadata...",
-                    faCircleNotch
-                  );
-                  const response = await axiosClient.post(
-                    "/api/admin/cluster-advanced/nodes/verify-metadata"
-                  );
-                  console.log(
-                    "Metadata verification completed:",
-                    response.data
-                  );
-                  showNotification(
-                    "success",
-                    "Node metadata verification completed successfully",
-                    faCog
-                  );
-                  // Refresh the nodes list after verification
-                  await fetchLocalNodes();
-                } catch (error) {
-                  console.error("Failed to verify metadata:", error);
-                  showNotification(
-                    "error",
-                    `Failed to verify metadata: ${
-                      error.response?.data?.error || error.message
-                    }`,
-                    faExclamationCircle
-                  );
-                }
-              }}
+              onClick={handleVerifyMetadata}
               className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-opacity-75"
               disabled={clusterLoading}
               title="Verify and clean up node metadata"
             >
               <FontAwesomeIcon icon={faCog} className="mr-2" />
-              Verify Metadata
+              {isVerifyingMetadata ? "Verifying..." : "Verify Metadata"}
             </button>
           </div>
         </div>

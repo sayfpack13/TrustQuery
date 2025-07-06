@@ -13,6 +13,7 @@ import {
   faExclamationTriangle,
   faSpinner,
   faCheckCircle,
+  faCircleNotch,
 } from "@fortawesome/free-solid-svg-icons";
 
 export default function FilesManagement({ 
@@ -31,6 +32,7 @@ export default function FilesManagement({
   const [parsedFiles, setParsedFiles] = useState([]);
   const [pendingFiles, setPendingFiles] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [deletingFiles, setDeletingFiles] = useState(new Set()); // Track which files are being deleted
 
   // Parsing options modal state
   const [showParsingOptionsModal, setShowParsingOptionsModal] = useState(false);
@@ -237,12 +239,21 @@ export default function FilesManagement({
   };
 
   const handleMoveToUnparsed = async (filename) => {
+    if (deletingFiles.has(filename)) return; // Prevent operations during delete
+
+    setDeletingFiles(prev => new Set([...prev, filename])); // Use same state for move operations
     try {
       await axiosClient.post("/api/admin/move-to-unparsed", { filename });
       showNotification("success", `Moved '${filename}' to unparsed folder.`, faCheckCircle);
-      fetchFilesData();
+      await fetchFilesData();
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to move file", faTimes);
+    } finally {
+      setDeletingFiles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(filename);
+        return newSet;
+      });
     }
   };
 
@@ -251,14 +262,23 @@ export default function FilesManagement({
       return;
     }
 
+    if (deletingFiles.has(filename)) return; // Prevent double deletion
+
+    setDeletingFiles(prev => new Set([...prev, filename]));
     try {
       await axiosClient.delete("/api/admin/pending-files", {
         data: { filename },
       });
       showNotification("success", `Deleted '${filename}' successfully.`, faCheckCircle);
-      fetchFilesData();
+      await fetchFilesData();
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to delete file", faTimes);
+    } finally {
+      setDeletingFiles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(filename);
+        return newSet;
+      });
     }
   };
 
@@ -267,14 +287,23 @@ export default function FilesManagement({
       return;
     }
 
+    if (deletingFiles.has(filename)) return; // Prevent double deletion
+
+    setDeletingFiles(prev => new Set([...prev, filename]));
     try {
       await axiosClient.delete("/api/admin/files", {
         data: { filename },
       });
       showNotification("success", `Deleted '${filename}' successfully.`, faCheckCircle);
-      fetchFilesData();
+      await fetchFilesData();
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to delete file", faTimes);
+    } finally {
+      setDeletingFiles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(filename);
+        return newSet;
+      });
     }
   };
 
@@ -283,14 +312,23 @@ export default function FilesManagement({
       return;
     }
 
+    if (deletingFiles.has(filename)) return; // Prevent double deletion
+
+    setDeletingFiles(prev => new Set([...prev, filename]));
     try {
       await axiosClient.delete("/api/admin/parsed-files", {
         data: { filename },
       });
       showNotification("success", `Deleted '${filename}' successfully.`, faCheckCircle);
-      fetchFilesData();
+      await fetchFilesData();
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to delete file", faTimes);
+    } finally {
+      setDeletingFiles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(filename);
+        return newSet;
+      });
     }
   };
 
@@ -362,26 +400,32 @@ export default function FilesManagement({
                 <div className="space-x-2">
                   <button
                     onClick={() => handleMoveToUnparsed(f)}
-                    disabled={isAnyTaskRunning || showEditModal}
+                    disabled={isAnyTaskRunning || showEditModal || deletingFiles.has(f)}
                     className={`bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
-                      isAnyTaskRunning || showEditModal
+                      isAnyTaskRunning || showEditModal || deletingFiles.has(f)
                         ? "opacity-50 cursor-not-allowed"
                         : ""
                     }`}
                   >
-                    <FontAwesomeIcon
-                      icon={faArrowRightArrowLeft}
-                      className="mr-1"
-                    />
-                    Move to Unparsed
+                    {deletingFiles.has(f) ? (
+                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-1" />
+                    ) : (
+                      <FontAwesomeIcon icon={faArrowRightArrowLeft} className="mr-1" />
+                    )}
+                    {deletingFiles.has(f) ? 'Moving...' : 'Move to Unparsed'}
                   </button>
                   <button
                     onClick={() => handleDeletePendingFile(f)}
                     className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                    disabled={loading || isAnyTaskRunning}
+                    disabled={loading || isAnyTaskRunning || deletingFiles.has(f)}
                     title={`Delete '${f}'`}
                   >
-                    <FontAwesomeIcon icon={faTrash} className="mr-1" /> Delete
+                    {deletingFiles.has(f) ? (
+                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-1" />
+                    ) : (
+                      <FontAwesomeIcon icon={faTrash} className="mr-1" />
+                    )}
+                    {deletingFiles.has(f) ? 'Deleting...' : 'Delete'}
                   </button>
                 </div>
               </li>
@@ -432,10 +476,15 @@ export default function FilesManagement({
                   <button
                     onClick={() => handleDeleteUnparsedFile(f)}
                     className="bg-red-700 hover:bg-red-600 text-white px-3 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                    disabled={loading || isAnyTaskRunning}
+                    disabled={loading || isAnyTaskRunning || deletingFiles.has(f)}
                     title={`Delete '${f}'`}
                   >
-                    <FontAwesomeIcon icon={faTrash} className="mr-1" /> Delete
+                    {deletingFiles.has(f) ? (
+                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-1" />
+                    ) : (
+                      <FontAwesomeIcon icon={faTrash} className="mr-1" />
+                    )}
+                    {deletingFiles.has(f) ? 'Deleting...' : 'Delete'}
                   </button>
                 </div>
               </li>
@@ -467,10 +516,15 @@ export default function FilesManagement({
                 <button
                   onClick={() => handleDeleteParsedFile(f)}
                   className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                  disabled={loading || isAnyTaskRunning}
+                  disabled={loading || isAnyTaskRunning || deletingFiles.has(f)}
                   title={`Delete '${f}'`}
                 >
-                  <FontAwesomeIcon icon={faTrash} className="mr-1" /> Delete
+                  {deletingFiles.has(f) ? (
+                    <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-1" />
+                  ) : (
+                    <FontAwesomeIcon icon={faTrash} className="mr-1" />
+                  )}
+                  {deletingFiles.has(f) ? 'Deleting...' : 'Delete'}
                 </button>
               </li>
             ))}

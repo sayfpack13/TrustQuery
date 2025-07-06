@@ -14,6 +14,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
   const [showCreateIndexForm, setShowCreateIndexForm] = useState(false);
   const [isCreatingIndex, setIsCreatingIndex] = useState(false);
   const [isDeletingIndex, setIsDeletingIndex] = useState(null);
+  const [isRefreshingIndices, setIsRefreshingIndices] = useState(false);
   const [newIndexName, setNewIndexName] = useState('');
   const [newIndexShards, setNewIndexShards] = useState('1');
   const [newIndexReplicas, setNewIndexReplicas] = useState('0');
@@ -102,10 +103,45 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
       return fetchLiveNodeIndices(showLoading);
     } else {
       if (showLoading) setIndicesLoading(true);
-      fetchCachedNodeIndices();
-      if (showLoading) setIndicesLoading(false);
+      try {
+        fetchCachedNodeIndices();
+      } catch (error) {
+        console.error("Error in fetchNodeIndices:", error);
+        setIndicesError('Failed to fetch indices data');
+      } finally {
+        if (showLoading) setIndicesLoading(false);
+      }
     }
   }, [fetchLiveNodeIndices, fetchCachedNodeIndices]);
+
+  // Manual refresh function for the retry button
+  const handleManualRefresh = useCallback(async () => {
+    if (refreshInProgress.current) return;
+    
+    setIsRefreshingIndices(true);
+    refreshInProgress.current = true;
+    
+    try {
+      if (node.isRunning) {
+        // For running nodes, fetch live data first, then update cache
+        await fetchLiveNodeIndices(false);
+        
+        // Trigger a centralized cache refresh
+        if (onRefreshNodes) {
+          await onRefreshNodes(true);
+        }
+      } else {
+        // For offline nodes, just update from cached data
+        fetchCachedNodeIndices();
+      }
+    } catch (error) {
+      console.error("Manual refresh failed:", error);
+      setIndicesError(error.response?.data?.error || 'Refresh failed');
+    } finally {
+      setIsRefreshingIndices(false);
+      refreshInProgress.current = false;
+    }
+  }, [node?.isRunning, fetchLiveNodeIndices, fetchCachedNodeIndices, onRefreshNodes]);
 
   const fetchDiskStats = useCallback(async () => {
     if (node && node.isRunning) {
@@ -182,14 +218,16 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
   }, [show]);
 
   const handleCreateIndex = async () => {
-    if (!isFormValid || refreshInProgress.current) {
+    if (!isFormValid || refreshInProgress.current || isCreatingIndex) {
       return;
     }
 
     refreshInProgress.current = true;
     setIsCreatingIndex(true);
+    setIndicesError(null); // Clear any previous errors
+    
     try {
-      await axiosClient.post(`/api/admin/cluster-advanced/${node.name}/indices`, {
+      const response = await axiosClient.post(`/api/admin/cluster-advanced/${node.name}/indices`, {
         indexName: newIndexName.trim(),
         shards: parseInt(newIndexShards),
         replicas: parseInt(newIndexReplicas),
@@ -216,9 +254,16 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
       if (onRefreshNodes) {
         await onRefreshNodes(true);
       }
+      
+      // Show success feedback (you could replace with a toast notification)
+      console.log(`✅ Index '${newIndexName.trim()}' created successfully`);
     } catch (error) {
       console.error("Failed to create index", error);
-      // Error handling could be improved with notifications
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to create index';
+      setIndicesError(`Failed to create index: ${errorMessage}`);
+      
+      // Don't close the form on error, let user retry
+      setShowCreateIndexForm(true);
     } finally {
       setIsCreatingIndex(false);
       refreshInProgress.current = false;
@@ -231,12 +276,14 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
   };
 
   const confirmDelete = async () => {
-    if (!indexToDelete || refreshInProgress.current) {
+    if (!indexToDelete || refreshInProgress.current || isDeletingIndex) {
       return;
     }
 
     refreshInProgress.current = true;
     setIsDeletingIndex(indexToDelete.index);
+    setIndicesError(null); // Clear any previous errors
+    
     try {
       // Use the correct node-specific API endpoint
       await axiosClient.delete(`/api/admin/cluster-advanced/${node.name}/indices/${indexToDelete.index}`);
@@ -256,10 +303,16 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
       if (onRefreshNodes) {
         await onRefreshNodes(true);
       }
+      
+      // Show success feedback
+      console.log(`✅ Index '${indexToDelete.index}' deleted successfully`);
     } catch (err) {
       console.error("Error deleting index", err);
-      // Show error notification or alert if needed
-      alert(`Failed to delete index: ${err.response?.data?.error || err.message}`);
+      const errorMessage = err.response?.data?.error || err.message || 'Failed to delete index';
+      setIndicesError(`Failed to delete index: ${errorMessage}`);
+      
+      // For delete errors, we might want to show an alert as well since it's a destructive operation
+      alert(`Failed to delete index '${indexToDelete.index}': ${errorMessage}`);
     } finally {
       setShowDeleteModal(false);
       setIndexToDelete(null);
@@ -393,25 +446,49 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
               </div>
             )}
             
-            {indicesError && node.isRunning && (
-              <div className="mb-4 p-3 bg-red-600 rounded-lg border border-red-500">
-                <div className="flex items-center space-x-2">
-                  <FontAwesomeIcon icon={faExclamationTriangle} className="text-red-100" />
-                  <p className="text-red-200 text-sm">
-                    {indicesError}
-                  </p>
+            {indicesError && (
+              <div className="mb-4 p-4 bg-red-600 rounded-lg border border-red-500">
+                <div className="flex items-start space-x-3">
+                  <FontAwesomeIcon icon={faExclamationTriangle} className="text-red-100 text-lg mt-0.5" />
+                  <div className="flex-1">
+                    <h4 className="text-red-100 font-semibold mb-1">Error Loading Indices</h4>
+                    <p className="text-red-200 text-sm mb-2">
+                      {indicesError}
+                    </p>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={handleManualRefresh}
+                        disabled={isRefreshingIndices || refreshInProgress.current}
+                        className="bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm disabled:opacity-50 flex items-center"
+                      >
+                        <FontAwesomeIcon 
+                          icon={faCircleNotch} 
+                          className={`mr-1 ${isRefreshingIndices ? 'fa-spin' : ''}`} 
+                        />
+                        {isRefreshingIndices ? 'Retrying...' : 'Retry'}
+                      </button>
+                      {node.isRunning && (
+                        <button
+                          onClick={() => fetchLiveNodeIndices(true)}
+                          disabled={indicesLoading || refreshInProgress.current}
+                          className="bg-red-700 hover:bg-red-600 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
+                        >
+                          Force Live Fetch
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <button
-                  onClick={() => fetchNodeIndices()}
-                  className="mt-2 bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm"
-                >
-                  Retry
-                </button>
               </div>
             )}
             
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-semibold text-white">Indices on {node.name}</h3>
+              <h3 className="text-xl font-semibold text-white flex items-center">
+                Indices on {node.name}
+                {(indicesLoading || isRefreshingIndices) && (
+                  <FontAwesomeIcon icon={faCircleNotch} className="fa-spin ml-2 text-blue-400" />
+                )}
+              </h3>
               <div className="flex items-center space-x-2">
                 {/* Cache status indicator */}
                 <div className="flex items-center space-x-1">
@@ -427,14 +504,32 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                   </span>
                 </div>
                 
+                {/* Refresh button */}
+                <button
+                  onClick={handleManualRefresh}
+                  disabled={isRefreshingIndices || refreshInProgress.current}
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                  title="Refresh indices data"
+                >
+                  <FontAwesomeIcon 
+                    icon={faCircleNotch} 
+                    className={`mr-1 ${isRefreshingIndices ? 'fa-spin' : ''}`} 
+                  />
+                  {isRefreshingIndices ? 'Refreshing...' : 'Refresh'}
+                </button>
+                
                 {/* Create index button */}
                 {node.isRunning ? (
                   <button
                     onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
-                    className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm"
+                    disabled={isCreatingIndex || refreshInProgress.current}
+                    className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                   >
-                    <FontAwesomeIcon icon={faPlus} className="mr-2" />
-                    Create Index
+                    <FontAwesomeIcon 
+                      icon={isCreatingIndex ? faCircleNotch : faPlus} 
+                      className={`mr-2 ${isCreatingIndex ? 'fa-spin' : ''}`} 
+                    />
+                    {isCreatingIndex ? 'Creating...' : 'Create Index'}
                   </button>
                 ) : (
                   <button
@@ -525,51 +620,86 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
               </div>
             )}
             
-            <table className="w-full text-neutral-100 bg-neutral-600 rounded-lg">
-              <thead className="bg-neutral-500">
-                <tr>
-                  <th className="text-left py-3 px-4 font-semibold">Health</th>
-                  <th className="text-left py-3 px-4 font-semibold">Index</th>
-                  <th className="text-left py-3 px-4 font-semibold">Docs</th>
-                  <th className="text-left py-3 px-4 font-semibold">Storage</th>
-                  <th className="text-left py-3 px-4 font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {nodeIndices.map(index => (
-                  <tr key={index.uuid} className="border-b border-neutral-500">
-                    <td className="py-3 px-4">
-                      <span className={`inline-block w-3 h-3 rounded-full ${index.health === 'green' ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
-                    </td>
-                    <td className="py-3 px-4">{index.index}</td>
-                    <td className="py-3 px-4">
-                      {(index.docCount !== undefined 
-                        ? index.docCount 
-                        : parseInt(index['docs.count'], 10) || 0
-                      ).toLocaleString()}
-                    </td>
-                    <td className="py-3 px-4">{index['store.size'] || '0b'}</td>
-                    <td className="py-3 px-4">
-                      <button 
-                        onClick={() => handleDeleteClick(index)} 
-                        className="text-red-500 hover:text-red-400 disabled:text-gray-500 disabled:cursor-not-allowed"
-                        disabled={!node.isRunning || isDeletingIndex === index.index}
-                        title={
-                          !node.isRunning ? "Start the node to delete indices" : 
-                          isDeletingIndex === index.index ? "Deleting..." : "Delete index"
-                        }
-                      >
-                        {isDeletingIndex === index.index ? (
-                          <FontAwesomeIcon icon={faCircleNotch} spin />
-                        ) : (
-                          <FontAwesomeIcon icon={faTrash} />
-                        )}
-                      </button>
-                    </td>
+            <div className="relative">
+              <table className="w-full text-neutral-100 bg-neutral-600 rounded-lg">
+                <thead className="bg-neutral-500">
+                  <tr>
+                    <th className="text-left py-3 px-4 font-semibold">Health</th>
+                    <th className="text-left py-3 px-4 font-semibold">Index</th>
+                    <th className="text-left py-3 px-4 font-semibold">Docs</th>
+                    <th className="text-left py-3 px-4 font-semibold">Storage</th>
+                    <th className="text-left py-3 px-4 font-semibold">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {nodeIndices.length === 0 ? (
+                    <tr>
+                      <td colSpan="5" className="py-8 text-center text-neutral-400">
+                        {indicesLoading || isRefreshingIndices ? (
+                          <div className="flex items-center justify-center">
+                            <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+                            Loading indices...
+                          </div>
+                        ) : indicesError ? (
+                          'Error loading indices - see message above'
+                        ) : (
+                          'No indices found on this node'
+                        )}
+                      </td>
+                    </tr>
+                  ) : (
+                    nodeIndices.map(index => (
+                      <tr key={index.uuid || index.index} className="border-b border-neutral-500">
+                        <td className="py-3 px-4">
+                          <span className={`inline-block w-3 h-3 rounded-full ${
+                            index.health === 'green' ? 'bg-green-500' : 
+                            index.health === 'yellow' ? 'bg-yellow-500' : 'bg-red-500'
+                          }`}></span>
+                        </td>
+                        <td className="py-3 px-4 font-medium">{index.index}</td>
+                        <td className="py-3 px-4">
+                          {(index.docCount !== undefined 
+                            ? index.docCount 
+                            : parseInt(index['docs.count'], 10) || 0
+                          ).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4">{index['store.size'] || '0b'}</td>
+                        <td className="py-3 px-4">
+                          <button 
+                            onClick={() => handleDeleteClick(index)} 
+                            className="text-red-500 hover:text-red-400 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors p-1"
+                            disabled={!node.isRunning || isDeletingIndex === index.index || isCreatingIndex || refreshInProgress.current}
+                            title={
+                              !node.isRunning ? "Start the node to delete indices" : 
+                              isDeletingIndex === index.index ? "Deleting..." : 
+                              isCreatingIndex ? "Wait for index creation to complete" :
+                              refreshInProgress.current ? "Wait for refresh to complete" :
+                              "Delete index"
+                            }
+                          >
+                            {isDeletingIndex === index.index ? (
+                              <FontAwesomeIcon icon={faCircleNotch} spin />
+                            ) : (
+                              <FontAwesomeIcon icon={faTrash} />
+                            )}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+              
+              {/* Loading overlay for table updates */}
+              {(indicesLoading || isRefreshingIndices) && nodeIndices.length > 0 && (
+                <div className="absolute inset-0 bg-black bg-opacity-20 flex items-center justify-center rounded-lg">
+                  <div className="bg-neutral-800 px-4 py-2 rounded-lg border border-neutral-600 flex items-center">
+                    <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2 text-blue-400" />
+                    <span className="text-white text-sm">Updating indices...</span>
+                  </div>
+                </div>
+              )}
+            </div>
             
             {/* Last update timestamp */}
             {nodeIndices.length > 0 && (

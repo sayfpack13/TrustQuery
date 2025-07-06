@@ -33,6 +33,8 @@ export default function ConfigurationManagement({
     batchSize: 1000
   });
   const [hasUnsavedSystemChanges, setHasUnsavedSystemChanges] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [isUpdatingIndices, setIsUpdatingIndices] = useState(false);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -83,6 +85,9 @@ export default function ConfigurationManagement({
   };
 
   const saveSystemSettings = async () => {
+    if (isSavingSettings) return; // Prevent double save
+
+    setIsSavingSettings(true);
     try {
       await axiosClient.post("/api/admin/config", {
         adminSettings: tempSystemSettings
@@ -90,9 +95,11 @@ export default function ConfigurationManagement({
       
       setHasUnsavedSystemChanges(false);
       showNotification("success", "System settings saved successfully!", faCheckCircle);
-      fetchConfig(); // Refresh to get the latest config
+      await fetchConfig(); // Refresh to get the latest config
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to save system settings", faTimes);
+    } finally {
+      setIsSavingSettings(false);
     }
   };
 
@@ -109,6 +116,9 @@ export default function ConfigurationManagement({
   };
 
   const updateSearchIndices = async () => {
+    if (isUpdatingIndices) return; // Prevent double update
+
+    setIsUpdatingIndices(true);
     try {
       await axiosClient.post("/api/admin/config/search-indices", {
         indices: selectedSearchIndices
@@ -119,9 +129,11 @@ export default function ConfigurationManagement({
         : "Search configuration updated successfully!";
       
       showNotification("success", message, faCheckCircle);
-      fetchConfig(); // Refresh to get the latest config
+      await fetchConfig(); // Refresh configuration
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to update search configuration", faTimes);
+    } finally {
+      setIsUpdatingIndices(false);
     }
   };
 
@@ -359,10 +371,16 @@ export default function ConfigurationManagement({
                   </div>
                   <button
                     onClick={updateSearchIndices}
-                    className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75"
+                    disabled={isUpdatingIndices}
+                    className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                   >
-                    <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                    {selectedSearchIndices.length === 0 ? 'Disable Search (Clear All)' : 'Update Search Configuration'}
+                    {isUpdatingIndices ? (
+                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+                    ) : (
+                      <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
+                    )}
+                    {isUpdatingIndices ? 'Updating...' : 
+                     selectedSearchIndices.length === 0 ? 'Disable Search (Clear All)' : 'Update Search Configuration'}
                   </button>
                 </div>
               </>
@@ -467,11 +485,15 @@ export default function ConfigurationManagement({
             <div className="flex space-x-4 mt-8 pt-6 border-t border-neutral-600">
               <button
                 onClick={saveSystemSettings}
-                disabled={!hasUnsavedSystemChanges}
+                disabled={!hasUnsavedSystemChanges || isSavingSettings}
                 className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
               >
-                <FontAwesomeIcon icon={faSave} className="mr-2" />
-                Save Settings
+                {isSavingSettings ? (
+                  <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+                ) : (
+                  <FontAwesomeIcon icon={faSave} className="mr-2" />
+                )}
+                {isSavingSettings ? 'Saving...' : 'Save Settings'}
               </button>
               
               <button

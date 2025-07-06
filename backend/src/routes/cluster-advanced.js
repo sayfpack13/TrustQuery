@@ -684,7 +684,16 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
     if (removeResult.warnings && removeResult.warnings.length > 0) {
       console.warn(`⚠️ Node removal completed with warnings:`, removeResult.warnings);
     }
-    
+
+    // Remove node from indices cache
+    try {
+      const { removeNodeFromCache } = require('../cache/indices-cache');
+      await removeNodeFromCache(nodeName);
+      console.log(`📝 Removed node from indices cache: ${nodeName}`);
+    } catch (cacheError) {
+      console.warn(`⚠️ Failed to remove node from indices cache:`, cacheError.message);
+    }
+
     // Update configuration regardless of filesystem cleanup success
     if (nodeUrl) {
       const currentNodes = getConfig('elasticsearchNodes') || [];

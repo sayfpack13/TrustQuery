@@ -761,7 +761,12 @@ REM Start Elasticsearch
       const metadata = Object.values(nodeMetadata).find(m => m.name === nodeName);
       
       if (metadata) {
-        console.log(`🔍 Found metadata for node ${nodeName}, removing data and logs directories...`);
+        console.log(`🔍 Found metadata for node ${nodeName}:`);
+        console.log(`   - Data path: ${metadata.dataPath}`);
+        console.log(`   - Logs path: ${metadata.logsPath}`);
+        console.log(`   - Config path: ${metadata.configPath}`);
+        console.log(`   - Service path: ${metadata.servicePath}`);
+        console.log(`🗑️ Removing data and logs directories...`);
         
         // Remove data and logs directories specifically
         for (const dirPath of [metadata.dataPath, metadata.logsPath]) {
@@ -772,21 +777,41 @@ REM Start Elasticsearch
           } catch (dirError) {
               if (dirError.code !== 'ENOENT') {
                 console.warn(`⚠️ Could not remove directory ${dirPath}: ${dirError.message}`);
+              } else {
+                console.log(`ℹ️ Directory already removed or doesn't exist: ${dirPath}`);
               }
+            }
+          }
+        }
+        
+        // Remove config directory if it exists
+        if (metadata.configPath) {
+          const configDir = path.dirname(metadata.configPath);
+          try {
+            await fs.rm(configDir, { recursive: true, force: true });
+            console.log(`🗑️ Removed config directory: ${configDir}`);
+          } catch (dirError) {
+            if (dirError.code !== 'ENOENT') {
+              console.warn(`⚠️ Could not remove config directory ${configDir}: ${dirError.message}`);
+            } else {
+              console.log(`ℹ️ Config directory already removed or doesn't exist: ${configDir}`);
             }
           }
         }
         
         // Attempt to remove the parent directory, e.g., C:\elasticsearch\test, if it's now empty.
         const parentDir = path.dirname(metadata.dataPath);
-          try {
+        try {
             const files = await fs.readdir(parentDir);
             if (files.length === 0) {
                 await fs.rmdir(parentDir);
                 console.log(`🗑️ Removed empty parent directory: ${parentDir}`);
+            } else {
+                console.log(`ℹ️ Parent directory not empty, keeping: ${parentDir} (contains ${files.length} items)`);
             }
         } catch (e) {
             // Ignore if it fails (e.g., not empty, permissions, etc.)
+            console.log(`ℹ️ Could not check/remove parent directory ${parentDir}: ${e.message}`);
         }
 
       } else {
@@ -1547,8 +1572,54 @@ REM Start Elasticsearch
               if (configExists) {
                 console.log(`⚠️  Found orphaned node directory with config: ${dirName}`);
                 console.log(`   Config file: ${configPath}`);
-                console.log(`   This node exists on disk but not in metadata. It may have been manually created or metadata was corrupted.`);
-                console.log(`   You may want to recreate this node through the UI or manually clean up the directory.`);
+                console.log(`   Auto-recreating metadata for orphaned node...`);
+                
+                try {
+                  // Read the config file to extract node information
+                  const configContent = await fs.readFile(configPath, 'utf8');
+                  const config = yaml.parse(configContent);
+                  
+                  // Extract information from config
+                  const nodeName = config['node.name'] || dirName;
+                  const clusterName = config['cluster.name'] || 'trustquery-cluster';
+                  const httpPort = config['http.port'] || 9200;
+                  const transportPort = config['transport.port'] || 9300;
+                  const host = config['network.host'] || 'localhost';
+                  
+                  // Create metadata entry
+                  const nodeUrl = `http://${host}:${httpPort}`;
+                  const newMetadata = {
+                    name: nodeName,
+                    configPath: configPath,
+                    servicePath: path.join(nodeDir, 'config', 'start-node.bat'),
+                    dataPath: path.join(nodeDir, 'data'),
+                    logsPath: path.join(nodeDir, 'logs'),
+                    cluster: clusterName,
+                    host: host,
+                    port: httpPort,
+                    transportPort: transportPort,
+                    roles: {
+                      master: true,
+                      data: true,
+                      ingest: true
+                    }
+                  };
+                  
+                  // Add to metadata
+                  nodeMetadata[nodeUrl] = newMetadata;
+                  metadataChanged = true;
+                  
+                  // Also add to elasticsearchNodes if not present
+                  if (!elasticsearchNodes.includes(nodeUrl)) {
+                    elasticsearchNodes.push(nodeUrl);
+                    nodesChanged = true;
+                  }
+                  
+                  console.log(`✅ Recreated metadata for orphaned node: ${nodeName} at ${nodeUrl}`);
+                } catch (configError) {
+                  console.error(`❌ Failed to recreate metadata for ${dirName}:`, configError.message);
+                  console.log(`   You may want to recreate this node through the UI or manually clean up the directory.`);
+                }
               }
             }
           }

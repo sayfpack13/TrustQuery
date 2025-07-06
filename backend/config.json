@@ -1,26 +1,7 @@
 {
   "searchIndices": [],
-  "elasticsearchNodes": [
-    "http://localhost:9200"
-  ],
-  "nodeMetadata": {
-    "http://localhost:9200": {
-      "name": "test",
-      "configPath": "C:\\elasticsearch\\nodes\\test-moved\\config\\elasticsearch.yml",
-      "servicePath": "C:\\elasticsearch\\nodes\\test-moved\\config\\start-node.bat",
-      "dataPath": "C:\\elasticsearch\\nodes\\test-moved\\data",
-      "logsPath": "C:\\elasticsearch\\nodes\\test-moved\\logs",
-      "cluster": "trustquery-cluster",
-      "host": "localhost",
-      "port": 9200,
-      "transportPort": 9300,
-      "roles": {
-        "master": true,
-        "data": true,
-        "ingest": true
-      }
-    }
-  },
+  "elasticsearchNodes": [],
+  "nodeMetadata": {},
   "batchSize": 1000,
   "minVisibleChars": 2,
   "maskingRatio": 0.2,

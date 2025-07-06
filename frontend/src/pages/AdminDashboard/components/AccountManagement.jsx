@@ -77,6 +77,7 @@ export default function AccountManagement({
 
   // State for page input in pagination
   const [pageInput, setPageInput] = useState("1");
+  const [deletingAccountIds, setDeletingAccountIds] = useState(new Set()); // Track which accounts are being deleted
 
   // Fetch accounts data
   const fetchAccounts = useCallback(async () => {
@@ -171,15 +172,23 @@ export default function AccountManagement({
 
   // Handle save edit
   const handleSaveEdit = async () => {
-    if (!currentEditingAccount) return;
+    if (!currentEditingAccount || editLoading) return;
 
     setEditLoading(true);
     try {
       await axiosClient.put(`/api/admin/accounts/${currentEditingAccount.id}`, editFormData);
       showNotification("success", "Account updated successfully!", faCheckCircle);
-      fetchAccounts(); // Refresh the data
+      
+      // Close modal on success
+      setShowEditModal(false);
+      setCurrentEditingAccount(null);
+      setEditFormData({ url: "", username: "", password: "" });
+      
+      // Refresh the data
+      await fetchAccounts();
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to update account", faTimes);
+      // Keep modal open on error so user can retry
     } finally {
       setEditLoading(false);
     }
@@ -198,32 +207,46 @@ export default function AccountManagement({
       return;
     }
 
+    if (loading || deletingAccountIds.has(accountId)) return; // Prevent double operations
+
+    setDeletingAccountIds(prev => new Set([...prev, accountId]));
     try {
       await axiosClient.delete(`/api/admin/accounts/${accountId}`);
       showNotification("success", "Account deleted successfully!", faCheckCircle);
-      fetchAccounts(); // Refresh the data
+      await fetchAccounts(); // Refresh the data
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to delete account", faTimes);
+    } finally {
+      setDeletingAccountIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(accountId);
+        return newSet;
+      });
     }
   };
 
   // Handle delete selected accounts
   const handleDeleteSelected = async () => {
-    if (selected.length === 0) return;
+    if (selected.length === 0 || loading) return;
 
     if (!window.confirm(`Are you sure you want to delete ${selected.length} selected account(s)?`)) {
       return;
     }
 
+    setLoading(true);
     try {
+      // Use bulk delete endpoint if available, otherwise use individual deletes
       const deletePromises = selected.map((account) =>
         axiosClient.delete(`/api/admin/accounts/${account.id}`)
       );
       await Promise.all(deletePromises);
       showNotification("success", `${selected.length} account(s) deleted successfully!`, faCheckCircle);
-      fetchAccounts(); // Refresh the data
+      setSelected([]); // Clear selection
+      await fetchAccounts(); // Refresh the data
     } catch (err) {
       showNotification("error", err.response?.data?.error || "Failed to delete selected accounts", faTimes);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -306,11 +329,15 @@ export default function AccountManagement({
             </button>
             <button
               onClick={handleDeleteSelected}
-              disabled={selected.length === 0 || isAnyTaskRunning}
+              disabled={selected.length === 0 || isAnyTaskRunning || loading}
               className="bg-danger hover:bg-red-600 text-white px-4 py-2 rounded-lg disabled:opacity-50 transition duration-150 ease-in-out flex items-center space-x-2"
             >
-              <FontAwesomeIcon icon={faTrash} />
-              <span>Delete Selected ({selected.length})</span>
+              {loading ? (
+                <FontAwesomeIcon icon={faCircleNotch} className="fa-spin" />
+              ) : (
+                <FontAwesomeIcon icon={faTrash} />
+              )}
+              <span>{loading ? 'Deleting...' : `Delete Selected (${selected.length})`}</span>
             </button>
           </div>
         </div>
@@ -495,17 +522,23 @@ export default function AccountManagement({
                           <div className="flex space-x-3">
                             <button
                               onClick={() => handleEditClick(account)}
-                              className="bg-primary hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform"
+                              disabled={editLoading || deletingAccountIds.has(account.id)}
+                              className="bg-primary hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Edit Account"
                             >
                               <FontAwesomeIcon icon={faEdit} />
                             </button>
                             <button
                               onClick={() => handleDeleteAccount(account.id)}
-                              className="bg-danger hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform"
+                              disabled={loading || deletingAccountIds.has(account.id)}
+                              className="bg-danger hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Delete Account"
                             >
-                              <FontAwesomeIcon icon={faTrash} />
+                              {deletingAccountIds.has(account.id) ? (
+                                <FontAwesomeIcon icon={faCircleNotch} className="fa-spin" />
+                              ) : (
+                                <FontAwesomeIcon icon={faTrash} />
+                              )}
                             </button>
                           </div>
                         </td>
