@@ -15,26 +15,26 @@
   },
   "setupWizard": {
     "completed": true,
-    "completedAt": "2025-07-06T03:08:58.962Z",
+    "completedAt": "2025-07-06T07:20:27.038Z",
     "os": "win32",
-    "basePath": "C:\\elasticsearch",
+    "basePath": "c:\\\\elasticsearch",
     "detectedPaths": {
-      "elasticsearchBase": "C:\\elasticsearch",
-      "binPath": "C:\\elasticsearch\\bin",
-      "configPath": "C:\\elasticsearch\\config",
-      "dataPath": "C:\\elasticsearch\\data",
-      "logsPath": "C:\\elasticsearch\\logs",
-      "libPath": "C:\\elasticsearch\\lib",
-      "pluginsPath": "C:\\elasticsearch\\plugins"
+      "elasticsearchBase": "c:\\\\elasticsearch",
+      "binPath": "c:\\elasticsearch\\bin",
+      "configPath": "c:\\elasticsearch\\config",
+      "dataPath": "c:\\elasticsearch\\data",
+      "logsPath": "c:\\elasticsearch\\logs",
+      "libPath": "c:\\elasticsearch\\lib",
+      "pluginsPath": "c:\\elasticsearch\\plugins"
     },
-    "skipElasticsearchInstall": true
+    "skipElasticsearchInstall": false
   },
   "elasticsearchConfig": {
-    "basePath": "C:\\elasticsearch",
-    "configFilePath": "C:\\elasticsearch\\config\\elasticsearch.yml",
-    "dataPath": "C:\\elasticsearch\\data",
-    "logsPath": "C:\\elasticsearch\\logs",
-    "jvmOptionsPath": "C:\\elasticsearch\\config\\jvm.options",
-    "executable": "C:\\elasticsearch\\bin\\elasticsearch.bat"
+    "basePath": "c:\\\\elasticsearch",
+    "configFilePath": "c:\\elasticsearch\\config\\elasticsearch.yml",
+    "dataPath": "c:\\elasticsearch\\data",
+    "logsPath": "c:\\elasticsearch\\logs",
+    "jvmOptionsPath": "c:\\elasticsearch\\config\\jvm.options",
+    "executable": "c:\\elasticsearch\\bin\\elasticsearch.bat"
   }
 }

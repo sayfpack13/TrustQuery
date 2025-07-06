@@ -27,11 +27,11 @@ import axiosClient from '../api/axiosClient';
 const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [setupType, setSetupType] = useState('vps-setup'); // 'vps-setup', 'local-cluster', or 'production'
-  const [deploymentType, setDeploymentType] = useState('new'); // 'new' or 'existing'
+  // Removed deploymentType state
   const [systemInfo, setSystemInfo] = useState(null);
   const [setupPaths, setSetupPaths] = useState(null);
   const [basePath, setBasePath] = useState('');
-  const [installationGuide, setInstallationGuide] = useState(null);
+  // Removed installationGuide state
   const [validationResult, setValidationResult] = useState(null);
   const [connectionTest, setConnectionTest] = useState(null);
   
@@ -146,7 +146,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   };
 
   const addBackgroundTask = (task) => {
-    setBackgroundTasks(prev => [...prev, { ...task, id: Date.now(), startTime: Date.now() }]);
+    const newTask = { ...task, id: Date.now(), startTime: Date.now() };
+    setBackgroundTasks(prev => [...prev, newTask]);
+    return newTask.id;
   };
 
   const removeBackgroundTask = (id) => {
@@ -197,7 +199,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         if (now - savedTime < 24 * 60 * 60 * 1000) {
           setCurrentStep(state.currentStep || 1);
           setSetupType(state.setupType || 'vps-setup');
-          setDeploymentType(state.deploymentType || 'new');
           setBasePath(state.basePath || '');
           setStepProgress(state.stepProgress || {});
           if (state.performanceMetrics) setPerformanceMetrics(state.performanceMetrics);
@@ -211,6 +212,11 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   };
 
   const validateElasticsearchInstallation = async (path, retry = false) => {
+    // INSTANT loading state for validation
+    setRealtimeValidation(prev => ({
+      ...prev,
+      basePath: { valid: null, message: 'Checking...', checking: true, suggestions: [] }
+    }));
     if (!path || path.length < 3) {
       setRealtimeValidation(prev => ({
         ...prev,
@@ -218,12 +224,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       }));
       return;
     }
-
-    setRealtimeValidation(prev => ({
-      ...prev,
-      basePath: { valid: null, message: 'Checking...', checking: true, suggestions: [] }
-    }));
-
     try {
       // Enhanced client-side validation
       const isValidPath = /^[a-zA-Z]:|^\//.test(path); // Windows drive or Unix root
@@ -239,11 +239,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         }));
         return;
       }
-
       // Use the comprehensive validation endpoint
       try {
         const response = await axiosClient.post('/api/setup-wizard/validate-elasticsearch', { basePath: path }, { timeout: 10000 });
-        
         setRealtimeValidation(prev => ({
           ...prev,
           basePath: { 
@@ -253,10 +251,8 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             suggestions: response.data.pathValidation?.suggestions || []
           }
         }));
-
         // Update validation result for the configuration step
         setValidationResult(response.data);
-
         return response.data;
       } catch (error) {
         // Handle validation errors gracefully
@@ -330,29 +326,28 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     const maxRetries = 3;
     const retryKey = 'systemInfo';
     const step = 1;
-    
+    // INSTANT loading state
+    updateLoadingState('systemInfo', true, 5);
     if (!retry && retryCount[retryKey] >= maxRetries) {
       setError(retryKey, `Failed after ${maxRetries} attempts. Please check your connection.`, true);
+      updateLoadingState('systemInfo', false);
       return;
     }
-
+    let healthTaskId = null;
+    let progressInterval = null;
     try {
       trackStepTime(step, 'start');
-      updateLoadingState('systemInfo', true, 10);
       clearError(retryKey);
-      
       // Add background task for system health monitoring
-      const healthTaskId = addBackgroundTask({
+      healthTaskId = addBackgroundTask({
         name: 'System Health Check',
         type: 'health-check',
         progress: 0
       });
-
       // Simulate progressive loading for better UX
-      const progressInterval = setInterval(() => {
+      progressInterval = setInterval(() => {
         updateLoadingState('systemInfo', true, Math.min(90, (Date.now() % 5000) / 50));
       }, 100);
-      
       const response = await axiosClient.get('/api/setup-wizard/system-info', {
         timeout: 15000,
         onUploadProgress: (progressEvent) => {
@@ -360,39 +355,30 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           updateLoadingState('systemInfo', true, progress);
         }
       });
-      
       clearInterval(progressInterval);
       updateLoadingState('systemInfo', true, 100);
-      
       setSystemInfo(response.data);
-      
       // Enhanced system information processing
       const defaultBasePath = response.data.isWindows ? 'C:\\elasticsearch' : '/opt/elasticsearch';
       setBasePath(defaultBasePath);
       setSetupPaths(response.data.defaultPaths);
-      
       // Update health checks
       setHealthChecks(prev => ({
         ...prev,
         system: response.data.systemChecks || { status: 'unknown' }
       }));
-      
       updateStepProgress(step, { completed: true, validated: true, progress: 100 });
       trackStepTime(step, 'end');
-      
-      removeBackgroundTask(healthTaskId);
-      
+      if (healthTaskId) removeBackgroundTask(healthTaskId);
     } catch (error) {
+      if (progressInterval) clearInterval(progressInterval);
       trackStepTime(step, 'end');
       console.error('Error fetching system info:', error);
       incrementRetry(retryKey);
-      
       const errorMessage = error.code === 'ECONNABORTED' 
         ? 'Request timed out. Please check your connection.'
         : error.response?.data?.error || error.message;
-      
       setError(retryKey, `Failed to get system information: ${errorMessage}`, error.code === 'NETWORK_ERROR');
-      
       // Intelligent auto-retry with exponential backoff
       if ((error.code === 'NETWORK_ERROR' || error.code === 'ECONNABORTED') && retryCount[retryKey] < maxRetries) {
         const retryDelay = Math.min(5000, 1000 * Math.pow(2, retryCount[retryKey]));
@@ -403,46 +389,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     }
   };
 
-  const fetchInstallationGuide = async (os, retry = false) => {
-    const maxRetries = 2;
-    const retryKey = 'installationGuide';
-    const step = 2;
-    
-    if (!retry && retryCount[retryKey] >= maxRetries) {
-      setError(retryKey, `Failed after ${maxRetries} attempts.`);
-      return;
-    }
-
-    try {
-      trackStepTime(step, 'start');
-      updateLoadingState('installationGuide', true, 20);
-      clearError(retryKey);
-      
-      const params = setupPaths ? new URLSearchParams(setupPaths).toString() : '';
-      
-      // Progressive loading simulation
-      updateLoadingState('installationGuide', true, 50);
-      
-      const response = await axiosClient.get(`/api/setup-wizard/installation-guide/${os}?${params}`, {
-        timeout: 10000
-      });
-      
-      updateLoadingState('installationGuide', true, 100);
-      setInstallationGuide(response.data);
-      
-      updateStepProgress(step, { completed: true, validated: true, progress: 100 });
-      trackStepTime(step, 'end');
-      
-    } catch (error) {
-      trackStepTime(step, 'end');
-      console.error('Error fetching installation guide:', error);
-      incrementRetry(retryKey);
-      const errorMessage = error.response?.data?.error || error.message;
-      setError(retryKey, `Failed to get installation guide: ${errorMessage}`);
-    } finally {
-      updateLoadingState('installationGuide', false);
-    }
-  };
+  // Removed fetchInstallationGuide
 
   const validateConfiguration = async (retry = false) => {
     const maxRetries = 2;
@@ -555,8 +502,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       clearError(retryKey);
       
       const response = await axiosClient.post('/api/setup-wizard/initialize', {
-        basePath: basePath.trim(),
-        skipElasticsearchInstall: deploymentType === 'existing'
+        basePath: basePath.trim()
       });
       
       updateStepProgress(4, { completed: true, validated: true });
@@ -1269,37 +1215,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         </p>
       </div>
 
-      {/* Setup Type Selection */}
-      <div className="bg-neutral-700 rounded-lg p-6">
-        <h4 className="text-lg font-semibold text-white mb-4">Deployment Type</h4>
-        <div className="grid grid-cols-2 gap-4">
-          <div 
-            className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
-              deploymentType === 'new' 
-                ? 'border-blue-500 bg-blue-900/30' 
-                : 'border-neutral-600 bg-neutral-800'
-            }`}
-            onClick={() => setDeploymentType('new')}
-          >
-            <FontAwesomeIcon icon={faDownload} className="text-2xl text-blue-400 mb-2" />
-            <h5 className="font-medium text-white">New Installation</h5>
-            <p className="text-sm text-neutral-400">Install Elasticsearch from scratch</p>
-          </div>
-          <div 
-            className={`p-4 rounded-lg border-2 cursor-pointer transition-colors ${
-              deploymentType === 'existing' 
-                ? 'border-blue-500 bg-blue-900/30' 
-                : 'border-neutral-600 bg-neutral-800'
-            }`}
-            onClick={() => setDeploymentType('existing')}
-          >
-            <FontAwesomeIcon icon={faCog} className="text-2xl text-green-400 mb-2" />
-            <h5 className="font-medium text-white">Existing Installation</h5>
-            <p className="text-sm text-neutral-400">Configure existing Elasticsearch</p>
-          </div>
-        </div>
-      </div>
-
       {/* System Information */}
       {systemInfo && (
         <div className="bg-neutral-700 rounded-lg p-6">
@@ -1327,7 +1242,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             </div>
           </div>
 
-          {/* System Requirements Check */}
+          {/* System Requirements */}
           {systemInfo.systemChecks && (
             <div className="mt-4 space-y-2">
               <h5 className="font-medium text-white">System Requirements</h5>
@@ -1343,6 +1258,14 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               ))}
             </div>
           )}
+
+          {/* System Health Check (moved here) */}
+          {systemInfo.systemChecks && (
+            <div className="mt-4 space-y-2">
+              <h5 className="font-medium text-white">System Health Check</h5>
+              <div className="text-sm text-neutral-400">{systemInfo.systemChecks.checks.permissions.message}</div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1354,12 +1277,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           Cancel
         </button>
         <button
-          onClick={() => {
-            if (systemInfo?.os?.platform) {
-              fetchInstallationGuide(systemInfo.os.platform);
-            }
-            setCurrentStep(2);
-          }}
+          onClick={() => setCurrentStep(2)}
           disabled={!systemInfo || loading}
           className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg disabled:bg-neutral-600"
         >
@@ -1369,114 +1287,14 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               Loading...
             </>
           ) : (
-            'Next: Installation Guide'
+            'Next: Configuration'
           )}
         </button>
       </div>
     </div>
   );
 
-  const renderVPSInstallationStep = () => (
-    <div className="space-y-6">
-      <div className="text-center">
-        <FontAwesomeIcon icon={faTerminal} className="text-4xl text-green-500 mb-4" />
-        <h3 className="text-2xl font-bold text-white mb-2">Installation Guide</h3>
-        <p className="text-neutral-400">
-          Follow these platform-specific installation steps
-        </p>
-      </div>
-
-      {installationGuide && (
-        <div className="bg-neutral-700 rounded-lg p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-lg font-semibold text-white">
-              {installationGuide.currentOS === 'win32' ? 'Windows' : 
-               installationGuide.currentOS === 'linux' ? 'Linux' : 'macOS'} Installation
-            </h4>
-            <span className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1 rounded">
-              {deploymentType === 'new' ? 'New Installation' : 'Existing Setup'}
-            </span>
-          </div>
-
-          <div className="space-y-6">
-            {installationGuide.steps.map((step) => (
-              <div key={step.step} className="border-l-2 border-blue-500 pl-4">
-                <div className="flex items-center space-x-2 mb-2">
-                  <div className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">
-                    {step.step}
-                  </div>
-                  <h5 className="font-medium text-white">{step.title}</h5>
-                </div>
-                <p className="text-sm text-neutral-400 mb-3">{step.description}</p>
-                
-                <div className="bg-neutral-800 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-neutral-400">Commands:</span>
-                    <button
-                      onClick={() => {
-                        const commands = step.commands.join('\n');
-                        navigator.clipboard.writeText(commands);
-                        alert('Commands copied to clipboard!');
-                      }}
-                      className="text-xs text-blue-400 hover:text-blue-300"
-                    >
-                      <FontAwesomeIcon icon={faClipboard} className="mr-1" />
-                      Copy
-                    </button>
-                  </div>
-                  <div className="space-y-1">
-                    {step.commands.map((cmd, idx) => (
-                      <div key={idx} className="text-xs text-neutral-300 font-mono break-all">
-                        {cmd}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Validation Commands */}
-          {installationGuide.validation && (
-            <div className="mt-6 bg-neutral-800 rounded-lg p-4">
-              <h5 className="font-medium text-white mb-2">Test Installation</h5>
-              <div className="space-y-2">
-                <div>
-                  <span className="text-xs text-neutral-400">Test Connection:</span>
-                  <div className="text-xs text-neutral-300 font-mono bg-neutral-900 p-2 rounded">
-                    {installationGuide.validation.testConnection}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-xs text-neutral-400">Check Logs:</span>
-                  <div className="text-xs text-neutral-300 font-mono bg-neutral-900 p-2 rounded">
-                    {installationGuide.validation.checkLogs}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="flex justify-between">
-        <button
-          onClick={() => setCurrentStep(1)}
-          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg"
-        >
-          <FontAwesomeIcon icon={faArrowLeft} className="mr-2" />
-          Back
-        </button>
-        <button
-          onClick={() => setCurrentStep(3)}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg"
-        >
-          Next: Configuration
-          <FontAwesomeIcon icon={faArrowRight} className="ml-2" />
-        </button>
-      </div>
-    </div>
-  );
+  // Removed Installation Guide step entirely
 
   const renderVPSConfigurationStep = () => (
     <div className="space-y-6">
@@ -1497,7 +1315,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         <p className="text-neutral-300 mb-4">
           Enter the base path where Elasticsearch is installed. All other paths (config, data, logs) will be automatically detected.
         </p>
-        
         <div className="mb-4">
           <label className="block text-sm font-medium text-neutral-300 mb-2">
             Elasticsearch Base Path <span className="text-red-400">*</span>
@@ -1526,7 +1343,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               ) : null}
             </div>
           </div>
-          
           {/* Real-time validation feedback */}
           {realtimeValidation.basePath.message && (
             <div className={`text-xs mt-1 flex items-center ${
@@ -1543,11 +1359,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               {realtimeValidation.basePath.message}
             </div>
           )}
-          
           <p className="text-xs text-neutral-400 mt-1">
             This should be the root directory containing 'bin', 'config', 'data', and 'logs' folders
           </p>
-
           {/* Path suggestions from real-time validation */}
           {realtimeValidation.basePath.suggestions && realtimeValidation.basePath.suggestions.length > 0 && (
             <div className="mt-3">
@@ -1561,7 +1375,6 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               </div>
             </div>
           )}
-          
           {/* Common paths based on detected OS */}
           {systemInfo && (
             <div className="mt-3">
@@ -1588,100 +1401,13 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             </div>
           )}
         </div>
-
-          {/* Troubleshooting section for failed validation */}
-          {validationResult && !validationResult.valid && (
-            <div className="mt-6 p-4 bg-blue-900/20 border border-blue-700 rounded-lg">
-              <h5 className="text-blue-400 font-medium mb-3 flex items-center">
-                <FontAwesomeIcon icon={faLightbulb} className="mr-2" />
-                Troubleshooting Steps
-              </h5>
-              <div className="space-y-3 text-sm text-neutral-300">
-                <div className="flex items-start space-x-2">
-                  <span className="bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">1</span>
-                  <div>
-                    <div className="font-medium">Verify Path</div>
-                    <div className="text-xs text-neutral-400">Ensure the path points to the Elasticsearch installation directory containing 'bin', 'config' folders</div>
-                  </div>
-                </div>
-                
-                <div className="flex items-start space-x-2">
-                  <span className="bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
-                  <div>
-                    <div className="font-medium">Check Installation</div>
-                    <div className="text-xs text-neutral-400">If files are missing, complete the Elasticsearch installation using the previous step's guide</div>
-                  </div>
-                </div>
-                
-                <div className="flex items-start space-x-2">
-                  <span className="bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
-                  <div>
-                    <div className="font-medium">Check Permissions</div>
-                    <div className="text-xs text-neutral-400">
-                      {systemInfo?.isWindows 
-                        ? 'Run PowerShell as Administrator and ensure write access to the directory'
-                        : 'Use sudo to fix permissions: sudo chown -R $(whoami) /path/to/elasticsearch'
-                      }
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex items-start space-x-2">
-                  <span className="bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">4</span>
-                  <div>
-                    <div className="font-medium">Test Manually</div>
-                    <div className="text-xs text-neutral-400 font-mono bg-neutral-800 px-2 py-1 rounded mt-1">
-                      {systemInfo?.isWindows 
-                        ? 'cd "C:\\elasticsearch" && bin\\elasticsearch.bat --version'
-                        : 'cd /opt/elasticsearch && ./bin/elasticsearch --version'
-                      }
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Action buttons */}
-          <div className="flex space-x-3 mt-6">
-            <button
-              onClick={validateConfiguration}
-              disabled={loadingStates.validation || !basePath.trim()}
-              className="bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-lg disabled:bg-neutral-600 text-sm disabled:cursor-not-allowed transition-colors flex items-center"
-            >
-              {loadingStates.validation ? (
-                <>
-                  <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />
-                  Validating...
-                </>
-              ) : (
-                <>
-                  <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                  Validate Installation
-                </>
-              )}
-            </button>
-            
-            {errors.validation && (
-              <button
-                onClick={() => validateConfiguration(true)}
-                className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center"
-              >
-                <FontAwesomeIcon icon={faCircleNotch} className="mr-2" />
-                Retry
-              </button>
-            )}
-            
-            {validationResult && !validationResult.valid && (
-              <button
-                onClick={() => setCurrentStep(2)}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center"
-              >
-                <FontAwesomeIcon icon={faArrowLeft} className="mr-2" />
-                Back to Install Guide
-              </button>
-            )}
+        {/* Loading indicator for automatic validation */}
+        {loadingStates.validation && (
+          <div className="flex items-center space-x-2 mt-4">
+            <FontAwesomeIcon icon={faCircleNotch} spin className="text-blue-400" />
+            <span className="text-blue-300 text-sm">Validating Elasticsearch installation...</span>
           </div>
+        )}
       </div>
 
       {/* Validation Results */}
@@ -2381,8 +2107,8 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-85 flex items-center justify-center z-[60] p-4 backdrop-blur-sm"
-      onClick={(e) => {
-        // Close modal when clicking backdrop
+      onMouseDown={(e) => {
+        // Only close if clicking the backdrop, not if focusing an input
         if (e.target === e.currentTarget && !Object.values(loadingStates).some(Boolean)) {
           onClose();
         }
@@ -2465,10 +2191,22 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             <div className="bg-neutral-900 rounded-lg p-6 min-h-96 relative">
             {setupType === 'vps-setup' ? (
               <>
-                {currentStep === 1 && renderVPSSystemInfoStep()}
-                {currentStep === 2 && renderVPSInstallationStep()}
-                {currentStep === 3 && renderVPSConfigurationStep()}
-                {currentStep === 4 && renderVPSSetupCompleteStep()}
+            {currentStep === 1 && renderVPSSystemInfoStep()}
+            {currentStep === 2 && renderVPSConfigurationStep()}
+            {currentStep === 3 && renderVPSSetupCompleteStep()}
+            {currentStep > 3 && (
+              <div className="flex flex-col items-center justify-center min-h-64">
+                <FontAwesomeIcon icon={faCheckCircle} className="text-5xl text-green-500 mb-4" />
+                <h2 className="text-2xl font-bold text-white mb-2">Setup Complete!</h2>
+                <p className="text-neutral-300 mb-4">TrustQuery is now configured and ready to use.</p>
+                <button
+                  onClick={onClose}
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg"
+                >
+                  Close Wizard
+                </button>
+              </div>
+            )}
               </>
             ) : (
               <>

@@ -51,7 +51,7 @@ export default function AdminDashboard({ onLogout }) {
 
   // === Loading state tracking ===
   const [isInitializing, setIsInitializing] = useState(true);
-  const [showSetupBanner, setShowSetupBanner] = useState(true);
+  // const [showSetupBanner, setShowSetupBanner] = useState(true); // REMOVE setup banner state
 
   // Custom hook for cluster management
   const clusterManagement = useClusterManagement(showNotification);
@@ -87,12 +87,7 @@ export default function AdminDashboard({ onLogout }) {
     }
   }, [activeTab]); // Remove clusterManagement.fetchLocalNodes from dependency array to prevent loops
 
-  // Hide setup banner if nodes are configured
-  useEffect(() => {
-    if (clusterManagement.localNodes && clusterManagement.localNodes.length > 0) {
-      setShowSetupBanner(false);
-    }
-  }, [clusterManagement.localNodes]);
+  // (REMOVED) Hide setup banner if nodes are configured
 
   // Helper function to format bytes
   function formatBytes(bytes) {
@@ -102,6 +97,8 @@ export default function AdminDashboard({ onLogout }) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
+
+  // REMOVE: Setup wizard notification/banner from dashboard UI. It is now only accessible from the Configuration tab.
 
   const handleEditNode = async (node) => {
     console.log("handleEditNode called with node:", node);
@@ -192,50 +189,7 @@ export default function AdminDashboard({ onLogout }) {
           </button>
         </div>
         
-        {/* System Setup Banner */}
-        {showSetupBanner && (
-          <div className="mb-8 p-6 bg-gradient-to-r from-blue-900/40 to-blue-800/40 rounded-xl border border-blue-700/50 shadow-lg relative">
-            <button
-              onClick={() => setShowSetupBanner(false)}
-              className="absolute top-4 right-4 text-blue-300 hover:text-white transition-colors"
-            >
-              <FontAwesomeIcon icon={faTimes} className="text-lg" />
-            </button>
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between pr-8">
-              <div className="mb-4 lg:mb-0">
-                <h2 className="text-2xl font-bold text-white mb-2 flex items-center">
-                  <FontAwesomeIcon icon={faCog} className="mr-3 text-blue-400" />
-                  System Setup Wizard
-                </h2>
-                <p className="text-blue-100 mb-2">
-                  Need help setting up TrustQuery on your VPS? Our guided setup wizard will help you install and configure Elasticsearch.
-                </p>
-                <div className="flex flex-wrap gap-2 text-sm text-blue-200">
-                  <span className="bg-blue-800/40 px-2 py-1 rounded">✓ Windows & Linux Support</span>
-                  <span className="bg-blue-800/40 px-2 py-1 rounded">✓ Automatic Path Detection</span>
-                  <span className="bg-blue-800/40 px-2 py-1 rounded">✓ Installation Guide</span>
-                  <span className="bg-blue-800/40 px-2 py-1 rounded">✓ Connection Testing</span>
-                </div>
-              </div>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={() => setShowSetupWizard(true)}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg transition duration-150 ease-in-out font-semibold shadow-lg transform hover:scale-105 active:scale-95"
-                >
-                  <FontAwesomeIcon icon={faCog} className="mr-2" />
-                  Launch Setup Wizard
-                </button>
-                <button
-                  onClick={() => setActiveTab("configuration")}
-                  className="bg-neutral-700 hover:bg-neutral-600 text-white px-6 py-3 rounded-lg transition duration-150 ease-in-out border border-neutral-600"
-                >
-                  <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
-                  System Configuration
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+      {/* System Setup Banner removed: Setup Wizard is now only accessible from the Configuration tab */}
         
         {/* Tab Navigation */}
         <div className="mb-8 border-b border-neutral-700">
@@ -440,7 +394,6 @@ export default function AdminDashboard({ onLogout }) {
           onClose={() => setShowSetupWizard(false)}
           onComplete={() => {
             setShowSetupWizard(false);
-            setShowSetupBanner(false); // Hide setup banner after completion
             clusterManagement.fetchLocalNodes(); // Refresh nodes after setup
             showNotification("success", "Cluster setup completed successfully!", faCheckCircle);
           }}
