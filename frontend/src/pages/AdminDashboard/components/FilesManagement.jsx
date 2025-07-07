@@ -14,14 +14,16 @@ import {
   faSpinner,
   faCheckCircle,
   faCircleNotch,
+  faUpload,
 } from "@fortawesome/free-solid-svg-icons";
 import { formatBytes } from "../../../utils/format";
+import buttonStyles from '../../../components/ButtonStyles';
 
 export default function FilesManagement({ 
   showNotification, 
   isAnyTaskRunning, 
   showEditModal,
-  setTasksList,
+  setTasksList = () => {}, // Default to no-op if not provided
   setCurrentRunningTaskId,
   availableNodes = [],
   enhancedNodesData = {},
@@ -43,6 +45,7 @@ export default function FilesManagement({
   const cachedIndicesByNodes = enhancedNodesData;
   const [parseAllFiles, setParseAllFiles] = useState(true);
   const [selectedSingleFile, setSelectedSingleFile] = useState("");
+
 
   // Fetch files data
   const fetchFilesData = useCallback(async () => {
@@ -235,7 +238,10 @@ export default function FilesManagement({
         fetchFilesData();
       }
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to start parsing task", faTimes);
+      // Log error for debugging
+      console.error("Parsing error:", err);
+      // Make error notification persistent (not auto-dismissed)
+      showNotification("error", err.response?.data?.error || "Failed to start parsing task", faTimes, false);
     }
   };
 
@@ -366,19 +372,20 @@ export default function FilesManagement({
                        file:bg-primary file:text-white
                        hover:file:bg-button-hover-bg transition duration-150 ease-in-out cursor-pointer"
           />
-          <button
-            onClick={handleUpload}
-            className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-            disabled={
-              disabled ||
-              uploadFiles.length === 0 ||
-              isAnyTaskRunning ||
-              showEditModal ||
-              loading
-            }
+        <button
+          onClick={handleUpload}
+          disabled={
+            disabled ||
+            uploadFiles.length === 0 ||
+            isAnyTaskRunning ||
+            showEditModal ||
+            loading
+          }
+className={buttonStyles.primary}
           >
-            Upload
-          </button>
+          <FontAwesomeIcon icon={!loading ? faUpload : faSpinner} className={"mr-2"+(loading ? " fa-spin":"")} />
+          {loading ? 'Uploading...' : 'Upload'}
+        </button>
         </div>
       </section>
 
@@ -403,30 +410,18 @@ export default function FilesManagement({
                   <button
                     onClick={() => handleMoveToUnparsed(f)}
                     disabled={disabled || isAnyTaskRunning || showEditModal || deletingFiles.has(f)}
-                    className={`bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95 ${
-                      isAnyTaskRunning || showEditModal || deletingFiles.has(f)
-                        ? "opacity-50 cursor-not-allowed"
-                        : ""
-                    }`}
-                  >
-                    {deletingFiles.has(f) ? (
-                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-1" />
-                    ) : (
-                      <FontAwesomeIcon icon={faArrowRightArrowLeft} className="mr-1" />
-                    )}
+className={buttonStyles.primary}
+                    >
+                    <FontAwesomeIcon icon={deletingFiles.has(f) ? faSpinner : faArrowRightArrowLeft} className={"mr-2"+(deletingFiles.has(f) ? " fa-spin":"")} />
                     {deletingFiles.has(f) ? 'Moving...' : 'Move to Unparsed'}
                   </button>
                   <button
                     onClick={() => handleDeletePendingFile(f)}
-                    className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
                     disabled={disabled || loading || isAnyTaskRunning || deletingFiles.has(f)}
                     title={`Delete '${f}'`}
-                  >
-                    {deletingFiles.has(f) ? (
-                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-1" />
-                    ) : (
-                      <FontAwesomeIcon icon={faTrash} className="mr-1" />
-                    )}
+className={buttonStyles.delete}
+                    >
+                    <FontAwesomeIcon icon={deletingFiles.has(f) ? faSpinner : faTrash} className={"mr-2"+(deletingFiles.has(f) ? " fa-spin":"")} />
                     {deletingFiles.has(f) ? 'Deleting...' : 'Delete'}
                   </button>
                 </div>
@@ -447,11 +442,11 @@ export default function FilesManagement({
           </p>
           <button
             onClick={handleParseAll}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
             disabled={disabled || unparsedFiles.length === 0 || isAnyTaskRunning || showEditModal}
+            className={buttonStyles.refresh}
           >
             <FontAwesomeIcon icon={faCog} className="mr-2" />
-            Parse All Files...
+            Parse All Files
           </button>
         </div>
         {loading ? (
@@ -469,23 +464,20 @@ export default function FilesManagement({
                 <div className="flex space-x-2">
                   <button
                     onClick={() => handleParseSingleFile(f)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
                     disabled={disabled || isAnyTaskRunning || showEditModal}
                     title={`Parse '${f}' individually`}
-                  >
-                    <FontAwesomeIcon icon={faPlay} className="mr-1" /> Parse
+className={buttonStyles.primary}
+                    >
+                    <FontAwesomeIcon icon={faPlay} className="mr-2" />
+                    Parse
                   </button>
                   <button
                     onClick={() => handleDeleteUnparsedFile(f)}
-                    className="bg-red-700 hover:bg-red-600 text-white px-3 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
                     disabled={disabled || loading || isAnyTaskRunning || deletingFiles.has(f)}
                     title={`Delete '${f}'`}
+                    className={buttonStyles.delete}
                   >
-                    {deletingFiles.has(f) ? (
-                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-1" />
-                    ) : (
-                      <FontAwesomeIcon icon={faTrash} className="mr-1" />
-                    )}
+                    <FontAwesomeIcon icon={deletingFiles.has(f) ? faSpinner : faTrash} className={"mr-2"+(deletingFiles.has(f) ? " fa-spin" : "")} />
                     {deletingFiles.has(f) ? 'Deleting...' : 'Delete'}
                   </button>
                 </div>
@@ -517,15 +509,11 @@ export default function FilesManagement({
                 <span className="font-medium text-white">{f}</span>
                 <button
                   onClick={() => handleDeleteParsedFile(f)}
-                  className="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
                   disabled={disabled || loading || isAnyTaskRunning || deletingFiles.has(f)}
                   title={`Delete '${f}'`}
+                  className={buttonStyles.delete}
                 >
-                  {deletingFiles.has(f) ? (
-                    <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-1" />
-                  ) : (
-                    <FontAwesomeIcon icon={faTrash} className="mr-1" />
-                  )}
+                  <FontAwesomeIcon icon={deletingFiles.has(f) ? faSpinner : faTrash} className={"mr-2"+(deletingFiles.has(f) ? " fa-spin" : "")} />
                   {deletingFiles.has(f) ? 'Deleting...' : 'Delete'}
                 </button>
               </li>
@@ -669,7 +657,6 @@ export default function FilesManagement({
             <div className="flex justify-end space-x-3 mt-8">
               <button
                 onClick={executeParsingTask}
-                className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={
                   disabled ||
                   !selectedNode || 
@@ -685,13 +672,14 @@ export default function FilesManagement({
                   loading ? "Loading..." :
                   "Start parsing task"
                 }
-              >
-                <FontAwesomeIcon icon={faPlay} className="mr-2" />
-                Start Parsing
+className={buttonStyles.create}
+                >
+                <FontAwesomeIcon icon={loading ? faSpinner : faPlay} className={"mr-2" + (loading ? " fa-spin" : "")} />
+                {loading ? 'Starting...' : 'Start Parsing'}
               </button>
-                            <button
+              <button
                 onClick={closeParsingOptionsModal}
-                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out"
+                className={buttonStyles.cancel}
               >
                 Cancel
               </button>

@@ -22,8 +22,11 @@ import ConfigurationManagement from "./AdminDashboard/components/ConfigurationMa
 import AccountManagement from "./AdminDashboard/components/AccountManagement";
 import TaskDetails from "./AdminDashboard/components/TaskDetails";
 import NodeDetailsModal from "./AdminDashboard/components/NodeDetailsModal";
+import buttonStyles from "../components/ButtonStyles";
 
 export default function AdminDashboard({ onLogout }) {
+  // Add state for Add Node modal loading
+  const [isAddingNode, setIsAddingNode] = useState(false);
   // First time use detection
   const [firstTimeCheck, setFirstTimeCheck] = useState(true);
   // Track setup completion
@@ -187,7 +190,7 @@ export default function AdminDashboard({ onLogout }) {
                 Please follow the guided setup to configure your environment.
               </p>
               <button
-                className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-lg text-lg font-semibold shadow-lg"
+                className={buttonStyles.primary}
                 onClick={() => setShowSetupWizard(true)}
               >
                 Launch Setup Wizard
@@ -201,8 +204,12 @@ export default function AdminDashboard({ onLogout }) {
           </h1>
           <button
             onClick={onLogout}
-            className="bg-red-700 hover:bg-red-600 text-white px-6 py-2.5 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95"
+            className="bg-red-700 hover:bg-red-600 text-white px-6 py-2.5 rounded-lg shadow-lg flex items-center justify-center transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-75 transform hover:scale-105 active:scale-95"
+            disabled={isAnyTaskRunning}
           >
+            {isAnyTaskRunning && (
+              <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+            )}
             Logout
           </button>
         </div>
@@ -214,46 +221,58 @@ export default function AdminDashboard({ onLogout }) {
           <nav className="flex space-x-8">
             <button
               onClick={() => setupCompleted && setActiveTab("cluster")}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${
                 activeTab === "cluster"
                   ? "border-primary text-primary"
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
               } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={!setupCompleted}
+              disabled={!setupCompleted || isAnyTaskRunning}
             >
+              {isAnyTaskRunning && (
+                <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+              )}
               Node Management
             </button>
-                        <button
+            <button
               onClick={() => setupCompleted && setActiveTab("files")}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${
                 activeTab === "files"
                   ? "border-primary text-primary"
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
               } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={!setupCompleted}
+              disabled={!setupCompleted || isAnyTaskRunning}
             >
+              {isAnyTaskRunning && (
+                <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+              )}
               File Management
             </button>
             <button
               onClick={() => setupCompleted && setActiveTab("configuration")}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${
                 activeTab === "configuration"
                   ? "border-primary text-primary"
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
               } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={!setupCompleted}
+              disabled={!setupCompleted || isAnyTaskRunning}
             >
+              {isAnyTaskRunning && (
+                <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+              )}
               Configuration
             </button>
             <button
               onClick={() => setupCompleted && setActiveTab("accounts")}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${
                 activeTab === "accounts"
                   ? "border-primary text-primary"
                   : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
               } ${!setupCompleted ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={!setupCompleted}
+              disabled={!setupCompleted || isAnyTaskRunning}
             >
+              {isAnyTaskRunning && (
+                <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+              )}
               Account Management
             </button>
           </nav>
@@ -391,21 +410,26 @@ export default function AdminDashboard({ onLogout }) {
               
               <div className="flex justify-end space-x-3 mt-6">
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (setupCompleted) {
-                      clusterManagement.handleAddNode();
+                      setIsAddingNode && setIsAddingNode(true);
+                      await clusterManagement.handleAddNode();
                       setShowAddNodeModal(false);
+                      setIsAddingNode && setIsAddingNode(false);
                     }
                   }}
-                  disabled={!clusterManagement.newNodeUrl.trim() || !setupCompleted}
-                  className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!clusterManagement.newNodeUrl.trim() || !setupCompleted || (typeof isAddingNode !== 'undefined' && isAddingNode)}
+                  className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-lg flex items-center justify-center transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
                 >
+                  {typeof isAddingNode !== 'undefined' && isAddingNode && (
+                    <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
+                  )}
                   Add Node
                 </button>
-                                <button
+                <button
                   onClick={() => setShowAddNodeModal(false)}
-                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg transition duration-150 ease-in-out"
-                  disabled={!setupCompleted}
+                  className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2.5 rounded-lg flex items-center justify-center transition duration-150 ease-in-out"
+                  disabled={!setupCompleted || (typeof isAddingNode !== 'undefined' && isAddingNode)}
                 >
                   Cancel
                 </button>

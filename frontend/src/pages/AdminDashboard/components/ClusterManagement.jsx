@@ -23,10 +23,11 @@ import {
   faEdit,
   faCheck,
   faTimes,
-  faExchangeAlt,
+  faSync,
 } from "@fortawesome/free-solid-svg-icons";
 import axiosClient from "../../../api/axiosClient";
 import { formatBytes } from "../../../utils/format";
+import buttonStyles from '../../../components/ButtonStyles';
 
 export default function ClusterManagement({
   localNodes,
@@ -56,9 +57,10 @@ export default function ClusterManagement({
 
   // Loading state for metadata verification
   const [isVerifyingMetadata, setIsVerifyingMetadata] = useState(false);
-  // Add state for delete confirmation modal
+  // Add state for delete confirmation modal and loading state for node deletion
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState(null);
+  const [deletingNodeName, setDeletingNodeName] = useState(null); // Track which node is being deleted
 
   // Add state for cluster filtering
   const [selectedCluster, setSelectedCluster] = useState('all');
@@ -170,10 +172,14 @@ export default function ClusterManagement({
   // Add handler for confirming deletion
   const confirmDelete = async () => {
     if (!nodeToDelete) return;
-
-    await handleDeleteLocalNode(nodeToDelete.name);
-    setShowDeleteModal(false);
-    setNodeToDelete(null);
+    setDeletingNodeName(nodeToDelete.name);
+    try {
+      await handleDeleteLocalNode(nodeToDelete.name);
+    } finally {
+      setShowDeleteModal(false);
+      setNodeToDelete(null);
+      setDeletingNodeName(null);
+    }
   };
 
   // Use clustersList prop for filter dropdown
@@ -264,7 +270,7 @@ export default function ClusterManagement({
           <div className="flex space-x-3">
             <button
               onClick={() => setShowCreateClusterModal(true)}
-              className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75"
+              className={buttonStyles.primary }
               disabled={disabled}
             >
               <FontAwesomeIcon icon={faPlus} className="mr-2" />
@@ -272,10 +278,10 @@ export default function ClusterManagement({
             </button>
             <button
               onClick={fetchClusters}
-              className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
+              className={buttonStyles.refresh}
               disabled={disabled || clustersLoading}
             >
-              <FontAwesomeIcon
+            <FontAwesomeIcon
                 icon={faCircleNotch}
                 className={`mr-2 ${clustersLoading ? "fa-spin" : ""}`}
               />
@@ -331,10 +337,10 @@ export default function ClusterManagement({
                         <button
                           onClick={handleSaveClusterEdit}
                           disabled={!editedClusterName.trim() || clusterActionLoading.includes(cluster.name)}
-                          className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {clusterActionLoading.includes(cluster.name) ? (
-                            <FontAwesomeIcon icon={faSpinner} spin className="mr-1" />
+                            <FontAwesomeIcon icon={faCircleNotch} spin className="mr-1" />
                           ) : (
                             <FontAwesomeIcon icon={faCheck} className="mr-1" />
                           )}
@@ -345,10 +351,9 @@ export default function ClusterManagement({
                             setEditingCluster(null);
                             setEditedClusterName('');
                           }}
-                          className="bg-neutral-600 hover:bg-neutral-500 text-white px-3 py-1 rounded text-sm flex items-center"
+                          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition-colors"
                           disabled={clusterActionLoading.includes(cluster.name)}
                         >
-                          <FontAwesomeIcon icon={faTimes} className="mr-1" />
                           Cancel
                         </button>
                       </div>
@@ -414,8 +419,8 @@ export default function ClusterManagement({
                               nodesSection.scrollIntoView({ behavior: 'smooth' });
                             }
                           }}
-                          className="w-full bg-neutral-600 hover:bg-neutral-500 text-white py-2 rounded transition-colors text-sm"
-                        >
+className={buttonStyles.neutral+" w-full flex items-center justify-center"}
+                          >
                           <FontAwesomeIcon icon={faServer} className="mr-2" />
                           View Nodes
                         </button>
@@ -436,14 +441,14 @@ export default function ClusterManagement({
           <div className="flex space-x-3">
             <button
               onClick={() => setShowLocalNodeManager(true)}
-              className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75"
+              className={buttonStyles.primary}
             >
               <FontAwesomeIcon icon={faServer} className="mr-2" />
               Create New Node
             </button>
             <button
               onClick={fetchLocalNodes}
-              className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"
+              className={buttonStyles.refresh}
               disabled={disabled || clusterLoading}
             >
               <FontAwesomeIcon
@@ -454,11 +459,11 @@ export default function ClusterManagement({
             </button>
             <button
               onClick={handleVerifyMetadata}
-              className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-opacity-75"
+              className={buttonStyles.neutral}
               disabled={disabled || clusterLoading}
               title="Verify and clean up node metadata"
             >
-              <FontAwesomeIcon icon={faCog} className="mr-2" />
+              <FontAwesomeIcon icon={isVerifyingMetadata ? faSpinner : faCog} className={"mr-2" + (isVerifyingMetadata ? " fa-spin" : "")} />
               {isVerifyingMetadata ? "Verifying..." : "Verify Metadata"}
             </button>
           </div>
@@ -488,9 +493,9 @@ export default function ClusterManagement({
                 <button
                   onClick={handleCreateCluster}
                   disabled={!newClusterName.trim()}
-                  className="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <FontAwesomeIcon icon={faPlus} />
+className={buttonStyles.primary}
+                  >
+                  <FontAwesomeIcon icon={faPlus} className="mr-2" />
                   <span>Create Cluster</span>
                 </button>
                 <button
@@ -895,8 +900,8 @@ export default function ClusterManagement({
                     </p>
                     <button
                       onClick={() => setShowLocalNodeManager(true)}
-                      className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-lg transition duration-150 ease-in-out"
-                    >
+className={buttonStyles.primary}
+                      >
                       <FontAwesomeIcon icon={faPlus} className="mr-2" />
                       Create Your First Node
                     </button>
@@ -1166,7 +1171,7 @@ export default function ClusterManagement({
                                       handleStopLocalNode(node.name)
                                     }
                                     disabled={disabled || isLoading}
-                                    className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:bg-neutral-600 disabled:cursor-not-allowed flex items-center justify-center"
+                                    className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2 disabled:bg-neutral-600 disabled:cursor-not-allowed"
                                   >
                                     {isLoading ? (
                                       <FontAwesomeIcon icon={faSpinner} spin />
@@ -1180,8 +1185,8 @@ export default function ClusterManagement({
                                       handleStartLocalNode(node.name)
                                     }
                                     disabled={disabled || isLoading}
-                                    className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:bg-neutral-600 disabled:cursor-not-allowed flex items-center justify-center"
-                                  >
+className={buttonStyles.create}
+                                    >
                                     {isLoading ? (
                                       <FontAwesomeIcon icon={faSpinner} spin />
                                     ) : (
@@ -1191,7 +1196,7 @@ export default function ClusterManagement({
                                 )}
                                 <button
                                   onClick={disabled ? undefined : () => onOpenNodeDetails(node)}
-                                  className="bg-sky-600 hover:bg-sky-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className={buttonStyles.primary}
                                   disabled={disabled}
                                 >
                                   Manage
@@ -1208,11 +1213,15 @@ export default function ClusterManagement({
                                 </button>
                                 <button
                                   onClick={disabled ? undefined : () => handleDeleteClick(node)}
-                                  className="text-neutral-400 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className={`text-neutral-400 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${deletingNodeName === node.name ? 'opacity-50 cursor-not-allowed' : ''}`}
                                   aria-label="Delete Node"
-                                  disabled={disabled}
+                                  disabled={disabled || deletingNodeName === node.name}
                                 >
-                                  <FontAwesomeIcon icon={faTrash} />
+                                  {deletingNodeName === node.name ? (
+                                    <FontAwesomeIcon icon={faCircleNotch} spin />
+                                  ) : (
+                                    <FontAwesomeIcon icon={faTrash} />
+                                  )}
                                 </button>
                               </div>
                             </div>
@@ -1244,25 +1253,16 @@ export default function ClusterManagement({
             <div className="flex justify-end space-x-4">
               <button
                 onClick={confirmDelete}
-                className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2"
-                disabled={nodeActionLoading.includes(nodeToDelete?.name)}
+className={buttonStyles.delete}
+                disabled={deletingNodeName === nodeToDelete?.name}
               >
-                {nodeActionLoading.includes(nodeToDelete?.name) ? (
-                  <>
-                    <FontAwesomeIcon icon={faCircleNotch} spin />
-                    <span>Deleting...</span>
-                  </>
-                ) : (
-                  <>
-                    <FontAwesomeIcon icon={faTrash} />
+                    <FontAwesomeIcon icon={deletingNodeName === nodeToDelete?.name ? faCircleNotch : faTrash} className={"mr-2"+(deletingNodeName === nodeToDelete?.name ? " fa-spin" : "")} />
                     <span>Delete Node</span>
-                  </>
-                )}
               </button>
               <button
                 onClick={() => setShowDeleteModal(false)}
                 className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition-colors"
-                disabled={nodeActionLoading.includes(nodeToDelete?.name)}
+                disabled={deletingNodeName === nodeToDelete?.name}
               >
                 Cancel
               </button>

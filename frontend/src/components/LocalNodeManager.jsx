@@ -21,6 +21,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../api/axiosClient';
 import { formatBytes } from '../utils/format';
+import buttonStyles from './ButtonStyles';
 
 const LocalNodeManager = ({ 
   isOpen, 
@@ -544,9 +545,7 @@ const LocalNodeManager = ({
                 <button
                   onClick={() => setShowNewCluster(!showNewCluster)}
                   disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
-                  className={`bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-md transition duration-150 ${
-                    (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
+                  className={buttonStyles.primary}
                   title="Create new cluster"
                 >
                   <FontAwesomeIcon icon={faPlus} />
@@ -570,8 +569,8 @@ const LocalNodeManager = ({
                   />
                   <button
                     onClick={handleCreateCluster}
-                    className="bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded-md text-sm transition duration-150"
-                  >
+className={buttonStyles.create}
+                    >
                     Create
                   </button>
                 </div>
@@ -991,7 +990,7 @@ const LocalNodeManager = ({
                 }
               }
             }}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={buttonStyles.primary + " px-6 py-2"}
             disabled={
               !newNodeName.trim() || 
               isValidating || 
@@ -1004,7 +1003,7 @@ const LocalNodeManager = ({
           </button>
           <button
             onClick={onClose}
-            className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
+            className={buttonStyles.cancel + " px-6 py-2"}
           >
             Cancel
           </button>
@@ -1116,7 +1115,7 @@ const LocalNodeManager = ({
               </button>
               <button
                 onClick={() => setShowMoveModal(false)}
-                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
+                className={buttonStyles.cancel + " px-6 py-2"}
               >
                 Cancel
               </button>
@@ -1234,7 +1233,7 @@ const LocalNodeManager = ({
               </button>
               <button
                 onClick={() => setShowCopyModal(false)}
-                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
+                className={buttonStyles.cancel + " px-6 py-2"}
               >
                 Cancel
               </button>

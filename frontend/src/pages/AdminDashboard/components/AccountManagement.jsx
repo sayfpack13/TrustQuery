@@ -14,6 +14,7 @@ import {
   faFilter,
   faRefresh,
 } from "@fortawesome/free-solid-svg-icons";
+import buttonStyles from '../../../components/ButtonStyles';
 
 export default function AccountManagement({ 
   showNotification,
@@ -21,6 +22,10 @@ export default function AccountManagement({
   enhancedNodesData = {},
   disabled = false
 }) {
+  // Spinner for loading states
+  const spinner = (
+    <FontAwesomeIcon icon={faCircleNotch} spin className="ml-2 text-white" />
+  );
   const [accounts, setAccounts] = useState([]);
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -322,23 +327,21 @@ export default function AccountManagement({
           <h2 className="text-3xl font-bold text-white">Account Management</h2>
           <div className="flex space-x-4">
             <button
+              className={buttonStyles.primary}
               onClick={toggleGlobalPasswordVisibility}
-              className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg transition duration-150 ease-in-out flex items-center space-x-2"
+              disabled={disabled}
             >
-              <FontAwesomeIcon icon={showAllPasswords ? faEyeSlash : faEye} />
-              <span>{showAllPasswords ? "Hide All Passwords" : "Show All Passwords"}</span>
+              <FontAwesomeIcon icon={showAllPasswords ? faEyeSlash : faEye} className="mr-2" />
+              {showAllPasswords ? "Hide All Passwords" : "Show All Passwords"}
             </button>
             <button
+              className={buttonStyles.delete}
               onClick={handleDeleteSelected}
               disabled={disabled || selected.length === 0 || isAnyTaskRunning || loading}
-              className="bg-danger hover:bg-red-600 text-white px-4 py-2 rounded-lg disabled:opacity-50 transition duration-150 ease-in-out flex items-center space-x-2"
             >
-              {loading ? (
-                <FontAwesomeIcon icon={faCircleNotch} className="fa-spin" />
-              ) : (
-                <FontAwesomeIcon icon={faTrash} />
-              )}
-              <span>{loading ? 'Deleting...' : `Delete Selected (${selected.length})`}</span>
+              <FontAwesomeIcon icon={faTrash} className="mr-2" />
+              {loading ? 'Deleting...' : `Delete Selected (${selected.length})`}
+              {loading && spinner}
             </button>
           </div>
         </div>
@@ -391,15 +394,16 @@ export default function AccountManagement({
             </div>
 
             <button
+              className={buttonStyles.refresh}
               onClick={() => {
                 setPage(1);
                 fetchAccounts();
               }}
               disabled={disabled || loading}
-              className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded transition duration-150 ease-in-out flex items-center space-x-1"
             >
-              <FontAwesomeIcon icon={faRefresh} />
-              <span>Refresh</span>
+              
+              <FontAwesomeIcon icon={faRefresh} className="mr-2" />
+              Refresh
             </button>
           </div>
         </div>
@@ -522,24 +526,21 @@ export default function AccountManagement({
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex space-x-3">
                             <button
+                              className={buttonStyles.primary + " p-3"}
                               onClick={() => handleEditClick(account)}
                               disabled={disabled || editLoading || deletingAccountIds.has(account.id)}
-                              className="bg-primary hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Edit Account"
                             >
                               <FontAwesomeIcon icon={faEdit} />
                             </button>
                             <button
+                              className={buttonStyles.delete + " p-3"}
                               onClick={() => handleDeleteAccount(account.id)}
                               disabled={disabled || loading || deletingAccountIds.has(account.id)}
-                              className="bg-danger hover:bg-button-hover-bg p-3 transform hover:scale-110 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Delete Account"
                             >
-                              {deletingAccountIds.has(account.id) ? (
-                                <FontAwesomeIcon icon={faCircleNotch} className="fa-spin" />
-                              ) : (
-                                <FontAwesomeIcon icon={faTrash} />
-                              )}
+                              <FontAwesomeIcon icon={faTrash} />
+                              {deletingAccountIds.has(account.id) && spinner}
                             </button>
                           </div>
                         </td>
@@ -645,21 +646,16 @@ export default function AccountManagement({
             </div>
             <div className="mt-8 flex justify-end space-x-3">
               <button
+                className={buttonStyles.primary + " px-5 py-2.5"}
                 onClick={handleSaveEdit}
-                className="bg-primary hover:bg-button-hover-bg text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50"
                 disabled={disabled || editLoading}
               >
-                {editLoading ? (
-                  <FontAwesomeIcon
-                    icon={faCircleNotch}
-                    className="fa-spin mr-2"
-                  />
-                ) : null}
+                {editLoading && <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />}
                 Save Changes
               </button>
               <button
+                className={buttonStyles.cancel + " px-5 py-2.5"}
                 onClick={handleCancelEdit}
-                className="bg-neutral-600 hover:bg-neutral-500 text-white px-5 py-2.5 rounded-lg shadow-md transition duration-150 ease-in-out"
                 disabled={disabled || editLoading}
               >
                 Cancel

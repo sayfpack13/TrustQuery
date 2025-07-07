@@ -14,7 +14,9 @@ import {
   faExclamationTriangle,
 } from "@fortawesome/free-solid-svg-icons";
 import { formatBytes } from "../../../utils/format";
+import buttonStyles from '../../../components/ButtonStyles';
 
+  
 export default function ConfigurationManagement({ 
   showNotification,
   enhancedNodesData = {},
@@ -156,7 +158,7 @@ export default function ConfigurationManagement({
           </div>
           <button
             onClick={() => setShowSetupWizard(true)}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg transition duration-150 ease-in-out flex-shrink-0 ml-4"
+            className={buttonStyles.primary}
           >
             <FontAwesomeIcon icon={faCogs} className="mr-2" />
             Launch Setup Wizard
@@ -285,7 +287,7 @@ export default function ConfigurationManagement({
                                     return [...withoutNodeIndices, ...nodeIndices];
                                   });
                                 }}
-                                className="text-xs px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded transition"
+                                className="text-xs px-3 py-1 rounded-lg font-semibold bg-gradient-to-r from-green-400 to-green-600 text-white shadow hover:from-green-500 hover:to-green-700 transition-all duration-200"
                               >
                                 Select All
                               </button>
@@ -294,7 +296,7 @@ export default function ConfigurationManagement({
                                   const nodeIndices = nodeData.indices.map(idx => idx.index);
                                   setSelectedSearchIndices(prev => prev.filter(idx => !nodeIndices.includes(idx)));
                                 }}
-                                className="text-xs px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded transition"
+                                className="text-xs px-3 py-1 rounded-lg font-semibold bg-gradient-to-r from-red-400 to-red-600 text-white shadow hover:from-red-500 hover:to-red-700 transition-all duration-200"
                               >
                                 Deselect All
                               </button>
@@ -369,18 +371,18 @@ export default function ConfigurationManagement({
                       <button
                         onClick={() => {
                           const allIndices = Object.values(indicesByNodes)
-                            .filter(node => node.indices) // Remove the isRunning filter
+                            .filter(node => node.indices)
                             .flatMap(node => node.indices.map(idx => idx.index));
                           setSelectedSearchIndices(allIndices);
                         }}
-                        className="text-xs px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition"
+                        className="text-xs px-3 py-1 rounded-lg font-semibold bg-gradient-to-r from-blue-400 to-blue-600 text-white shadow hover:from-blue-500 hover:to-cyan-500 transition-all duration-200"
                         disabled={configLoading}
                       >
                         Select All Indices
                       </button>
                       <button
                         onClick={() => setSelectedSearchIndices([])}
-                        className="text-xs px-3 py-1 bg-gray-600 hover:bg-gray-500 text-white rounded transition"
+                        className="text-xs px-3 py-1 rounded-lg font-semibold bg-gradient-to-r from-gray-400 to-gray-700 text-white shadow hover:from-gray-500 hover:to-gray-800 transition-all duration-200"
                         disabled={configLoading}
                       >
                         Clear All
@@ -390,15 +392,11 @@ export default function ConfigurationManagement({
                   <button
                     onClick={updateSearchIndices}
                     disabled={isUpdatingIndices}
-                    className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                    className="inline-flex items-center px-6 py-2 rounded-xl font-semibold shadow-lg bg-gradient-to-r from-green-400 to-green-600 text-white hover:from-green-500 hover:to-green-700 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {isUpdatingIndices ? (
-                      <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
-                    ) : (
-                      <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                    )}
-                    {isUpdatingIndices ? 'Updating...' : 
-                     selectedSearchIndices.length === 0 ? 'Disable Search (Clear All)' : 'Update Search Configuration'}
+                    <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
+                    {isUpdatingIndices ? 'Updating...' : selectedSearchIndices.length === 0 ? 'Disable Search (Clear All)' : 'Update Search Configuration'}
+                    {isUpdatingIndices && <FontAwesomeIcon icon={faCircleNotch} spin className="ml-2 text-white" />}
                   </button>
                 </div>
               </>
@@ -504,20 +502,16 @@ export default function ConfigurationManagement({
               <button
                 onClick={disabled ? undefined : saveSystemSettings}
                 disabled={disabled || !hasUnsavedSystemChanges || isSavingSettings}
-                className="bg-green-600 hover:bg-green-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                className={buttonStyles.primary}
               >
-                {isSavingSettings ? (
-                  <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
-                ) : (
-                  <FontAwesomeIcon icon={faSave} className="mr-2" />
-                )}
+                <FontAwesomeIcon icon={faSave} className="mr-2" />
                 {isSavingSettings ? 'Saving...' : 'Save Settings'}
+                {isSavingSettings && <FontAwesomeIcon icon={faCircleNotch} spin className="ml-2 text-white" />}
               </button>
-              
               <button
                 onClick={disabled ? undefined : resetSystemSettings}
                 disabled={disabled || !hasUnsavedSystemChanges}
-                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg shadow-lg transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                className={buttonStyles.cancel}
               >
                 <FontAwesomeIcon icon={faTimes} className="mr-2" />
                 Reset Changes
@@ -530,7 +524,7 @@ export default function ConfigurationManagement({
           <p className="text-neutral-400 mb-4">Failed to load configuration</p>
           <button
             onClick={fetchConfig}
-            className="bg-primary hover:bg-button-hover-bg text-white px-4 py-2 rounded-lg"
+            className="inline-flex items-center px-4 py-2 rounded-xl font-semibold shadow-lg bg-gradient-to-r from-pink-500 to-purple-600 text-white hover:from-purple-600 hover:to-pink-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <FontAwesomeIcon icon={faCircleNotch} className="mr-2" />
             Retry

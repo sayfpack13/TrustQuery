@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleInfo, faPlus, faTrash, faExclamationTriangle, faHdd, faCircleNotch, faMemory } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../../../api/axiosClient';
 import { formatBytes } from '../../../utils/format';
+import buttonStyles from '../../../components/ButtonStyles';
 
 export default function NodeDetailsModal({ show, onClose, node, enhancedNodesData = {}, onRefreshNodes, disabled = false }) {
   const [activeTab, setActiveTab] = useState('overview');
@@ -466,7 +467,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                   <p className="text-red-100 text-sm">{diskStatsError}</p>
                   <button
                     onClick={fetchDiskStats}
-                    className="mt-2 bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm"
+                    className={buttonStyles.delete + " mt-2 px-4 py-2"}
                   >
                     Retry
                   </button>
@@ -539,7 +540,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                       <button
                         onClick={handleManualRefresh}
                         disabled={disabled || isRefreshingIndices || refreshInProgress.current}
-                        className="bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm disabled:opacity-50 flex items-center"
+                        className={buttonStyles.delete + " flex items-center px-4 py-2 rounded text-sm disabled:opacity-50"}
                       >
                         <FontAwesomeIcon
                           icon={faCircleNotch}
@@ -587,7 +588,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                 <button
                   onClick={handleManualRefresh}
                   disabled={isRefreshingIndices || refreshInProgress.current}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                  className={buttonStyles.refresh + " flex items-center px-4 py-2 rounded text-sm disabled:opacity-50"}
                   title="Refresh indices data"
                 >
                   <FontAwesomeIcon
@@ -602,7 +603,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                   <button
                     onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
                     disabled={disabled || isCreatingIndex || refreshInProgress.current}
-                    className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                    className={buttonStyles.create + " flex items-center px-4 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75"}
                   >
                     <FontAwesomeIcon
                       icon={isCreatingIndex ? faCircleNotch : faPlus}
@@ -689,7 +690,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                   <div className="flex justify-end gap-2 mt-6">
                     <button
                       type="submit"
-                      className="px-5 py-2 rounded bg-primary hover:bg-blue-500 text-white font-semibold shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600 flex items-center gap-2"
+                      className={buttonStyles.primary + " px-6 py-2 rounded flex items-center gap-2"}
                       disabled={disabled || isCreatingIndex || !node.isRunning || !isFormValid}
                       title={
                         !node.isRunning ? "Node must be running to create indices" :
@@ -702,7 +703,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                     <button
                       type="button"
                       onClick={() => setShowCreateIndexForm(false)}
-                      className="px-4 py-2 rounded bg-neutral-600 hover:bg-neutral-500 text-white font-medium transition-colors"
+                    className={buttonStyles.cancel + " px-6 py-2 rounded flex items-center"}
                       disabled={isCreatingIndex}
                     >
                       Cancel
@@ -756,7 +757,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                         <td className="py-3 px-4">
                           <button
                             onClick={() => handleDeleteClick(index)}
-                            className="text-red-500 hover:text-red-400 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors p-1"
+                            className={buttonStyles.delete + " p-1 rounded transition-colors flex items-center"}
                             disabled={disabled || !node.isRunning || isDeletingIndex === index.index || isCreatingIndex || refreshInProgress.current}
                             title={
                               !node.isRunning ? "Start the node to delete indices" :
@@ -882,10 +883,21 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
               Are you sure you want to delete the index <span className="font-bold text-white">{indexToDelete?.index}</span>? This action cannot be undone.
             </p>
             <div className="flex justify-end space-x-4">
-              <button onClick={confirmDelete} className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg">
-                Delete
+              <button
+                onClick={confirmDelete}
+                className={buttonStyles.delete + " px-6 py-2 rounded-lg flex items-center justify-center"}
+                disabled={isDeletingIndex === indexToDelete?.index}
+              >
+                {isDeletingIndex === indexToDelete?.index ? (
+                  <>
+                    <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete'
+                )}
               </button>
-              <button onClick={() => setShowDeleteModal(false)} className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg">
+              <button onClick={() => setShowDeleteModal(false)} className={buttonStyles.cancel + " px-6 py-2 rounded-lg"}>
                 Cancel
               </button>
             </div>

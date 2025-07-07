@@ -23,6 +23,7 @@ import {
   faTimes
 } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../api/axiosClient';
+import buttonStyles from './ButtonStyles';
 
 const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   const [currentStep, setCurrentStep] = useState(1);
@@ -574,10 +575,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               <FontAwesomeIcon 
                 icon={faCircleNotch} 
                 spin 
-                className="text-4xl text-blue-500 absolute inset-0" 
+                className="text-4xl text-blue-500 absolute inset-0 mx-auto my-auto" 
               />
               <div className="absolute inset-0 rounded-full border-4 border-blue-200 opacity-25 animate-pulse"></div>
-              <div className="absolute inset-2 rounded-full border-2 border-blue-400 opacity-50 animate-spin-slow"></div>
             </div>
           </div>
           {/* Message */}
@@ -714,14 +714,14 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       <div className="flex justify-between">
         <button
           onClick={onClose}
-          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg"
+          className={buttonStyles.cancel + " px-6 py-2"}
         >
           Cancel
         </button>
         <button
           onClick={() => setCurrentStep(2)}
           disabled={!systemInfo || loading}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg disabled:bg-neutral-600"
+          className={buttonStyles.primary + " px-6 py-2 disabled:bg-neutral-600"}
         >
           {loading ? (
             <>
@@ -963,14 +963,14 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       <div className="flex justify-between mt-6">
         <button
           onClick={() => setCurrentStep(2)}
-          className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg"
+          className={buttonStyles.cancel + " px-6 py-2"}
         >
           Back
         </button>
         <button
           onClick={() => setCurrentStep(3)}
           disabled={!validationResult?.valid}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg disabled:bg-neutral-600 disabled:cursor-not-allowed"
+          className={buttonStyles.primary + " px-6 py-2 disabled:bg-neutral-600 disabled:cursor-not-allowed"}
         >
           Next: Complete Setup
         </button>
@@ -1015,7 +1015,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           <button
             onClick={handleCompleteSetup}
             disabled={isDisabled || loading}
-            className="w-full bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-lg disabled:bg-neutral-600 text-lg font-semibold flex items-center justify-center"
+            className="w-full bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg disabled:bg-neutral-600 text-lg font-semibold flex items-center justify-center"
           >
             {loading ? (
               <>

@@ -165,8 +165,8 @@ app.get("/api/admin/pending-files", verifyJwt, async (req, res) => {
 });
 
 // Move file from pending to unparsed
-app.post("/api/admin/move-to-unparsed/:filename", verifyJwt, async (req, res) => {
-  const { filename } = req.params;
+app.post("/api/admin/move-to-unparsed", verifyJwt, async (req, res) => {
+  const { filename } = req.body;
   const pendingFilePath = path.join(PENDING_DIR, filename);
   const unparsedFilePath = path.join(UNPARSED_DIR, filename);
 
