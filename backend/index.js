@@ -58,8 +58,6 @@ const upload = multer({ storage: storage });
 app.use(cors());
 app.use(express.json());
 
-// Import persistent indices cache module (single import)
-const { getCache, getCacheFiltered, getCacheStatus, clearCache, refreshCache, syncSearchIndices } = require('./src/cache/indices-cache');
 // Import route modules
 const clusterAdvancedRoutes = require('./src/routes/cluster-advanced');
 const esConfigRoutes = require('./src/routes/elasticsearch-config');

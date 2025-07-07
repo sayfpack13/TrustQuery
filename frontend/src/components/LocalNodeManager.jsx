@@ -924,7 +924,7 @@ const LocalNodeManager = ({
         )}
 
         {/* Form Buttons */}
-        <div className="flex justify-end space-x-3 mt-6">
+        <div className="flex justify-end space-x-3 my-3 mx-3">
           <button
             onClick={async () => {
               if (mode === 'create') {

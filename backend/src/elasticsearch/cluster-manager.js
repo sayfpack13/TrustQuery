@@ -235,7 +235,8 @@ async function createNode(nodeConfig) {
         cluster: clusterName, // Use 'cluster' for consistency with frontend and config.json
         port,
         configPath,
-        servicePath
+        servicePath,
+        heapSize // <-- Save heap size in metadata
       }
     };
 
@@ -912,6 +913,7 @@ async function listNodes() {
             isRunning: await isNodeRunning(definitiveNodeName),
             dataPath: metadata.dataPath,
             logsPath: metadata.logsPath,
+            heapSize: metadata.heapSize // <-- Add heapSize from metadata if present
           });
         } catch (configError) {
           console.warn(`⚠️ Skipping node directory ${nodeDirName}: ${configError.message}`);
@@ -1217,12 +1219,7 @@ async function updateNode(nodeName, updates, options = {}) {
     const currentConfig = await getNodeConfig(nodeName);
     const currentMetadata = getNodeMetadata(nodeName);
 
-    // Track old paths for potential cleanup
-    const oldPaths = {
-      dataPath: currentConfig.path.data,
-      logsPath: currentConfig.path.logs,
-      configPath: currentMetadata.configPath
-    };
+
 
     // Get the correct config path from metadata
     let configPath;
@@ -1262,6 +1259,17 @@ async function updateNode(nodeName, updates, options = {}) {
       const jvmOptions = generateJVMOptions(updates.heapSize);
       await fs.writeFile(jvmPath, jvmOptions);
       console.log(`✅ Updated JVM options with heap size: ${updates.heapSize}`);
+
+      // Also update heapSize in nodeMetadata in config.json
+      const config = getConfig();
+      const nodeMetadata = config.nodeMetadata || {};
+      // Find the metadata entry by node name
+      const metaKey = Object.keys(nodeMetadata).find(key => nodeMetadata[key].name === nodeName);
+      if (metaKey) {
+        nodeMetadata[metaKey].heapSize = updates.heapSize;
+        setConfig('nodeMetadata', nodeMetadata);
+        console.log(`✅ Updated heapSize in nodeMetadata for node: ${nodeName}`);
+      }
     }
 
     // Create new directories if paths have changed or don't exist
