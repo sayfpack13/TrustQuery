@@ -15,6 +15,7 @@ import {
   faCheckCircle,
   faCircleNotch,
 } from "@fortawesome/free-solid-svg-icons";
+import { formatBytes } from "../../../utils/format";
 
 export default function FilesManagement({ 
   showNotification, 
@@ -610,10 +611,8 @@ export default function FilesManagement({
                       <option value="">Select target index</option>
                       {getNodeIndices(selectedNode).map((index) => (
                         <option key={index.index} value={index.index}>
-                          {index.index} ({(index.docCount !== undefined 
-                            ? index.docCount 
-                            : parseInt(index['docs.count'], 10) || 0
-                          ).toLocaleString()} docs, {index['store.size'] || '0b'})
+                          {index.index} ({(index["doc.count"] || 0
+                          ).toLocaleString()} docs, {formatBytes(index['store.size'])})
                         </option>
                       ))}
                     </select>

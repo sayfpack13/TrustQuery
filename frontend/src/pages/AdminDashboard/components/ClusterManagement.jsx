@@ -61,7 +61,7 @@ export default function ClusterManagement({
   const getTotalDocuments = (nodeData) => {
     if (!nodeData.indices || !Array.isArray(nodeData.indices)) return 0;
     return nodeData.indices.reduce((total, index) => {
-      return total + (index.docCount || parseInt(index["docs.count"], 10) || 0);
+      return total + (index["doc.count"] || 0);
     }, 0);
   };
 
@@ -69,8 +69,7 @@ export default function ClusterManagement({
   const getTotalStorage = (nodeData) => {
     if (!nodeData.indices || !Array.isArray(nodeData.indices)) return 0;
     return nodeData.indices.reduce((total, index) => {
-      // Use store_size (number, in bytes) from backend
-      if (typeof index.store_size === 'number') return total + index.store_size;
+      if (index['store.size']) return total + index['store.size'];
       return total;
     }, 0);
   };
@@ -247,9 +246,7 @@ export default function ClusterManagement({
                         (total, nodeData) => total + getTotalStorage(nodeData),
                         0
                       );
-                      return formatBytes
-                        ? formatBytes(totalBytes)
-                        : `${(totalBytes / 1024 / 1024).toFixed(1)}MB`;
+                      return formatBytes(totalBytes);
                     })()
                   )}
                 </div>
@@ -654,9 +651,7 @@ export default function ClusterManagement({
                                     </span>
                                   </div>
                                   <span className="text-sm text-white font-medium">
-                                    {formatBytes
-                                      ? formatBytes(totalStorage)
-                                      : `${(totalStorage / 1024 / 1024).toFixed(1)}MB`}
+                                    {formatBytes(totalStorage)}
                                   </span>
                                 </div>
                               )}

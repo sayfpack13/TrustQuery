@@ -90,8 +90,8 @@ async function refreshCacheForRunningNodes(nodes) {
                     for (const [indexName, indexStats] of Object.entries(statsData.indices)) {
                         if (indexStats && indexStats.primaries && indexStats.primaries.docs && indexStats.primaries.store) {
                             indices[indexName] = {
-                                doc_count: indexStats.primaries.docs.count || 0,
-                                store_size: indexStats.primaries.store.size_in_bytes || 0,
+                                "doc.count": indexStats.primaries.doc.count || 0,
+                                "store.size": indexStats.primaries.store.size_in_bytes || 0,
                             };
                         }
                     }
@@ -237,8 +237,8 @@ async function getCacheFiltered(config) {
                 ? nodeData.indices
                 : Object.entries(nodeData.indices).map(([indexName, indexData]) => ({
                     index: indexName,
-                    docCount: indexData.doc_count || 0,
-                    storeSize: indexData.store_size || 0
+                    "doc.count": indexData["doc.count"] || 0,
+                    "store.size": indexData["store.size"] || 0
                 }));
 
             processedCache[nodeName] = {

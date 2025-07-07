@@ -49,10 +49,8 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
           ? nodeData.indices 
           : Object.entries(nodeData.indices).map(([indexName, indexData]) => ({
               index: indexName,
-              'docs.count': indexData.doc_count?.toString() || '0',
-              'store.size': indexData.store_size ? `${indexData.store_size}b` : '0b',
-              docCount: indexData.doc_count || 0,
-              storeSize: indexData.store_size || 0,
+              'doc.count': indexData["doc.count"] || 0,
+              'store.size': formatBytes(indexData["store.size"]),
               health: 'green', // Default value since cache doesn't store health
               status: 'open', // Default value since cache doesn't store status
               uuid: indexName, // Use index name as fallback UUID for cache
@@ -674,12 +672,10 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
                         </td>
                         <td className="py-3 px-4 font-medium">{index.index}</td>
                         <td className="py-3 px-4">
-                          {(index.docCount !== undefined 
-                            ? index.docCount 
-                            : parseInt(index['docs.count'], 10) || 0
+                          {(index["doc.count"]  || 0
                           ).toLocaleString()}
                         </td>
-                        <td className="py-3 px-4">{index['store.size'] || '0b'}</td>
+                        <td className="py-3 px-4">{formatBytes(index['store.size'])}</td>
                         <td className="py-3 px-4">
                           <button 
                             onClick={() => handleDeleteClick(index)} 

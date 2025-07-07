@@ -13,6 +13,7 @@ import {
   faServer,
   faExclamationTriangle,
 } from "@fortawesome/free-solid-svg-icons";
+import { formatBytes } from "../../../utils/format";
 
 export default function ConfigurationManagement({ 
   showNotification,
@@ -337,11 +338,9 @@ export default function ConfigurationManagement({
                                     }`} title={`Health: ${index.health}`}></span>
                                   </div>
                                   <div className="text-sm text-neutral-400 mt-1 flex items-center justify-between">
-                                    <span>{(index.docCount !== undefined 
-                                      ? index.docCount 
-                                      : parseInt(index['docs.count'], 10) || 0
+                                    <span>{(index["doc.count"]|| 0
                                     ).toLocaleString()} documents</span>
-                                    <span className="text-xs">{index['store.size'] || '0b'}</span>
+                                    <span className="text-xs">{formatBytes(index['store.size'])}</span>
                                   </div>
                                 </div>
                               </label>

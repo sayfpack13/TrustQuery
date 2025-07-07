@@ -819,9 +819,8 @@ router.get("/local-nodes", verifyJwt, async (req, res) => {
           ? cachedNodeData.indices 
           : Object.entries(cachedNodeData.indices).map(([indexName, indexData]) => ({
               index: indexName,
-              'docs.count': indexData.doc_count?.toString() || '0',
-              'store.size': indexData.store_size ? `${indexData.store_size}b` : '0b',
-              docCount: indexData.doc_count || 0,
+              'doc.count': indexData["doc.count"] || 0,
+              'store.size': indexData["store.size"] || 0,
               health: node.isRunning ? 'green' : 'yellow', // Indicate freshness
               status: 'open',
               uuid: indexName,
@@ -943,14 +942,14 @@ router.get("/:nodeName/indices", verifyJwt, async (req, res) => {
 
     const indicesResponse = await nodeClient.cat.indices({
       format: "json",
-      h: "index,status,health,docs.count,store.size,creation.date.string,uuid",
+      h: "index,status,health,doc.count,store.size,creation.date.string,uuid",
       s: "index:asc"
     });
 
-    const { formatBytes } = require('../utils/format');
+
     const formattedIndices = indicesResponse.map((index) => ({
       ...index,
-      docCount: parseInt(index['docs.count'], 10) || 0,
+      "doc.count": index['doc.count'] || 0,
     }));
 
     res.json(formattedIndices);

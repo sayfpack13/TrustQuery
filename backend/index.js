@@ -80,25 +80,25 @@ function getCurrentES() {
 // Initialize server and Elasticsearch
 async function initializeServer() {
   await loadCentralizedConfig();
-  
+
   // Verify and clean up node metadata
   const clusterManager = require('./src/elasticsearch/cluster-manager');
   await clusterManager.verifyNodeMetadata();
-  
+
   // Perform initial smart cache refresh for indices
   const { refreshCacheForRunningNodes, syncSearchIndices } = require('./src/cache/indices-cache');
   const config = getConfig();
   try {
     await refreshCacheForRunningNodes(config);
     console.log('🔄 Initial smart cache refresh completed');
-    
+
     // Sync search indices to remove any invalid entries from config
     await syncSearchIndices(config);
     console.log('🔄 Initial search indices sync completed');
   } catch (error) {
     console.warn('⚠️ Initial cache refresh failed:', error.message);
   }
-  
+
   // Start the server
   app.listen(PORT, () => {
     console.log(`✅ Server running on: http://localhost:${PORT}`);
@@ -107,8 +107,8 @@ async function initializeServer() {
 
 // Start the server after initialization is complete
 initializeServer().catch(error => {
-    console.error("❌ Failed to initialize server:", error);
-    process.exit(1);
+  console.error("❌ Failed to initialize server:", error);
+  process.exit(1);
 });
 
 // In-memory task store
@@ -321,7 +321,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
       // Determine target index and node for this parsing operation
       const parseTargetIndex = targetIndex || getSelectedIndex();
       const parseTargetNode = targetNode || getConfig('writeNode');
-      
+
       // Create or get Elasticsearch client for the specified node
       let parseES = getCurrentES();
       if (parseTargetNode && parseTargetNode !== getConfig('writeNode')) {
@@ -488,7 +488,7 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
       // Determine target index and node for this parsing operation
       const parseTargetIndex = targetIndex || getSelectedIndex();
       const parseTargetNode = targetNode || getConfig('writeNode');
-      
+
       // Create or get Elasticsearch client for the specified node
       let parseES = getCurrentES();
       if (parseTargetNode && parseTargetNode !== getConfig('writeNode')) {
@@ -622,10 +622,10 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0
         });
       }
-      
+
       searchIndex = requestedIndex;
       targetNodeUrl = nodeData.nodeUrl;
-      
+
       if (!targetNodeUrl) {
         return res.status(400).json({
           error: `Node '${requestedNode}' not found or not configured`,
@@ -633,7 +633,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0
         });
       }
-      
+
       // Create ES client for specific node
       const { Client } = require('@elastic/elasticsearch');
       es = new Client({ node: targetNodeUrl });
@@ -660,7 +660,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       // Use all indices on the specified node
       searchIndex = nodeData.indices.map(idx => idx.index).join(',');
       targetNodeUrl = nodeData.nodeUrl;
-      
+
       const { Client } = require('@elastic/elasticsearch');
       es = new Client({ node: targetNodeUrl });
 
@@ -674,7 +674,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           break;
         }
       }
-      
+
       if (!indexExists) {
         return res.status(400).json({
           error: `Index '${requestedIndex}' not found on any configured node`,
@@ -682,14 +682,14 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0
         });
       }
-      
+
       searchIndex = requestedIndex;
       es = getCurrentES();
 
     } else {
       // No specific node or index - use default search indices from config
       const searchIndices = config.searchIndices || [];
-      
+
       if (searchIndices.length === 0) {
         return res.json({
           results: [],
@@ -697,7 +697,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           message: "No search indices configured. Please configure search indices in the Configuration tab."
         });
       }
-      
+
       searchIndex = searchIndices.join(',');
       es = getCurrentES();
     }
@@ -717,12 +717,12 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
     const results = response.hits.hits.map((hit) => {
       // Parse the raw line for display in admin panel
       const parsedAccount = parseLineForDisplay(hit._source.raw_line);
-      return { 
-        id: hit._id, 
-        raw_line: hit._source.raw_line, 
+      return {
+        id: hit._id,
+        raw_line: hit._source.raw_line,
         _index: hit._index,
         node: requestedNode || 'default',
-        ...parsedAccount 
+        ...parsedAccount
       };
     });
 
@@ -738,7 +738,7 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const { id } = req.params;
   const requestedNode = req.query.node;
   const requestedIndex = req.query.index;
-  
+
   try {
     const esAvailable = await isElasticsearchAvailable();
     if (!esAvailable) {
@@ -750,13 +750,13 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
     // Determine which index and ES client to use
     let es;
     let targetIndex;
-    
+
     if (requestedNode && requestedIndex) {
       const config = getConfig();
       const { getCacheFiltered } = require('./src/cache/indices-cache');
       const cachedIndices = await getCacheFiltered(config);
       const nodeData = cachedIndices[requestedNode];
-      
+
       if (!nodeData || !nodeData.nodeUrl) {
         return res.status(400).json({
           error: `Node '${requestedNode}' not found or not configured`
@@ -804,13 +804,13 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
     // Determine which index and ES client to use
     let es;
     let targetIndex;
-    
+
     if (requestedNode && requestedIndex) {
       const config = getConfig();
       const { getCacheFiltered } = require('./src/cache/indices-cache');
       const cachedIndices = await getCacheFiltered(config);
       const nodeData = cachedIndices[requestedNode];
-      
+
       if (!nodeData || !nodeData.nodeUrl) {
         return res.status(400).json({
           error: `Node '${requestedNode}' not found or not configured`
@@ -1053,22 +1053,22 @@ app.post("/api/admin/tasks/:action", verifyJwt, (req, res) => {
           }
         });
         tasksToDelete.forEach(taskId => delete tasks[taskId]);
-        res.json({ 
+        res.json({
           message: `Cleared ${tasksToDelete.length} completed/error tasks`,
           remainingTasks: Object.keys(tasks).length
         });
         break;
-      
+
       case 'clear-all':
         // Clear all tasks
         const totalCount = Object.keys(tasks).length;
         Object.keys(tasks).forEach(taskId => delete tasks[taskId]);
-        res.json({ 
+        res.json({
           message: `Cleared all ${totalCount} tasks`,
           remainingTasks: 0
         });
         break;
-      
+
       default:
         res.status(400).json({ error: `Unknown task action: ${action}` });
     }
@@ -1096,28 +1096,28 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
     const { searchIndices, minVisibleChars, maskingRatio, usernameMaskingRatio, batchSize, adminSettings } = req.body;
 
     const updates = {};
-    
+
     // Handle direct config updates
     if (searchIndices !== undefined) updates.searchIndices = searchIndices;
     if (minVisibleChars !== undefined) updates.minVisibleChars = minVisibleChars;
     if (maskingRatio !== undefined) updates.maskingRatio = maskingRatio;
     if (usernameMaskingRatio !== undefined) updates.usernameMaskingRatio = usernameMaskingRatio;
     if (batchSize !== undefined) updates.batchSize = batchSize;
-    
+
     // Handle adminSettings - if sent as complete object, merge individual fields
     if (adminSettings !== undefined) {
       const currentAdminSettings = getConfig('adminSettings') || {};
-      
+
       // If adminSettings contains system settings that should be at root level
       if (adminSettings.minVisibleChars !== undefined) updates.minVisibleChars = adminSettings.minVisibleChars;
       if (adminSettings.maskingRatio !== undefined) updates.maskingRatio = adminSettings.maskingRatio;
       if (adminSettings.usernameMaskingRatio !== undefined) updates.usernameMaskingRatio = adminSettings.usernameMaskingRatio;
       if (adminSettings.batchSize !== undefined) updates.batchSize = adminSettings.batchSize;
-      
+
       // UI-specific settings go in adminSettings
       const uiSettings = {};
       // No UI settings currently needed
-      
+
       if (Object.keys(uiSettings).length > 0) {
         updates.adminSettings = { ...currentAdminSettings, ...uiSettings };
       }
@@ -1157,7 +1157,7 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
     // Validate that indices exist in our persistent cached data
     const { getCacheFiltered } = require('./src/cache/indices-cache');
     const config = getConfig();
-    
+
     // Get cached indices data (don't refresh to avoid issues if nodes are down)
     console.log('🔍 About to call getCacheFiltered...');
     let cachedIndices;
@@ -1169,12 +1169,12 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
       throw new Error(`Cache access failed: ${cacheError.message}`);
     }
     const allAvailableIndices = [];
-    
+
     console.log('🔍 Validating search indices selection...');
     console.log('Requested indices:', indices);
     console.log('Cached data nodes:', Object.keys(cachedIndices));
     console.log('Full cached data structure:', JSON.stringify(cachedIndices, null, 2));
-    
+
     // Collect all available indices from all nodes
     Object.values(cachedIndices).forEach(nodeData => {
       console.log('Processing node data:', nodeData);
@@ -1187,13 +1187,13 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
         });
       }
     });
-    
+
     console.log('Available indices:', allAvailableIndices);
 
     // Check if all requested indices exist
     for (const index of indices) {
       if (!allAvailableIndices.includes(index)) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: `Index '${index}' does not exist in any configured node`,
           availableIndices: allAvailableIndices
         });
@@ -1220,12 +1220,12 @@ function getSelectedIndex() {
   // For backward compatibility, check both selectedIndex and searchIndices
   const selectedIndex = getConfig('selectedIndex');
   const searchIndices = getConfig('searchIndices') || [];
-  
+
   // If we have searchIndices configured, use those (modern approach)
   if (searchIndices.length > 0) {
     return searchIndices.join(',');
   }
-  
+
   // Fallback to old selectedIndex if no searchIndices
   return selectedIndex || '';
 }
@@ -1295,17 +1295,17 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
     // Use cat.indices to get a lightweight list of indices
     const indicesResponse = await es.cat.indices({
       format: "json",
-      h: "health,status,index,uuid,pri,rep,docs.count,store.size",
+      h: "health,status,index,uuid,pri,rep,doc.count,store.size",
       s: "index:asc" // Sort by index name
     });
 
     const indices = indicesResponse.map(index => ({
       name: index.index,
-        health: index.health,
+      health: index.health,
       status: index.status,
       uuid: index.uuid,
-        docCount: parseInt(index['docs.count']) || 0,
-        storeSize: index['store.size'] || '0b',
+      "doc.count": index['doc.count'] || 0,
+      "store.size": index['store.size'] || 0,
       isSelected: index.index === getSelectedIndex()
     }));
 
@@ -1340,12 +1340,12 @@ app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
       // Check if index exists
       const es = getCurrentES();
       if (!es) {
-          updateTask(taskId, {
-            status: "error",
-            error: "Elasticsearch client not available. Is a node running?",
-            completed: true,
-          });
-          return;
+        updateTask(taskId, {
+          status: "error",
+          error: "Elasticsearch client not available. Is a node running?",
+          completed: true,
+        });
+        return;
       }
       const exists = await es.indices.exists({ index: indexName });
       if (!exists) {
@@ -1464,8 +1464,8 @@ app.get("/api/admin/es/health", verifyJwt, async (req, res) => {
       },
       storage: {
         totalSize: stats.indices.store.size_in_bytes,
-        totalSizeReadable: formatBytes(stats.indices.store.size_in_bytes),
-        documentCount: stats.indices.docs.count
+        totalSizeReadable: stats.indices.store.size_in_bytes,
+        documentCount: stats.indices.doc.count
       },
       selectedIndex: getSelectedIndex()
     });
@@ -1493,7 +1493,7 @@ app.get("/api/indices/:indexName/details", verifyJwt, async (req, res) => {
 
     // Safely access stats to prevent crashes on unhealthy indices
     const stats = statsResponse.indices[indexName];
-    const docsCount = stats && stats.total && stats.total.docs ? stats.total.docs.count : 0;
+    const docsCount = stats && stats.total && stats.total.docs ? stats.total.doc.count : 0;
     const storeSize = stats && stats.total && stats.total.store ? stats.total.store.size_in_bytes : 0;
 
     const details = {
@@ -1514,7 +1514,7 @@ app.get("/api/indices/:indexName/details", verifyJwt, async (req, res) => {
     console.error(`Error fetching details for index ${indexName}:`, error);
     // Return a generic error to the client
     res.status(500).json({ error: `Failed to fetch details for index ${indexName}` });
-      }
+  }
 });
 
 // Get documents from a specific index with pagination
@@ -1560,11 +1560,11 @@ app.get("/api/total-accounts", async (req, res) => {
   try {
     const config = getConfig();
     const searchIndices = config.searchIndices || [];
-    
+
     // If no search indices are configured, return 0
     if (searchIndices.length === 0) {
-      return res.json({ 
-        totalAccounts: 0, 
+      return res.json({
+        totalAccounts: 0,
         searchIndices: [],
         message: "No search indices configured"
       });
@@ -1572,8 +1572,8 @@ app.get("/api/total-accounts", async (req, res) => {
 
     const esAvailable = await isElasticsearchAvailable();
     if (!esAvailable) {
-      return res.json({ 
-        totalAccounts: 0, 
+      return res.json({
+        totalAccounts: 0,
         searchIndices: searchIndices,
         message: "Elasticsearch not available"
       });
@@ -1595,14 +1595,14 @@ app.get("/api/total-accounts", async (req, res) => {
       }
     }
 
-    res.json({ 
-      totalAccounts: totalCount, 
-      searchIndices: availableIndices 
+    res.json({
+      totalAccounts: totalCount,
+      searchIndices: availableIndices
     });
   } catch (error) {
     console.error("Error fetching total accounts:", error);
-    res.json({ 
-      totalAccounts: 0, 
+    res.json({
+      totalAccounts: 0,
       searchIndices: [],
       message: "Error fetching total accounts"
     });
@@ -1614,10 +1614,10 @@ function isAdminRequest(req) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader) return false;
-    
+
     const token = authHeader.split(" ")[1];
     if (!token) return false;
-    
+
     const decoded = jwt.verify(token, SECRET_KEY);
     return decoded && decoded.role === "admin";
   } catch (error) {
@@ -1632,7 +1632,7 @@ app.get("/api/search", async (req, res) => {
     const config = getConfig();
     const searchIndices = config.searchIndices || [];
     const isAdmin = isAdminRequest(req);
-    
+
     // If no search indices are configured, return empty results
     if (searchIndices.length === 0) {
       return res.json({
@@ -1693,7 +1693,7 @@ app.get("/api/search", async (req, res) => {
 
         const indexResults = response.hits.hits.map((hit) => {
           const parsedAccount = parseLineForDisplay(hit._source.raw_line);
-          
+
           if (isAdmin) {
             // For admin users: no masking, include raw_line
             return {
@@ -1737,9 +1737,9 @@ app.get("/api/search", async (req, res) => {
     });
   } catch (error) {
     console.error("Error performing search:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Search failed",
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -1757,7 +1757,7 @@ function parseLineForDisplay(rawLine) {
 
   // Try to parse common formats: url:username:password or username:password@url
   const line = rawLine.trim();
-  
+
   // Format 1: url:username:password
   if (line.includes(':') && line.split(':').length >= 3) {
     const parts = line.split(':');
@@ -1768,7 +1768,7 @@ function parseLineForDisplay(rawLine) {
       sourceFile: 'parsed'
     };
   }
-  
+
   // Format 2: username:password@url
   if (line.includes('@') && line.includes(':')) {
     const atIndex = line.lastIndexOf('@');
@@ -1782,7 +1782,7 @@ function parseLineForDisplay(rawLine) {
       };
     }
   }
-  
+
   // Format 3: email:password (treat email as both url and username)
   if (line.includes(':') && line.includes('@')) {
     const parts = line.split(':');
@@ -1795,7 +1795,7 @@ function parseLineForDisplay(rawLine) {
       sourceFile: 'parsed'
     };
   }
-  
+
   // Fallback: treat the entire line as raw data
   return {
     url: line,
@@ -1810,39 +1810,39 @@ function maskString(str, ratio, minVisible = 2) {
   if (!str || typeof str !== 'string' || str.length === 0) {
     return '';
   }
-  
+
   if (ratio <= 0) {
     return str; // No masking
   }
-  
+
   if (ratio >= 1) {
     return '*'.repeat(str.length); // Full masking
   }
-  
+
   const totalVisibleChars = Math.max(minVisible, Math.floor(str.length * (1 - ratio)));
   const maskedChars = str.length - totalVisibleChars;
-  
+
   if (maskedChars <= 0) {
     return str; // No masking needed
   }
-  
+
   // For very short strings, show beginning and end
   if (str.length <= 4) {
     const visiblePart = str.substring(0, Math.ceil(totalVisibleChars / 2));
     const maskedPart = '*'.repeat(maskedChars);
-    const endPart = totalVisibleChars > visiblePart.length ? 
+    const endPart = totalVisibleChars > visiblePart.length ?
       str.substring(str.length - (totalVisibleChars - visiblePart.length)) : '';
     return visiblePart + maskedPart + endPart;
   }
-  
+
   // For longer strings, mask the middle part
   const startVisible = Math.ceil(totalVisibleChars / 2);
   const endVisible = totalVisibleChars - startVisible;
-  
+
   const startPart = str.substring(0, startVisible);
   const endPart = endVisible > 0 ? str.substring(str.length - endVisible) : '';
   const maskedPart = '*'.repeat(maskedChars);
-  
+
   return startPart + maskedPart + endPart;
 }
 
@@ -1851,7 +1851,7 @@ function applyMaskingForPublicSearch(accountData, config) {
   const maskingRatio = config.maskingRatio || 0.2;
   const usernameMaskingRatio = config.usernameMaskingRatio || 0.4;
   const minVisibleChars = config.minVisibleChars || 2;
-  
+
   return {
     url: maskString(accountData.url || '', maskingRatio, minVisibleChars), // URL is now also masked
     username: maskString(accountData.username || '', usernameMaskingRatio, minVisibleChars),
