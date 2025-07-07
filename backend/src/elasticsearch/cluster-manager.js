@@ -688,12 +688,21 @@ async function stopNode(nodeName) {
       const pidData = await fs.readFile(pidFilePath, 'utf8');
       const { pid } = JSON.parse(pidData);
 
+
       if (pid) {
         console.log(`🔌 Attempting to stop node ${nodeName} with PID: ${pid}`);
+        const isWindows = process.platform === 'win32';
+        const isLinux = process.platform === 'linux';
 
         // Check if process is actually running first
+        let processRunning = false;
         try {
-          execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, { stdio: 'ignore' });
+          if (isWindows) {
+            execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, { stdio: 'ignore' });
+          } else if (isLinux) {
+            execSync(`ps -p ${pid}`, { stdio: 'ignore' });
+          }
+          processRunning = true;
           console.log(`✅ Process ${pid} is running, proceeding to stop it`);
         } catch (checkError) {
           console.log(`ℹ️ Process ${pid} is not running, no need to stop`);
@@ -706,24 +715,66 @@ async function stopNode(nodeName) {
           return { success: true };
         }
 
-        // Forcefully kill the process on Windows and wait for completion
+        // Kill the process
         try {
-          execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe', timeout: 10000 });
-          console.log(`✅ Successfully terminated process ${pid}`);
-
-          // Wait a moment for the process to fully terminate
-          await new Promise(resolve => setTimeout(resolve, 2000));
-
-          // Verify the process is actually gone
-          try {
-            execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, { stdio: 'ignore' });
-            console.warn(`⚠️ Process ${pid} still running after kill command`);
-          } catch (verifyError) {
-            console.log(`✅ Process ${pid} confirmed terminated`);
+          if (isWindows) {
+            execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe', timeout: 10000 });
+            console.log(`✅ Successfully terminated process ${pid}`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            try {
+              execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, { stdio: 'ignore' });
+              console.warn(`⚠️ Process ${pid} still running after kill command`);
+            } catch (verifyError) {
+              console.log(`✅ Process ${pid} confirmed terminated`);
+            }
+          } else if (isLinux) {
+            // Try to kill as current user, then escalate if needed
+            let killed = false;
+            try {
+              execSync(`kill -9 ${pid}`);
+              killed = true;
+              console.log(`✅ kill -9 ${pid} succeeded`);
+            } catch (killError) {
+              console.warn(`⚠️ kill -9 ${pid} failed: ${killError.message}`);
+            }
+            if (!killed) {
+              // Try with sudo
+              try {
+                execSync(`sudo kill -9 ${pid}`);
+                killed = true;
+                console.log(`✅ sudo kill -9 ${pid} succeeded`);
+              } catch (sudoError) {
+                console.warn(`⚠️ sudo kill -9 ${pid} failed: ${sudoError.message}`);
+              }
+            }
+            if (!killed) {
+              // Fallback: try pkill by user and node name
+              try {
+                execSync(`sudo pkill -u elasticsearch -f ${nodeName}`);
+                killed = true;
+                console.log(`✅ sudo pkill -u elasticsearch -f ${nodeName} succeeded`);
+              } catch (pkillError) {
+                console.warn(`⚠️ sudo pkill -u elasticsearch -f ${nodeName} failed: ${pkillError.message}`);
+              }
+            }
+            // Wait a moment for the process to fully terminate
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Verify the process is actually gone
+            let stillRunning = false;
+            try {
+              execSync(`ps -p ${pid}`, { stdio: 'ignore' });
+              stillRunning = true;
+            } catch (verifyError) {
+              stillRunning = false;
+            }
+            if (stillRunning) {
+              console.warn(`⚠️ Process ${pid} still running after kill attempts`);
+            } else {
+              console.log(`✅ Process ${pid} confirmed terminated`);
+            }
           }
-
         } catch (killError) {
-          if (killError.status === 128) {
+          if (isWindows && killError.status === 128) {
             // Process not found - already stopped
             console.log(`ℹ️ Process ${pid} not found during kill - already stopped`);
           } else {

@@ -1479,7 +1479,7 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
       nodeIds = Object.keys(nodeStats.nodes);
     }
 
-    if (!nodeStats || !nodeStats.nodes || nodeIds.length === 0) {
+    if (!nodeStats || !nodeStats.nodes || !Array.isArray(nodeIds) || nodeIds.length === 0) {
       // Try to find the node by name in the cluster
       let nodesInfo;
       try {
@@ -1504,15 +1504,15 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
           console.warn(`Failed to get node stats for fallback nodeId ${nodeId}:`, err.message);
           specificStats = null;
         }
-        if (specificStats && specificStats.nodes && specificStats.nodes[nodeId]) {
+        if (specificStats && specificStats.nodes && typeof specificStats.nodes === 'object' && specificStats.nodes[nodeId]) {
           targetNodeStats = specificStats.nodes[nodeId];
         }
       }
-    } else {
+    } else if (nodeStats && nodeStats.nodes && typeof nodeStats.nodes === 'object' && nodeIds.length > 0) {
       // Use the first (and likely only) node in the response
       targetNodeStats = nodeStats.nodes[nodeIds[0]];
     }
-    
+
     if (!targetNodeStats) {
       return res.status(404).json({ error: `No statistics found for node "${nodeName}"` });
     }
