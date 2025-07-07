@@ -543,7 +543,7 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
             </div>
             
             {showCreateIndexForm && (
-              <div className="bg-neutral-700 p-6 rounded-lg mb-4 shadow-lg border border-neutral-600 max-w-lg mx-auto">
+              <div className="bg-neutral-700 p-6 rounded-lg mb-4 shadow-lg border border-neutral-600">
                 <h4 className="text-xl font-bold mb-4 text-primary flex items-center">
                   <FontAwesomeIcon icon={faPlus} className="mr-2" />
                   Create New Index

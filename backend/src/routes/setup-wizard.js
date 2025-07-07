@@ -8,6 +8,7 @@ const { exec } = require("child_process");
 const { promisify } = require("util");
 const { verifyJwt } = require("../middleware/auth");
 const { getConfig, setConfig } = require("../config");
+const { getElasticsearchPaths, getJavaHome } = require("../config/paths");
 
 const router = express.Router();
 const execAsync = promisify(exec);
@@ -34,42 +35,15 @@ function detectOS() {
 
 // Get default paths based on OS
 function getDefaultPaths(osInfo) {
-  if (osInfo.isWindows) {
-    return {
-      elasticsearchBase: 'C:\\elasticsearch',
-      javaHome: process.env.JAVA_HOME || 'C:\\Program Files\\Java\\jdk-17',
-      dataPath: 'C:\\elasticsearch\\data',
-      logsPath: 'C:\\elasticsearch\\logs',
-      configPath: 'C:\\elasticsearch\\config',
-      serviceName: 'elasticsearch'
-    };
-  } else if (osInfo.isLinux) {
-    return {
-      elasticsearchBase: '/opt/elasticsearch',
-      javaHome: process.env.JAVA_HOME || '/usr/lib/jvm/java-17-openjdk',
-      dataPath: '/var/lib/elasticsearch',
-      logsPath: '/var/log/elasticsearch',
-      configPath: '/etc/elasticsearch',
-      serviceName: 'elasticsearch'
-    };
-  } else if (osInfo.isMacOS) {
-    return {
-      elasticsearchBase: '/usr/local/elasticsearch',
-      javaHome: process.env.JAVA_HOME || '/Library/Java/JavaVirtualMachines/openjdk-17.jdk/Contents/Home',
-      dataPath: '/usr/local/var/lib/elasticsearch',
-      logsPath: '/usr/local/var/log/elasticsearch',
-      configPath: '/usr/local/etc/elasticsearch',
-      serviceName: 'elasticsearch'
-    };
-  }
-  
-  // Default fallback
+  const esPaths = getElasticsearchPaths();
+  const javaHome = getJavaHome();
+
   return {
-    elasticsearchBase: '/opt/elasticsearch',
-    javaHome: '/usr/lib/jvm/default-java',
-    dataPath: '/var/lib/elasticsearch',
-    logsPath: '/var/log/elasticsearch',
-    configPath: '/etc/elasticsearch',
+    elasticsearchBase: esPaths.base,
+    javaHome: javaHome,
+    dataPath: esPaths.data,
+    logsPath: esPaths.logs,
+    configPath: esPaths.config,
     serviceName: 'elasticsearch'
   };
 }

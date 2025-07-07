@@ -56,13 +56,27 @@ async function createBaseDirectories(env) {
     path.join(env.baseElasticsearchPath, 'logs'),
     path.join(env.baseElasticsearchPath, 'config')
   ];
+
+  // First check if we can create the base directory
+  try {
+    await fs.mkdir(env.baseElasticsearchPath, { recursive: true });
+  } catch (error) {
+    if (error.code === 'EPERM') {
+      throw new Error(`Permission denied: Cannot create directory at ${env.baseElasticsearchPath}. Please choose a different location or run with appropriate permissions.`);
+    }
+    throw error;
+  }
+
   for (const dir of baseDirs) {
     try {
       await fs.mkdir(dir, { recursive: true });
       console.log(`📁 Created directory: ${dir}`);
     } catch (error) {
-      if (error.code !== 'EEXIST') {
+      if (error.code === 'EPERM') {
+        throw new Error(`Permission denied: Cannot create directory at ${dir}. Please choose a different location or run with appropriate permissions.`);
+      } else if (error.code !== 'EEXIST') {
         console.error(`Failed to create directory ${dir}:`, error);
+        throw error;
       }
     }
   }
