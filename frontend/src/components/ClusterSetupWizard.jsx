@@ -640,9 +640,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     <div className="space-y-6">
       <div className="text-center">
         <FontAwesomeIcon icon={faServer} className="text-4xl text-blue-500 mb-4" />
-        <h3 className="text-2xl font-bold text-white mb-2">VPS Deployment Setup</h3>
+        <h3 className="text-2xl font-bold text-white mb-2">Deployment Setup</h3>
         <p className="text-neutral-400">
-          Configure TrustQuery for deployment on your VPS (Windows/Linux)
+          Configure TrustQuery for deployment on your machine (Windows/Linux/MacOS)
         </p>
       </div>
 

@@ -23,6 +23,10 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
     ingest: true,
   });
 
+  // Memory management state
+  const [newNodeHeapSize, setNewNodeHeapSize] = useState('');
+  const [systemMemoryInfo, setSystemMemoryInfo] = useState(null);
+
   // Available clusters (derived from existing nodes + default)
   const clusters = useMemo(() => {
     const existingClusters = localNodes && Array.isArray(localNodes) ? [...new Set(localNodes.map(n => n.cluster || 'trustquery-cluster'))] : [];
@@ -56,6 +60,19 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
     }
   }, []);
 
+  // Fetch system memory info
+  const fetchSystemMemoryInfo = useCallback(async () => {
+    try {
+      const response = await axiosClient.get('/api/setup-wizard/system-memory');
+      if (response.data && response.data.success) {
+        setSystemMemoryInfo(response.data.memory);
+      }
+    } catch (error) {
+      console.error('Error fetching system memory info:', error);
+      showNotificationRef.current('error', 'Failed to fetch system memory information', faExclamationTriangle);
+    }
+  }, []);
+
   // Reset form function
   const resetNodeForm = useCallback(() => {
     setNewNodeName('');
@@ -65,6 +82,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
     setNewNodeCluster('trustquery-cluster');
     setNewNodeDataPath('');
     setNewNodeLogsPath('');
+    setNewNodeHeapSize(''); // Reset heap size
     setNewNodeRoles({
       master: true,
       data: true,
@@ -82,7 +100,8 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
         cluster: newNodeCluster,
         dataPath: newNodeDataPath,
         logsPath: newNodeLogsPath,
-        roles: newNodeRoles
+        roles: newNodeRoles,
+        heapSize: newNodeHeapSize // Add heap size to config
       };
       
       console.log('createLocalNode called with config:', config);
@@ -103,11 +122,17 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       showNotificationRef.current('error', `Failed to create node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
       throw error; // Re-throw to allow form to handle error state
     }
-  }, [fetchLocalNodes, newNodeName, newNodeHost, newNodePort, newNodeTransportPort, newNodeCluster, newNodeDataPath, newNodeLogsPath, newNodeRoles, resetNodeForm]);
+  }, [fetchLocalNodes, newNodeName, newNodeHost, newNodePort, newNodeTransportPort, newNodeCluster, newNodeDataPath, newNodeLogsPath, newNodeRoles, newNodeHeapSize, resetNodeForm]);
 
   const updateLocalNode = useCallback(async (nodeName, updates) => {
     try {
-      await axiosClient.put(`/api/admin/cluster-advanced/nodes/${nodeName}`, updates);
+      // Ensure heapSize is included in the updates if provided
+      const updatesWithHeapSize = {
+        ...updates,
+        heapSize: updates.heapSize || newNodeHeapSize // Use provided heapSize or current state
+      };
+      
+      await axiosClient.put(`/api/admin/cluster-advanced/nodes/${nodeName}`, updatesWithHeapSize);
       showNotificationRef.current('success', `Node "${nodeName}" updated successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
     } catch (error) {
@@ -129,7 +154,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
         throw error; // Re-throw
       }
     }
-  }, [fetchLocalNodes]);
+  }, [fetchLocalNodes, newNodeHeapSize]);
 
   const handleDeleteLocalNode = async (nodeName) => {
     if (!window.confirm(`Are you sure you want to permanently delete node "${nodeName}" and all its data? This cannot be undone.`)) return;
@@ -360,6 +385,10 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
     setNewNodeLogsPath,
     newNodeRoles,
     setNewNodeRoles,
+    newNodeHeapSize,
+    setNewNodeHeapSize,
+    systemMemoryInfo,
+    fetchSystemMemoryInfo,
     clusters,
     createCluster,
     resetNodeForm,

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleInfo, faPlus, faTrash, faExclamationTriangle, faHdd, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
+import { faTimes, faServer, faInfoCircle, faFileAlt, faDatabase, faCircleInfo, faPlus, faTrash, faExclamationTriangle, faHdd, faCircleNotch, faMemory } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../../../api/axiosClient';
+import { formatBytes } from '../../../utils/format';
 
-export default function NodeDetailsModal({ show, onClose, node, formatBytes, enhancedNodesData = {}, onRefreshNodes, disabled = false }) {
+export default function NodeDetailsModal({ show, onClose, node, enhancedNodesData = {}, onRefreshNodes, disabled = false }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [configContent, setConfigContent] = useState('');
   const [configLoading, setConfigLoading] = useState(false);
@@ -342,28 +343,133 @@ export default function NodeDetailsModal({ show, onClose, node, formatBytes, enh
     switch (activeTab) {
       case 'overview':
         return (
-          <div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              <div className="bg-neutral-700 p-4 rounded-lg">
-                <h4 className="text-lg font-semibold text-white mb-2">Node Status</h4>
-                <p className={`text-lg font-bold ${node.isRunning ? 'text-green-400' : 'text-red-400'}`}>
-                  {node.isRunning ? 'Running' : 'Stopped'}
-                </p>
-              </div>
-              <div className="bg-neutral-700 p-4 rounded-lg">
-                <h4 className="text-lg font-semibold text-white mb-2">Cluster</h4>
-                <p className="text-lg text-neutral-300">{node.cluster || 'trustquery-cluster'}</p>
-              </div>
-              <div className="bg-neutral-700 p-4 rounded-lg col-span-1 md:col-span-2">
-                <h4 className="text-lg font-semibold text-white mb-2">Roles</h4>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(node.roles).filter(([, enabled]) => enabled).map(([role]) => (
-                    <span key={role} className="bg-primary text-white px-3 py-1 text-sm rounded-full">{role}</span>
-                  ))}
+          <div className="space-y-6">
+            {/* Node Status */}
+            <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+              <h3 className="text-lg font-semibold text-white mb-4">Node Status</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Status */}
+                <div className="flex items-center justify-between">
+                  <span className="text-neutral-300">Status:</span>
+                  <div className="flex items-center space-x-2">
+                    <div className={`w-3 h-3 rounded-full ${node.isRunning ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <span className="text-white font-medium">{node.isRunning ? 'Running' : 'Stopped'}</span>
+                  </div>
+                </div>
+
+                {/* Memory Usage */}
+                <div className="flex items-center justify-between">
+                  <span className="text-neutral-300">Memory:</span>
+                  <div className="flex items-center space-x-2">
+                    <FontAwesomeIcon icon={faMemory} className="text-blue-400" />
+                    <span className="text-white font-medium">{node.heapSize || 'Default'}</span>
+                  </div>
+                </div>
+
+                {/* Cluster */}
+                <div className="flex items-center justify-between">
+                  <span className="text-neutral-300">Cluster:</span>
+                  <span className="text-white font-medium">{node.cluster || 'trustquery-cluster'}</span>
+                </div>
+
+                {/* Endpoint */}
+                <div className="flex items-center justify-between">
+                  <span className="text-neutral-300">Endpoint:</span>
+                  <span className="text-white font-medium font-mono">{node.host}:{node.port}</span>
+                </div>
+
+                {/* Transport Port */}
+                <div className="flex items-center justify-between">
+                  <span className="text-neutral-300">Transport Port:</span>
+                  <span className="text-white font-medium font-mono">{node.transportPort}</span>
+                </div>
+
+                {/* Roles */}
+                <div className="flex items-center justify-between">
+                  <span className="text-neutral-300">Roles:</span>
+                  <div className="flex flex-wrap gap-1 justify-end">
+                    {Object.entries(node.roles || {}).filter(([, enabled]) => enabled).map(([role]) => (
+                      <span key={role} className="bg-blue-600 text-white text-xs px-2 py-1 rounded">
+                        {role}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
-            
+
+            {/* Memory Information */}
+            {node.isRunning && enhancedNodesData[node.name]?.memory && (
+              <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                <h3 className="text-lg font-semibold text-white mb-4">Memory Usage</h3>
+                <div className="space-y-4">
+                  {/* Heap Memory */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-neutral-300">JVM Heap Memory:</span>
+                      <div className="text-right">
+                        <div className="text-white font-medium">
+                          {formatBytes(enhancedNodesData[node.name].memory.heapUsed)} / {formatBytes(enhancedNodesData[node.name].memory.heapMax)}
+                        </div>
+                        <div className="text-xs text-neutral-400">
+                          {Math.round((enhancedNodesData[node.name].memory.heapUsed / enhancedNodesData[node.name].memory.heapMax) * 100)}% used
+                        </div>
+                      </div>
+                    </div>
+                    <div className="w-full bg-neutral-700 rounded-full h-2">
+                      <div
+                        className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.round((enhancedNodesData[node.name].memory.heapUsed / enhancedNodesData[node.name].memory.heapMax) * 100)}%`
+                        }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* Non-Heap Memory */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-neutral-300">Non-Heap Memory:</span>
+                      <div className="text-right">
+                        <div className="text-white font-medium">
+                          {formatBytes(enhancedNodesData[node.name].memory.nonHeapUsed)}
+                        </div>
+                        <div className="text-xs text-neutral-400">
+                          Used by native memory
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Memory Pool Details */}
+                  {enhancedNodesData[node.name].memory.pools && (
+                    <div className="mt-4 pt-4 border-t border-neutral-600">
+                      <h4 className="text-sm font-medium text-white mb-3">Memory Pools</h4>
+                      <div className="space-y-3">
+                        {Object.entries(enhancedNodesData[node.name].memory.pools).map(([pool, stats]) => (
+                          <div key={pool} className="text-sm">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-neutral-300">{pool}:</span>
+                              <span className="text-white font-medium">{formatBytes(stats.used)} / {formatBytes(stats.max)}</span>
+                            </div>
+                            <div className="w-full bg-neutral-700 rounded-full h-1.5">
+                              <div
+                                className="bg-green-500 h-1.5 rounded-full transition-all duration-300"
+                                style={{
+                                  width: `${Math.round((stats.used / stats.max) * 100)}%`
+                                }}
+                              ></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Node Information */}
             <div>
               <h4 className="text-xl font-semibold text-white mb-4 flex items-center">
                 <FontAwesomeIcon icon={faHdd} className="mr-2" />

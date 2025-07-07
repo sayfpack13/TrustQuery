@@ -18,8 +18,10 @@ import {
   faNetworkWired,
   faChartLine,
   faClock,
+  faMemory,
 } from "@fortawesome/free-solid-svg-icons";
 import axiosClient from "../../../api/axiosClient";
+import { formatBytes } from "../../../utils/format";
 
 export default function ClusterManagement({
   localNodes,
@@ -32,7 +34,6 @@ export default function ClusterManagement({
   handleDeleteLocalNode,
   setShowLocalNodeManager,
   isAnyTaskRunning,
-  formatBytes,
   onEditNode,
   onOpenNodeDetails,
   showNotification,
@@ -581,6 +582,29 @@ export default function ClusterManagement({
                                       {role}
                                     </span>
                                   ))}
+                                </div>
+                              </div>
+
+                              {/* Memory */}
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-2">
+                                  <FontAwesomeIcon
+                                    icon={faMemory}
+                                    className="text-purple-400 text-sm"
+                                  />
+                                  <span className="text-sm text-neutral-300">
+                                    Memory:
+                                  </span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-sm text-white font-medium">
+                                    {node.heapSize || 'Default'}
+                                  </span>
+                                  {node.isRunning && enhancedData.memory && (
+                                    <div className="text-xs text-neutral-400">
+                                      {formatBytes(enhancedData.memory.heapUsed)} / {formatBytes(enhancedData.memory.heapMax)}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 

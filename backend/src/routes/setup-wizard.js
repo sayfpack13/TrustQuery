@@ -13,6 +13,23 @@ const { getElasticsearchPaths, getJavaHome } = require("../config/paths");
 const router = express.Router();
 const execAsync = promisify(exec);
 
+/**
+ * Get system memory information
+ */
+async function getSystemMemory() {
+  const totalMemory = os.totalmem();
+  const freeMemory = os.freemem();
+  const totalGB = Math.round(totalMemory / (1024 * 1024 * 1024));
+  const freeGB = Math.round(freeMemory / (1024 * 1024 * 1024));
+  
+  return {
+    total: totalGB,
+    free: freeGB,
+    recommended: Math.min(Math.floor(totalGB / 2), 32), // Half of total memory, max 32GB
+    minimum: 1
+  };
+}
+
 // Detect OS and provide platform-specific configurations
 function detectOS() {
   const platform = os.platform();
@@ -144,8 +161,6 @@ async function checkSystemRequirements(osInfo) {
   return { requirements, checks };
 }
 
-
-
 // GET system information
 router.get('/system-info', verifyJwt, async (req, res) => {
   try {
@@ -169,6 +184,19 @@ router.get('/system-info', verifyJwt, async (req, res) => {
   }
 });
 
+// GET system memory information
+router.get("/system-memory", verifyJwt, async (req, res) => {
+  try {
+    const memoryInfo = await getSystemMemory();
+    res.json({
+      success: true,
+      memory: memoryInfo
+    });
+  } catch (error) {
+    console.error('Error getting system memory:', error);
+    res.status(500).json({ error: 'Failed to get system memory information' });
+  }
+});
 
 // POST comprehensive validation (combines path and config validation)
 router.post('/validate-elasticsearch', verifyJwt, async (req, res) => {
@@ -477,7 +505,6 @@ router.post('/initialize', verifyJwt, async (req, res) => {
     const clusterManager = require("../elasticsearch/cluster-manager");
     clusterManager.baseElasticsearchPath = basePath;
 
-
     // Save configuration using setConfig to persist changes
     const { setConfig } = require("../config");
     await setConfig({
@@ -682,6 +709,130 @@ router.post('/test-connection', verifyJwt, async (req, res) => {
       url: `http://${req.body.host || 'localhost'}:${req.body.port || 9200}`,
       message: `Connection failed: ${error.message}`
     });
+  }
+});
+
+router.post("/create-node", verifyJwt, async (req, res) => {
+  try {
+    const {
+      nodeName,
+      nodePort,
+      transportPort,
+      roles,
+      heapSize // Add heapSize parameter
+    } = req.body;
+
+    // Validate heap size format
+    const heapSizePattern = /^[0-9]+[kmgt]$/i;
+    if (heapSize && !heapSizePattern.test(heapSize)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid heap size format. Use format like '1g', '2048m', etc."
+      });
+    }
+
+    // Get system memory info for validation
+    const systemMemory = await getSystemMemory();
+    const heapSizeNumber = parseInt(heapSize);
+    const heapSizeUnit = heapSize.slice(-1).toLowerCase();
+    
+    // Convert heap size to GB for comparison
+    let heapSizeGB;
+    switch (heapSizeUnit) {
+      case 'g':
+        heapSizeGB = heapSizeNumber;
+        break;
+      case 'm':
+        heapSizeGB = heapSizeNumber / 1024;
+        break;
+      case 'k':
+        heapSizeGB = heapSizeNumber / (1024 * 1024);
+        break;
+      default:
+        heapSizeGB = 1;
+    }
+
+    // Validate against system memory
+    if (heapSizeGB > systemMemory.total * 0.75) {
+      return res.status(400).json({
+        success: false,
+        error: "Requested heap size exceeds 75% of system memory"
+      });
+    }
+
+    // ... rest of existing node creation code ...
+
+    const nodeConfig = {
+      name: nodeName,
+      port: nodePort,
+      transportPort,
+      roles,
+      heapSize: heapSize || '1g' // Add heap size to node config
+    };
+
+    // ... rest of existing code ...
+  } catch (error) {
+    console.error('Error creating node:', error);
+    res.status(500).json({ error: 'Failed to create node', details: error.message });
+  }
+});
+
+router.put("/update-node/:nodeName", verifyJwt, async (req, res) => {
+  try {
+    const { nodeName } = req.params;
+    const updates = req.body;
+
+    // Validate heap size if provided
+    if (updates.heapSize) {
+      const heapSizePattern = /^[0-9]+[kmgt]$/i;
+      if (!heapSizePattern.test(updates.heapSize)) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid heap size format. Use format like '1g', '2048m', etc."
+        });
+      }
+
+      // Get system memory info for validation
+      const systemMemory = await getSystemMemory();
+      const heapSizeNumber = parseInt(updates.heapSize);
+      const heapSizeUnit = updates.heapSize.slice(-1).toLowerCase();
+      
+      // Convert heap size to GB for comparison
+      let heapSizeGB;
+      switch (heapSizeUnit) {
+        case 'g':
+          heapSizeGB = heapSizeNumber;
+          break;
+        case 'm':
+          heapSizeGB = heapSizeNumber / 1024;
+          break;
+        case 'k':
+          heapSizeGB = heapSizeNumber / (1024 * 1024);
+          break;
+        default:
+          heapSizeGB = 1;
+      }
+
+      // Validate against system memory
+      if (heapSizeGB > systemMemory.total * 0.75) {
+        return res.status(400).json({
+          success: false,
+          error: "Requested heap size exceeds 75% of system memory"
+        });
+      }
+    }
+
+    const clusterManager = require("../elasticsearch/cluster-manager");
+    const result = await clusterManager.updateNode(nodeName, updates);
+
+    res.json({
+      success: true,
+      message: `Node ${nodeName} updated successfully`,
+      result
+    });
+  } catch (error) {
+    console.error(`Error updating node ${req.params.nodeName}:`, error);
+    res.status(500).json({ error: 'Failed to update node', details: error.message });
   }
 });
 

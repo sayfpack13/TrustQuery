@@ -2,7 +2,7 @@ import axios from "axios";
 
 // Create Axios instance
 const axiosClient = axios.create({
-  baseURL: "/", // your backend base URL
+  baseURL: process.env.REACT_APP_API_URL || "http://localhost:5000", // use environment variable or default to localhost
 });
 
 // Add request interceptor to include JWT token automatically

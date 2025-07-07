@@ -1059,30 +1059,6 @@ router.delete("/:nodeName/indices/:indexName", verifyJwt, async (req, res) => {
   }
 });
 
-// Validate node configuration before creation
-router.post("/nodes/validate", verifyJwt, async (req, res) => {
-  try {
-    const { nodeConfig, originalName } = req.body;
-    const configToValidate = nodeConfig || req.body;
-
-    if (!configToValidate || !configToValidate.name) {
-      return res.status(400).json({ error: "Node name is required" });
-    }
-
-    // Pass the originalName to the validation function if it exists (i.e., we are editing)
-    const validation = await validateNodePorts(configToValidate, originalName || null);
-    
-    res.json({
-      valid: validation.valid,
-      conflicts: validation.conflicts,
-      suggestions: validation.suggestions
-    });
-  } catch (error) {
-    console.error("Error validating node configuration:", error);
-    res.status(500).json({ error: "Failed to validate node configuration: " + error.message });
-  }
-});
-
 // GET individual node details
 router.get("/nodes/:nodeName", verifyJwt, async (req, res) => {
   try {
@@ -1385,5 +1361,53 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
   }
 });
 
+// POST validate node configuration
+router.post("/validate-node", verifyJwt, async (req, res) => {
+  try {
+    const { nodeConfig, originalName } = req.body;
+    
+    if (!nodeConfig) {
+      return res.status(400).json({ 
+        valid: false, 
+        errors: ['Node configuration is required'] 
+      });
+    }
+
+    // Validate required fields
+    const requiredFields = ['name', 'port', 'transportPort'];
+    const missingFields = requiredFields.filter(field => !nodeConfig[field]);
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        valid: false,
+        errors: missingFields.map(field => `${field} is required`)
+      });
+    }
+
+    // Validate ports
+    const validationResult = await validateNodePorts(nodeConfig, originalName);
+
+    if (!validationResult.valid) {
+      return res.status(409).json({
+        valid: false,
+        conflicts: validationResult.conflicts,
+        suggestions: validationResult.suggestions
+      });
+    }
+
+    // If validation passes
+    res.json({
+      valid: true,
+      message: 'Node configuration is valid'
+    });
+  } catch (error) {
+    console.error('Error validating node configuration:', error);
+    res.status(500).json({ 
+      valid: false, 
+      error: 'Failed to validate node configuration',
+      details: error.message 
+    });
+  }
+});
 
 module.exports = router;

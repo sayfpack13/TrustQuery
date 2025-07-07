@@ -148,7 +148,8 @@ async function createNode(nodeConfig) {
       dataPath,
       logsPath,
       roles = { master: true, data: true, ingest: true },
-      clusterName = 'trustquery-cluster'
+      clusterName = 'trustquery-cluster',
+      heapSize = '1g'  // Add heapSize parameter with default
     } = nodeConfig;
 
     if (!name) {
@@ -203,7 +204,7 @@ async function createNode(nodeConfig) {
     const configPath = path.join(nodeConfigDir, 'elasticsearch.yml');
     await fs.writeFile(configPath, configContent);
 
-    const jvmOptions =  generateJVMOptions();
+    const jvmOptions = generateJVMOptions(heapSize);
     const jvmPath = path.join(nodeConfigDir, 'jvm.options');
     await fs.writeFile(jvmPath, jvmOptions);
 
@@ -260,12 +261,12 @@ async function createNode(nodeConfig) {
 /**
  * Generate JVM options for node
  */
-function generateJVMOptions() {
+function generateJVMOptions(heapSize = '1g') {
   return `# JVM Options for Elasticsearch Node
 
 # Heap size (adjust based on your system)
--Xms1g
--Xmx1g
+-Xms${heapSize}
+-Xmx${heapSize}
 
 # GC Settings
 -XX:+UseG1GC
@@ -1201,6 +1202,15 @@ async function updateNode(nodeName, updates, options = {}) {
       'xpack.security.http.ssl.enabled': false
     };
 
+    // Update JVM options if heap size is provided
+    if (updates.heapSize) {
+      const configDir = path.dirname(configPath);
+      const jvmPath = path.join(configDir, 'jvm.options');
+      const jvmOptions = generateJVMOptions(updates.heapSize);
+      await fs.writeFile(jvmPath, jvmOptions);
+      console.log(`✅ Updated JVM options with heap size: ${updates.heapSize}`);
+    }
+
     // Create new directories if paths have changed or don't exist
     const newDataPath = updates.dataPath || currentConfig.path.data;
     const newLogsPath = updates.logsPath || currentConfig.path.logs;
@@ -1730,6 +1740,37 @@ async function verifyNodeMetadata() {
   }
 }
 
+/**
+ * Get the current heap size from a node's JVM options
+ */
+async function getNodeHeapSize(nodeName) {
+  try {
+    const metadata = getNodeMetadata(nodeName);
+    let jvmPath;
+
+    if (metadata && metadata.configPath) {
+      jvmPath = path.join(path.dirname(metadata.configPath), 'jvm.options');
+    } else {
+      const env = getEnvAndConfig();
+      jvmPath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', 'jvm.options');
+    }
+
+    try {
+      const jvmContent = await fs.readFile(jvmPath, 'utf8');
+      const heapMatch = jvmContent.match(/-Xms([0-9]+[kmgt])/i);
+      return heapMatch ? heapMatch[1] : '1g';
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return '1g'; // Default if file doesn't exist
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error(`❌ Failed to get heap size for node ${nodeName}:`, error);
+    return '1g'; // Default on error
+  }
+}
+
 // --- EXPORT AS FUNCTIONAL MODULE ---
 module.exports = {
   getEnvAndConfig,
@@ -1757,4 +1798,5 @@ module.exports = {
   copyNode,
   copyDirectory,
   verifyNodeMetadata,
+  getNodeHeapSize,
 };

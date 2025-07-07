@@ -153,10 +153,10 @@ export default function ConfigurationManagement({
           <div>
             <h3 className="text-xl font-semibold text-white flex items-center mb-2">
               <FontAwesomeIcon icon={faCogs} className="mr-3 text-blue-400" />
-              VPS Setup Wizard
+              Setup Wizard
             </h3>
             <p className="text-neutral-300">
-              Need help setting up Elasticsearch on your VPS? Use our guided setup wizard for Windows or Linux systems.
+              Need help setting up Elasticsearch on your machine? Use our guided setup wizard for Windows or Linux systems.
             </p>
           </div>
           <button

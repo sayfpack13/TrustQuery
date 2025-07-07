@@ -15,9 +15,12 @@ import {
   faCopy,
   faArrowRight,
   faFolderOpen,
-  faEdit
+  faEdit,
+  faMemory,
+  faMagic
 } from '@fortawesome/free-solid-svg-icons';
 import axiosClient from '../api/axiosClient';
+import { formatBytes } from '../utils/format';
 
 const LocalNodeManager = ({ 
   isOpen, 
@@ -37,8 +40,10 @@ const LocalNodeManager = ({
   const [isValidating, setIsValidating] = useState(false);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [isApplyingSuggestions, setIsApplyingSuggestions] = useState(false);
-  const [lastValidatedConfig, setLastValidatedConfig] = useState(null); // Track successful validation
-  
+  const [lastValidatedConfig, setLastValidatedConfig] = useState(null);
+  const validationTimeoutRef = useRef(null);
+  const lastValidationConfigRef = useRef(null);
+
   // Move/Copy state
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [showCopyModal, setShowCopyModal] = useState(false);
@@ -50,6 +55,36 @@ const LocalNodeManager = ({
   const [isMoving, setIsMoving] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
   const [backendBasePath, setBackendBasePath] = useState('');
+
+  // Track validation to prevent duplicates
+  const {
+    newNodeName,
+    setNewNodeName,
+    newNodeHost,
+    setNewNodeHost,
+    newNodePort,
+    setNewNodePort,
+    newNodeTransportPort,
+    setNewNodeTransportPort,
+    newNodeCluster,
+    setNewNodeCluster,
+    newNodeDataPath,
+    setNewNodeDataPath,
+    newNodeLogsPath,
+    setNewNodeLogsPath,
+    newNodeRoles,
+    setNewNodeRoles,
+    newNodeHeapSize,
+    setNewNodeHeapSize,
+    systemMemoryInfo,
+    fetchSystemMemoryInfo,
+    clusters,
+    createLocalNode,
+    createCluster,
+    updateLocalNode,
+    moveNode,
+    copyNode
+  } = clusterManagement;
 
   // Fetch backend-configured base path
   const fetchBackendBasePath = async () => {
@@ -66,8 +101,29 @@ const LocalNodeManager = ({
   useEffect(() => {
     if (isOpen) {
       fetchBackendBasePath();
+      fetchSystemMemoryInfo(); // Fetch system memory info when modal opens
+
+      // Validate initial configuration if in edit mode
+      if (mode === 'edit' && nodeToEdit) {
+        const initialConfig = {
+          name: nodeToEdit.name,
+          host: nodeToEdit.host || 'localhost',
+          port: parseInt(nodeToEdit.port) || 9200,
+          transportPort: parseInt(nodeToEdit.transportPort) || 9300,
+          cluster: nodeToEdit.cluster || 'trustquery-cluster',
+          dataPath: nodeToEdit.dataPath,
+          logsPath: nodeToEdit.logsPath,
+          roles: nodeToEdit.roles || {
+            master: true,
+            data: true,
+            ingest: true,
+          },
+          heapSize: nodeToEdit.heapSize || '1g'
+        };
+        validateNodeConfiguration(initialConfig);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, mode, nodeToEdit, fetchSystemMemoryInfo]);
 
   const updatePathsForNewName = (newName, oldName, currentDataPath, currentLogsPath, setDataPath, setLogsPath) => {
     let basePath = backendBasePath || 'C://elasticsearch';
@@ -93,35 +149,6 @@ const LocalNodeManager = ({
       updatePathsForNewName(newName, oldName, newNodeDataPath, newNodeLogsPath, setNewNodeDataPath, setNewNodeLogsPath);
   };
 
-  // Track validation to prevent duplicates
-  const validationTimeoutRef = useRef(null);
-  const lastValidationConfigRef = useRef(null);
-
-  const {
-    newNodeName,
-    setNewNodeName,
-    newNodeHost,
-    setNewNodeHost,
-    newNodePort,
-    setNewNodePort,
-    newNodeTransportPort,
-    setNewNodeTransportPort,
-    newNodeCluster,
-    setNewNodeCluster,
-    newNodeDataPath,
-    setNewNodeDataPath,
-    newNodeLogsPath,
-    setNewNodeLogsPath,
-    newNodeRoles,
-    setNewNodeRoles,
-    clusters,
-    createLocalNode,
-    createCluster,
-    updateLocalNode,
-    moveNode,
-    copyNode
-  } = clusterManagement;
-
   useEffect(() => {
     if (mode === 'edit' && nodeToEdit) {
       setNewNodeName(nodeToEdit.name || '');
@@ -131,7 +158,7 @@ const LocalNodeManager = ({
       setNewNodeCluster(nodeToEdit.cluster || 'trustquery-cluster');
       setNewNodeDataPath(nodeToEdit.dataPath || `C:\\elasticsearch\\nodes\\${nodeToEdit.name}\\data`);
       setNewNodeLogsPath(nodeToEdit.logsPath || `C:\\elasticsearch\\nodes\\${nodeToEdit.name}\\logs`);
-      // Assuming roles are part of the node object, otherwise they need to be fetched
+      setNewNodeHeapSize(nodeToEdit.heapSize || '1g'); // Set default heap size if not provided
       setNewNodeRoles(nodeToEdit.roles || {
         master: true,
         data: true,
@@ -146,13 +173,14 @@ const LocalNodeManager = ({
       setNewNodeCluster('trustquery-cluster');
       setNewNodeDataPath('');
       setNewNodeLogsPath('');
+      setNewNodeHeapSize('1g'); // Set default heap size for new nodes
       setNewNodeRoles({
         master: true,
         data: true,
         ingest: true,
       });
     }
-  }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles]);
+  }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles, setNewNodeHeapSize]);
 
   // Remove auto-validation on input change - validation now only happens on button click
 
@@ -210,7 +238,7 @@ const LocalNodeManager = ({
     }
   };
 
-  // Validation function
+  // Validate node configuration
   const validateNodeConfiguration = async (nodeConfig) => {
     // When editing, we need to pass the original node name to the validation function
     const requestBody = mode === 'edit' 
@@ -226,7 +254,8 @@ const LocalNodeManager = ({
       cluster: nodeConfig.cluster,
       dataPath: nodeConfig.dataPath,
       logsPath: nodeConfig.logsPath,
-      mode: mode // Include mode in cache key
+      heapSize: nodeConfig.heapSize,
+      mode: mode
     });
     
     // Skip if we're already validating
@@ -234,39 +263,84 @@ const LocalNodeManager = ({
       return false;
     }
     
-    // Check if this exact config was already successfully validated
+    // Skip if this exact configuration was just validated successfully
     if (lastValidatedConfig === configKey) {
-      return true; // Already validated and passed
+      return true;
     }
-    
-    lastValidationConfigRef.current = configKey;
+
+    // Validate heap size format
+    const heapSizePattern = /^[0-9]+[kmgt]$/i;
+    if (nodeConfig.heapSize && !heapSizePattern.test(nodeConfig.heapSize)) {
+      setValidationErrors([{
+        type: 'heap_size',
+        message: 'Invalid heap size format. Use format like "1g", "2048m", etc.'
+      }]);
+      setShowValidationErrors(true);
+      return false;
+    }
+
+    // Convert heap size to GB for validation
+    if (nodeConfig.heapSize && systemMemoryInfo) {
+      const heapSizeNumber = parseInt(nodeConfig.heapSize);
+      const heapSizeUnit = nodeConfig.heapSize.slice(-1).toLowerCase();
+      let heapSizeGB;
+      switch (heapSizeUnit) {
+        case 'g':
+          heapSizeGB = heapSizeNumber;
+          break;
+        case 'm':
+          heapSizeGB = heapSizeNumber / 1024;
+          break;
+        case 'k':
+          heapSizeGB = heapSizeNumber / (1024 * 1024);
+          break;
+        default:
+          heapSizeGB = 1;
+      }
+
+      // Validate against system memory
+      if (heapSizeGB > systemMemoryInfo.total * 0.75) {
+        setValidationErrors([{
+          type: 'heap_size',
+          message: `Heap size exceeds 75% of system memory (${Math.floor(systemMemoryInfo.total * 0.75)}GB max)`
+        }]);
+        setShowValidationErrors(true);
+        return false;
+      }
+    }
+
     setIsValidating(true);
-    setValidationErrors([]);
-    setValidationSuggestions({});
+    setShowValidationErrors(false);
     
     try {
-      const response = await axiosClient.post('/api/admin/cluster-advanced/nodes/validate', requestBody);
+      const response = await axiosClient.post('/api/admin/cluster-advanced/validate-node', requestBody);
       
-      if (!response.data.valid) {
+      if (response.data.valid) {
+        setValidationErrors([]);
+        setValidationSuggestions({});
+        setShowValidationErrors(false);
+        setLastValidatedConfig(configKey);
+        return true;
+      } else {
         setValidationErrors(response.data.conflicts || []);
         setValidationSuggestions(response.data.suggestions || {});
         setShowValidationErrors(true);
         return false;
-      } else {
-        // Validation passed - clear any previous errors
-        setValidationErrors([]);
-        setValidationSuggestions({});
-        setShowValidationErrors(false);
-        setLastValidatedConfig(configKey); // Remember this config was validated successfully
-        return true;
       }
     } catch (error) {
       console.error('Validation error:', error);
-      setValidationErrors([{
-        type: 'general',
-        message: 'Failed to validate configuration: ' + (error.response?.data?.error || error.message)
-      }]);
-      setShowValidationErrors(true);
+      if (error.response?.status === 409) {
+        // Handle validation conflicts from backend
+        setValidationErrors(error.response.data.conflicts || []);
+        setValidationSuggestions(error.response.data.suggestions || {});
+        setShowValidationErrors(true);
+      } else {
+        setValidationErrors([{
+          type: 'general',
+          message: error.response?.data?.error || 'Failed to validate configuration'
+        }]);
+        setShowValidationErrors(true);
+      }
       return false;
     } finally {
       setIsValidating(false);
@@ -562,6 +636,64 @@ const LocalNodeManager = ({
             </p>
           </div>
 
+          {/* Memory Management */}
+          <div>
+            <label className="block text-sm font-medium text-neutral-300 mb-3">
+              <FontAwesomeIcon icon={faMemory} className="mr-2" />
+              Memory Management
+            </label>
+            <div className="space-y-4">
+              {/* System Memory Info */}
+              {systemMemoryInfo && (
+                <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-neutral-300">Total System Memory:</span>
+                    <span className="text-white font-medium">{formatBytes(systemMemoryInfo.total * 1024 * 1024 * 1024)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-neutral-300">Available Memory:</span>
+                    <span className="text-white font-medium">{formatBytes(systemMemoryInfo.free * 1024 * 1024 * 1024)}</span>
+                  </div>
+                  <div className="mt-2 text-xs text-neutral-400">
+                    Recommended heap size: {systemMemoryInfo.recommended}GB (max {Math.floor(systemMemoryInfo.total * 0.75)}GB)
+                  </div>
+                </div>
+              )}
+
+              {/* Heap Size Input */}
+              <div>
+                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                  JVM Heap Size
+                  {validationErrors.some(e => e.type === 'heap_size') && (
+                    <span className="ml-2 text-red-400 text-xs">
+                      <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
+                      Invalid heap size
+                    </span>
+                  )}
+                </label>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={newNodeHeapSize}
+                    onChange={(e) => setNewNodeHeapSize(e.target.value)}
+                    placeholder="e.g., 2g, 512m"
+                    disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
+                    className={`flex-1 p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
+                      (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                    } ${
+                      validationErrors.some(e => e.type === 'heap_size') 
+                        ? 'border-red-500 focus:ring-red-500' 
+                        : 'border-neutral-700 focus:ring-blue-500'
+                    }`}
+                  />
+                </div>
+                <p className="text-neutral-400 text-xs mt-1">
+                  Specify memory using units: g (gigabytes) or m (megabytes). Example: 2g = 2 gigabytes
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Advanced Configuration */}
           <div className="mt-4 space-y-4 p-4 bg-neutral-900 rounded-lg border border-neutral-700">
             <div className="flex items-center justify-between mb-4">
@@ -667,76 +799,92 @@ const LocalNodeManager = ({
 
         </div>
 
-
-
-        {/* Validation Section - Show validation errors and suggestions for both create and edit modes */}
-        {showValidationErrors && validationErrors.length > 0 && (
-          <div className="mt-6 p-4 bg-red-900 rounded-lg border border-red-700">
-            <h3 className="text-lg font-semibold text-red-100 mb-3 flex items-center">
-              <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
-              Configuration Conflicts Detected
-            </h3>
-            <div className="space-y-2 mb-4">
-              {validationErrors.map((error, index) => (
-                <div key={index} className="text-red-200 text-sm flex items-start">
-                  <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2 mt-1 text-red-400 flex-shrink-0" />
-                  <span>{error.message}</span>
+        {/* Validation Errors and Suggestions */}
+        {showValidationErrors && (validationErrors.length > 0 || Object.keys(validationSuggestions).length > 0) && (
+          <div className="mt-4 space-y-4">
+            {/* Validation Errors */}
+            {validationErrors.length > 0 && (
+              <div className="p-4 bg-red-900 rounded-lg border border-red-700">
+                <div className="flex items-start space-x-3">
+                  <FontAwesomeIcon icon={faExclamationTriangle} className="text-red-400 mt-1" />
+                  <div>
+                    <h4 className="text-red-200 font-medium mb-2">Configuration Conflicts</h4>
+                    <ul className="space-y-2">
+                      {validationErrors.map((error, idx) => (
+                        <li key={idx} className="text-red-200 text-sm">
+                          {error.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-              ))}
-            </div>
-            
-            {/* Auto-fix suggestions */}
+              </div>
+            )}
+
+            {/* Suggestions */}
             {Object.keys(validationSuggestions).length > 0 && (
-              <div className="border-t border-red-700 pt-4">
-                <h4 className="text-red-100 font-medium mb-3">Suggested Solutions:</h4>
-                <div className="space-y-3">
-                  {(validationSuggestions.httpPort || validationSuggestions.transportPort) && (
-                    <div className="bg-red-800 p-3 rounded">
-                      <p className="text-red-100 text-sm mb-2">Auto-fix port conflicts:</p>
-                      <div className="flex items-center space-x-2">
-                        {validationSuggestions.httpPort && (
-                          <span className="text-red-200 text-xs">HTTP: {validationSuggestions.httpPort}</span>
-                        )}
-                        {validationSuggestions.transportPort && (
-                          <span className="text-red-200 text-xs">Transport: {validationSuggestions.transportPort}</span>
-                        )}
-                        <button
-                          onClick={applySuggestions}
-                          disabled={disabled || isApplyingSuggestions}
-                          className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs transition duration-150 disabled:opacity-50"
-                        >
-                          {isApplyingSuggestions ? <FontAwesomeIcon icon={faSpinner} spin /> : 'Apply'}
-                        </button>
-                      </div>
+              <div className="p-4 bg-blue-900 rounded-lg border border-blue-700">
+                <div className="flex items-start space-x-3">
+                  <FontAwesomeIcon icon={faMagic} className="text-blue-400 mt-1" />
+                  <div>
+                    <h4 className="text-blue-200 font-medium mb-2">Available Fixes</h4>
+                    <div className="space-y-4">
+                      {/* Port Suggestions */}
+                      {(validationSuggestions.httpPort || validationSuggestions.transportPort) && (
+                        <div>
+                          <h5 className="text-blue-300 text-sm font-medium mb-2">Port Conflicts</h5>
+                          <div className="space-y-2">
+                            {validationSuggestions.httpPort && (
+                              <div className="text-blue-200 text-sm">
+                                Suggested HTTP Port: {validationSuggestions.httpPort}
+                              </div>
+                            )}
+                            {validationSuggestions.transportPort && (
+                              <div className="text-blue-200 text-sm">
+                                Suggested Transport Port: {validationSuggestions.transportPort}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Node Name Suggestions */}
+                      {validationSuggestions.nodeName && validationSuggestions.nodeName.length > 0 && (
+                        <div>
+                          <h5 className="text-blue-300 text-sm font-medium mb-2">Node Name Suggestions</h5>
+                          <div className="flex flex-wrap gap-2">
+                            {validationSuggestions.nodeName.map((name, idx) => (
+                              <button
+                                key={idx}
+                                onClick={() => applyNodeNameSuggestion(name)}
+                                className="bg-blue-800 hover:bg-blue-700 text-blue-200 px-3 py-1 rounded text-sm transition-colors"
+                              >
+                                {name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Apply All Suggestions Button */}
+                      <button
+                        onClick={applySuggestions}
+                        disabled={isApplyingSuggestions}
+                        className="mt-3 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded transition-colors flex items-center space-x-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <FontAwesomeIcon icon={isApplyingSuggestions ? faSpinner : faMagic} className={isApplyingSuggestions ? 'fa-spin' : ''} />
+                        <span>{isApplyingSuggestions ? 'Applying...' : 'Apply All Fixes'}</span>
+                      </button>
                     </div>
-                  )}
-                  
-                  {validationSuggestions.nodeName && validationSuggestions.nodeName.length > 0 && (
-                    <div className="bg-red-800 p-3 rounded">
-                      <p className="text-red-100 text-sm mb-2">Suggested node names:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {validationSuggestions.nodeName.map((name, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => applyNodeNameSuggestion(name)}
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs transition duration-150"
-                          >
-                            {name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  </div>
                 </div>
               </div>
             )}
           </div>
         )}
 
-       
-
-        {/* Footer */}
-        <div className="flex justify-end space-x-3 p-6 border-t border-neutral-700">
+        {/* Form Buttons */}
+        <div className="flex justify-end space-x-3 mt-6">
           <button
             onClick={async () => {
               if (mode === 'create') {
@@ -748,7 +896,8 @@ const LocalNodeManager = ({
                   cluster: newNodeCluster,
                   dataPath: newNodeDataPath,
                   logsPath: newNodeLogsPath,
-                  roles: newNodeRoles
+                  roles: newNodeRoles,
+                  heapSize: newNodeHeapSize
                 };
                 
                 console.log('Creating node with config:', nodeConfig);
@@ -770,7 +919,12 @@ const LocalNodeManager = ({
                   onClose();
                 } catch (error) {
                   console.error('Failed to create node:', error);
-                  // Error will be handled by createLocalNode
+                  // If the error contains validation data, show it
+                  if (error.response?.data?.conflicts) {
+                    setValidationErrors(error.response.data.conflicts || []);
+                    setValidationSuggestions(error.response.data.suggestions || {});
+                    setShowValidationErrors(true);
+                  }
                 }
               } else {
                 // For edit mode, validate first then call updateLocalNode
@@ -782,7 +936,8 @@ const LocalNodeManager = ({
                   cluster: newNodeCluster,
                   dataPath: newNodeDataPath,
                   logsPath: newNodeLogsPath,
-                  roles: newNodeRoles
+                  roles: newNodeRoles,
+                  heapSize: newNodeHeapSize
                 };
                 
                 console.log('Updating node with config:', nodeConfig);
@@ -806,15 +961,11 @@ const LocalNodeManager = ({
                   console.error('Failed to update node:', error);
                   
                   // Handle validation conflicts from backend
-                  if (error.validationData) {
-                    console.log('Backend validation failed during update:', error.validationData);
-                    setValidationErrors(error.validationData.conflicts || []);
-                    setValidationSuggestions(error.validationData.suggestions || {});
+                  if (error.response?.data?.conflicts) {
+                    setValidationErrors(error.response.data.conflicts || []);
+                    setValidationSuggestions(error.response.data.suggestions || {});
                     setShowValidationErrors(true);
-                    return; // Don't close the modal, show validation errors
                   }
-                  
-                  // For other errors, let the hook handle the notification
                 }
               }
             }}
@@ -829,7 +980,7 @@ const LocalNodeManager = ({
             <FontAwesomeIcon icon={isValidating ? faSpinner : faServer} className={`mr-2 ${isValidating ? 'fa-spin' : ''}`} />
             {isValidating ? 'Validating...' : isApplyingSuggestions ? 'Applying Changes...' : (mode === 'create' ? 'Create Node' : 'Update Node')}
           </button>
-                    <button
+          <button
             onClick={onClose}
             className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
           >
@@ -941,7 +1092,7 @@ const LocalNodeManager = ({
                 <FontAwesomeIcon icon={isMoving ? faSpinner : faArrowRight} className={`mr-2 ${isMoving ? 'fa-spin' : ''}`} />
                 {isMoving ? 'Moving...' : 'Move Node'}
               </button>
-                            <button
+              <button
                 onClick={() => setShowMoveModal(false)}
                 className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
               >
@@ -1059,7 +1210,7 @@ const LocalNodeManager = ({
                 <FontAwesomeIcon icon={isCopying ? faSpinner : faCopy} className={`mr-2 ${isCopying ? 'fa-spin' : ''}`} />
                 {isCopying ? 'Copying...' : 'Copy Node'}
               </button>
-                            <button
+              <button
                 onClick={() => setShowCopyModal(false)}
                 className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition duration-150"
               >

@@ -22,7 +22,6 @@ import ConfigurationManagement from "./AdminDashboard/components/ConfigurationMa
 import AccountManagement from "./AdminDashboard/components/AccountManagement";
 import TaskDetails from "./AdminDashboard/components/TaskDetails";
 import NodeDetailsModal from "./AdminDashboard/components/NodeDetailsModal";
-import { formatBytes } from "../utils/format";
 
 export default function AdminDashboard({ onLogout }) {
   // First time use detection
@@ -301,7 +300,6 @@ export default function AdminDashboard({ onLogout }) {
             handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
             setShowLocalNodeManager={setupCompleted ? setShowLocalNodeManager : () => {}}
             isAnyTaskRunning={isAnyTaskRunning}
-            formatBytes={formatBytes}
             onEditNode={setupCompleted ? handleEditNode : () => {}}
             onOpenNodeDetails={setupCompleted ? handleOpenNodeDetails : () => {}}
             showNotification={showNotification}
@@ -417,7 +415,6 @@ export default function AdminDashboard({ onLogout }) {
         show={showNodeDetailsModal && setupCompleted}
         onClose={handleCloseNodeDetails}
         node={selectedNodeForDetails}
-        formatBytes={formatBytes}
         enhancedNodesData={clusterManagement.enhancedNodesData || {}}
         onRefreshNodes={clusterManagement.fetchLocalNodes}
         disabled={!setupCompleted}
