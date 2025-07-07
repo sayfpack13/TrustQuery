@@ -53,7 +53,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       setLocalNodes(response.data.nodes || []);
       setEnhancedNodesData(response.data.indicesByNodes || {});
     } catch (error) {
-      console.error('Error fetching local nodes:', error);
       showNotificationRef.current('error', 'Failed to fetch local node configuration', faExclamationTriangle);
     } finally {
       setClusterLoading(false);
@@ -68,7 +67,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
         setSystemMemoryInfo(response.data.memory);
       }
     } catch (error) {
-      console.error('Error fetching system memory info:', error);
       showNotificationRef.current('error', 'Failed to fetch system memory information', faExclamationTriangle);
     }
   }, []);
@@ -104,10 +102,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
         heapSize: newNodeHeapSize // Add heap size to config
       };
       
-      console.log('createLocalNode called with config:', config);
-      
       const response = await axiosClient.post('/api/admin/cluster-advanced/nodes', config);
-      console.log('Node creation response:', response.data);
       
       showNotificationRef.current('success', `Node "${config.name}" created successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
@@ -117,8 +112,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
         resetNodeForm();
       }
     } catch (error) {
-      console.error('Error creating node:', error);
-      console.error('Error response:', error.response?.data);
       showNotificationRef.current('error', `Failed to create node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
       throw error; // Re-throw to allow form to handle error state
     }
@@ -136,8 +129,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       showNotificationRef.current('success', `Node "${nodeName}" updated successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
     } catch (error) {
-      console.error('Error updating node:', error);
-      
       // Handle validation conflicts specifically
       if (error.response?.status === 409 && error.response?.data?.conflicts) {
         // This is a validation error with conflicts - re-throw it so the component can handle it
@@ -157,15 +148,12 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
   }, [fetchLocalNodes, newNodeHeapSize]);
 
   const handleDeleteLocalNode = async (nodeName) => {
-    if (!window.confirm(`Are you sure you want to permanently delete node "${nodeName}" and all its data? This cannot be undone.`)) return;
-
     setNodeActionLoading(prev => [...prev, nodeName]);
     try {
       await axiosClient.delete(`/api/admin/cluster-advanced/nodes/${nodeName}`);
       showNotificationRef.current('success', `Node "${nodeName}" and its data deleted successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
     } catch (error) {
-      console.error(`Error deleting node ${nodeName}:`, error);
       showNotificationRef.current('error', `Failed to delete node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
     } finally {
       setNodeActionLoading(prev => prev.filter(name => name !== nodeName));
@@ -208,7 +196,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
               return true;
             }
           } catch (error) {
-            console.warn(`Poll attempt ${attempt + 1} failed:`, error);
+            // Continue polling on error
           }
         }
         
@@ -222,7 +210,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       await pollForNodeStart();
       
     } catch (error) {
-      console.error(`Error starting node ${nodeName}:`, error);
       showNotificationRef.current('error', `Failed to start node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
     } finally {
       setNodeActionLoading(prev => prev.filter(name => name !== nodeName));
@@ -259,7 +246,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
               return true;
             }
           } catch (error) {
-            console.warn(`Poll attempt ${attempt + 1} failed:`, error);
+            // Continue polling on error
           }
         }
         
@@ -273,7 +260,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       await pollForNodeStop();
       
     } catch (error) {
-      console.error(`Error stopping node ${nodeName}:`, error);
       showNotificationRef.current('error', `Failed to stop node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
     } finally {
       setNodeActionLoading(prev => prev.filter(name => name !== nodeName));
@@ -282,17 +268,13 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
 
   const getNodeDetails = useCallback(async (nodeName) => {
     if (!nodeName) {
-      console.error('getNodeDetails called with empty nodeName');
       throw new Error('Node name is required');
     }
     
     try {
-      console.log(`Fetching details for node: ${nodeName}`);
       const response = await axiosClient.get(`/api/admin/cluster-advanced/nodes/${nodeName}`);
-      console.log('Node details response:', response.data);
       return response.data;
     } catch (error) {
-      console.error(`Error fetching details for node ${nodeName}:`, error);
       showNotificationRef.current('error', `Failed to fetch node details: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
       throw error; // Re-throw for handling in the component
     }
@@ -304,7 +286,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       // This could be extended to actually register clusters on the backend
       showNotificationRef.current('success', `Cluster "${clusterName}" will be created when first node is added`, faCheckCircle);
     } catch (error) {
-      console.error('Error creating cluster:', error);
       showNotificationRef.current('error', `Failed to create cluster: ${error.message}`, faExclamationTriangle);
     }
   }, []);
@@ -325,7 +306,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       showNotificationRef.current('success', response.data.message, faCheckCircle);
       return response.data;
     } catch (error) {
-      console.error(`Error moving node ${nodeName}:`, error);
       const errorMessage = error.response?.data?.error || error.message;
       showNotificationRef.current('error', `Failed to move node: ${errorMessage}`, faExclamationTriangle);
       throw error;
@@ -349,7 +329,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       showNotificationRef.current('success', response.data.message, faCheckCircle);
       return response.data;
     } catch (error) {
-      console.error(`Error copying node ${nodeName}:`, error);
       const errorMessage = error.response?.data?.error || error.message;
       showNotificationRef.current('error', `Failed to copy node: ${errorMessage}`, faExclamationTriangle);
       throw error;

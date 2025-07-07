@@ -370,8 +370,6 @@ const LocalNodeManager = ({
       clearTimeout(validationTimeoutRef.current);
     }
 
-    console.log('Applying suggestions:', validationSuggestions);
-
     if (validationSuggestions.httpPort) {
       setNewNodePort(validationSuggestions.httpPort.toString());
     }
@@ -392,8 +390,6 @@ const LocalNodeManager = ({
     setValidationErrors([]);
     setValidationSuggestions({});
     setShowValidationErrors(false);
-    
-    console.log('Suggestions applied, validation state cleared');
     
     // Give a longer delay to prevent immediate re-validation
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -914,25 +910,17 @@ const LocalNodeManager = ({
                   heapSize: newNodeHeapSize
                 };
                 
-                console.log('Creating node with config:', nodeConfig);
-                
                 // Always validate before creating (single source of truth)
                 const isValid = await validateNodeConfiguration(nodeConfig);
-                console.log('Validation result:', isValid);
                 
                 if (!isValid) {
-                  console.log('Validation failed, stopping node creation');
                   return; // Stop if validation fails
                 }
                 
-                console.log('Validation passed, proceeding with node creation');
-                
                 try {
                   await createLocalNode(nodeConfig);
-                  console.log('Node created successfully');
                   onClose();
                 } catch (error) {
-                  console.error('Failed to create node:', error);
                   // If the error contains validation data, show it
                   if (error.response?.data?.conflicts) {
                     setValidationErrors(error.response.data.conflicts || []);
@@ -953,26 +941,17 @@ const LocalNodeManager = ({
                   // Explicitly omit dataPath and logsPath in edit mode
                 };
                 
-                console.log('Updating node with config:', nodeConfig);
-                
                 // Always validate before updating (single source of truth)
                 const isValid = await validateNodeConfiguration(nodeConfig);
-                console.log('Edit validation result:', isValid);
                 
                 if (!isValid) {
-                  console.log('Edit validation failed, stopping node update');
                   return; // Stop if validation fails
                 }
                 
-                console.log('Edit validation passed, proceeding with node update');
-                
                 try {
                   await updateLocalNode(nodeToEdit.name, nodeConfig);
-                  console.log('Node updated successfully');
                   onClose();
                 } catch (error) {
-                  console.error('Failed to update node:', error);
-                  
                   // Handle validation conflicts from backend
                   if (error.response?.data?.conflicts) {
                     setValidationErrors(error.response.data.conflicts || []);

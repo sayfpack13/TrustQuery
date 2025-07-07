@@ -44,6 +44,9 @@ export default function ClusterManagement({
 
   // Loading state for metadata verification
   const [isVerifyingMetadata, setIsVerifyingMetadata] = useState(false);
+  // Add state for delete confirmation modal
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [nodeToDelete, setNodeToDelete] = useState(null);
 
   // Helper function to get enhanced data for a node
   const getEnhancedNodeData = (nodeName) => {
@@ -104,10 +107,6 @@ export default function ClusterManagement({
       const response = await axiosClient.post(
         "/api/admin/cluster-advanced/nodes/verify-metadata"
       );
-      console.log(
-        "Metadata verification completed:",
-        response.data
-      );
       showNotification(
         "success",
         "Node metadata verification completed successfully",
@@ -116,17 +115,30 @@ export default function ClusterManagement({
       // Refresh the nodes list after verification
       await fetchLocalNodes();
     } catch (error) {
-      console.error("Failed to verify metadata:", error);
       showNotification(
         "error",
-        `Failed to verify metadata: ${
-          error.response?.data?.error || error.message
+        `Failed to verify metadata: ${error.response?.data?.error || error.message
         }`,
         faExclamationCircle
       );
     } finally {
       setIsVerifyingMetadata(false);
     }
+  };
+
+  // Add handler for delete button click
+  const handleDeleteClick = (node) => {
+    setNodeToDelete(node);
+    setShowDeleteModal(true);
+  };
+
+  // Add handler for confirming deletion
+  const confirmDelete = async () => {
+    if (!nodeToDelete) return;
+
+    await handleDeleteLocalNode(nodeToDelete.name);
+    setShowDeleteModal(false);
+    setNodeToDelete(null);
   };
 
   return (
@@ -267,23 +279,22 @@ export default function ClusterManagement({
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2">
-                  <div className={`w-4 h-4 rounded-full ${
-                    (localNodes || []).filter(n => n.isRunning).length === localNodes.length 
-                      ? 'bg-green-500 animate-pulse' 
-                      : (localNodes || []).filter(n => n.isRunning).length > 0 
-                        ? 'bg-yellow-500' 
+                  <div className={`w-4 h-4 rounded-full ${(localNodes || []).filter(n => n.isRunning).length === localNodes.length
+                      ? 'bg-green-500 animate-pulse'
+                      : (localNodes || []).filter(n => n.isRunning).length > 0
+                        ? 'bg-yellow-500'
                         : 'bg-red-500'
-                  }`}></div>
+                    }`}></div>
                   <span className="text-white font-medium">
-                    {(localNodes || []).filter(n => n.isRunning).length === localNodes.length 
-                      ? 'All Systems Operational' 
-                      : (localNodes || []).filter(n => n.isRunning).length > 0 
-                        ? 'Partial Operations' 
+                    {(localNodes || []).filter(n => n.isRunning).length === localNodes.length
+                      ? 'All Systems Operational'
+                      : (localNodes || []).filter(n => n.isRunning).length > 0
+                        ? 'Partial Operations'
                         : 'Systems Offline'
                     }
                   </span>
                 </div>
-                
+
                 {/* Quick Stats */}
                 <div className="hidden md:flex items-center space-x-6 text-sm">
                   <div className="flex items-center space-x-2">
@@ -308,7 +319,7 @@ export default function ClusterManagement({
                   )}
                 </div>
               </div>
-              
+
               <div className="text-xs text-neutral-400">
                 Last updated: {new Date().toLocaleTimeString()}
               </div>
@@ -322,11 +333,10 @@ export default function ClusterManagement({
             <div className="flex items-center space-x-6">
               <div className="flex items-center space-x-2">
                 <div
-                  className={`w-3 h-3 rounded-full ${
-                    (localNodes || []).length > 0
+                  className={`w-3 h-3 rounded-full ${(localNodes || []).length > 0
                       ? "bg-green-500"
                       : "bg-gray-500"
-                  }`}
+                    }`}
                 ></div>
                 <span className="text-neutral-300 text-sm">
                   Configured Nodes:{" "}
@@ -337,11 +347,10 @@ export default function ClusterManagement({
               </div>
               <div className="flex items-center space-x-2">
                 <div
-                  className={`w-3 h-3 rounded-full ${
-                    (localNodes || []).filter((n) => n.isRunning).length > 0
+                  className={`w-3 h-3 rounded-full ${(localNodes || []).filter((n) => n.isRunning).length > 0
                       ? "bg-green-500"
                       : "bg-amber-500"
-                  }`}
+                    }`}
                 ></div>
                 <span className="text-neutral-300 text-sm">
                   Running:{" "}
@@ -352,11 +361,10 @@ export default function ClusterManagement({
               </div>
               <div className="flex items-center space-x-2">
                 <div
-                  className={`w-3 h-3 rounded-full ${
-                    (localNodes || []).filter((n) => !n.isRunning).length > 0
+                  className={`w-3 h-3 rounded-full ${(localNodes || []).filter((n) => !n.isRunning).length > 0
                       ? "bg-red-500"
                       : "bg-gray-500"
-                  }`}
+                    }`}
                 ></div>
                 <span className="text-neutral-300 text-sm">
                   Stopped:{" "}
@@ -489,13 +497,12 @@ export default function ClusterManagement({
                       return (
                         <div
                           key={node.name}
-                          className={`bg-neutral-800 rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 ease-in-out border-2 ${
-                            node.isRunning 
-                              ? indicesCount > 0 
-                                ? 'border-green-500' 
+                          className={`bg-neutral-800 rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 ease-in-out border-2 ${node.isRunning
+                              ? indicesCount > 0
+                                ? 'border-green-500'
                                 : 'border-yellow-500'
                               : 'border-red-500'
-                          }`}
+                            }`}
                         >
                           <div className="p-6">
                             {/* Node Header */}
@@ -507,19 +514,18 @@ export default function ClusterManagement({
                                     className="text-white text-xl"
                                   />
                                   {/* Health indicator badge */}
-                                  <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-neutral-800 ${
-                                    node.isRunning 
-                                      ? indicesCount > 0 
-                                        ? 'bg-green-500' 
+                                  <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-neutral-800 ${node.isRunning
+                                      ? indicesCount > 0
+                                        ? 'bg-green-500'
                                         : 'bg-yellow-500'
                                       : 'bg-red-500'
-                                  }`} title={
-                                    node.isRunning 
-                                      ? indicesCount > 0 
-                                        ? 'Healthy - Running with data' 
-                                        : 'Warning - Running but no indices'
-                                      : 'Offline - Node not running'
-                                  }></div>
+                                    }`} title={
+                                      node.isRunning
+                                        ? indicesCount > 0
+                                          ? 'Healthy - Running with data'
+                                          : 'Warning - Running but no indices'
+                                        : 'Offline - Node not running'
+                                    }></div>
                                 </div>
                                 <div>
                                   <h3 className="text-lg font-bold text-white">
@@ -542,11 +548,10 @@ export default function ClusterManagement({
                                 <div className="flex items-center space-x-2">
                                   <FontAwesomeIcon
                                     icon={faCircle}
-                                    className={`${
-                                      node.isRunning
+                                    className={`${node.isRunning
                                         ? "text-green-500"
                                         : "text-red-500"
-                                    } text-xs`}
+                                      } text-xs`}
                                   />
                                   <span className="text-sm font-semibold text-white">
                                     {node.isRunning ? "Running" : "Stopped"}
@@ -773,7 +778,7 @@ export default function ClusterManagement({
                                   <FontAwesomeIcon icon={faPencilAlt} />
                                 </button>
                                 <button
-                                  onClick={disabled ? undefined : () => handleDeleteLocalNode(node.name)}
+                                  onClick={disabled ? undefined : () => handleDeleteClick(node)}
                                   className="text-neutral-400 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                   aria-label="Delete Node"
                                   disabled={disabled}
@@ -793,6 +798,50 @@ export default function ClusterManagement({
           </div>
         </div>
       </section>
+
+      {/* Add Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-[60]">
+          <div className="bg-neutral-800 p-8 rounded-lg shadow-2xl border border-neutral-600 max-w-lg w-full">
+            <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
+              <FontAwesomeIcon icon={faExclamationCircle} className="mr-3 text-red-500" />
+              Confirm Node Deletion
+            </h3>
+            <p className="text-neutral-300 mb-2">
+              Are you sure you want to permanently delete node <span className="font-bold text-white">{nodeToDelete?.name}</span>?
+            </p>
+            <p className="text-red-400 text-sm mb-6">
+              This action will delete all node data and configuration. This cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-4">
+              <button
+                onClick={confirmDelete}
+                className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2"
+                disabled={nodeActionLoading.includes(nodeToDelete?.name)}
+              >
+                {nodeActionLoading.includes(nodeToDelete?.name) ? (
+                  <>
+                    <FontAwesomeIcon icon={faCircleNotch} spin />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon icon={faTrash} />
+                    <span>Delete Node</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg transition-colors"
+                disabled={nodeActionLoading.includes(nodeToDelete?.name)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

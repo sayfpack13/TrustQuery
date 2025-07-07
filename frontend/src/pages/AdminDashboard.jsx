@@ -106,24 +106,17 @@ export default function AdminDashboard({ onLogout }) {
   // REMOVE: Setup wizard notification/banner from dashboard UI. It is now only accessible from the Configuration tab.
 
   const handleEditNode = async (node) => {
-    console.log("handleEditNode called with node:", node);
-    console.log("Node structure:", JSON.stringify(node, null, 2));
-    
     if (!node || !node.name) {
       showNotification("error", "Invalid node data - missing node name", faExclamationTriangle);
-      console.error("handleEditNode received invalid node:", node);
-      console.error("Node object keys:", node ? Object.keys(node) : "null");
       return;
     }
     
     try {
-      console.log(`Opening edit modal for node: ${node.name}`);
       // Fetch latest node details before editing
       const latestNodeDetails = await clusterManagement.getNodeDetails(node.name);
       setNodeToEdit(latestNodeDetails);
       setShowLocalNodeManager(true);
     } catch (error) {
-      console.error("Error fetching node details for editing:", error);
       showNotification("error", "Failed to fetch node details: " + (error.response?.data?.error || error.message), faExclamationTriangle);
     }
   };

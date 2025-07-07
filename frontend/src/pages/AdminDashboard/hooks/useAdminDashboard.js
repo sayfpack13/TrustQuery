@@ -194,14 +194,12 @@ export const useAdminDashboard = () => {
         pollingIntervalRef.current = setInterval(() => {
           fetchAllTasks();
         }, 3000); // Poll every 3 seconds
-        console.log("Started polling for tasks.");
       }
     } else {
       // If no active tasks, clear any existing interval
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
         pollingIntervalRef.current = null;
-        console.log("Stopped polling for tasks.");
       }
     }
 

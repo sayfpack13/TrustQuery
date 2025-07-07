@@ -19,12 +19,12 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
   const [newIndexName, setNewIndexName] = useState('');
   const [newIndexShards, setNewIndexShards] = useState('1');
   const [newIndexReplicas, setNewIndexReplicas] = useState('0');
-  
+
   // Disk usage state
   const [diskStats, setDiskStats] = useState(null);
   const [diskStatsLoading, setDiskStatsLoading] = useState(false);
   const [diskStatsError, setDiskStatsError] = useState(null);
-  
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
 
@@ -40,28 +40,28 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
   // Fetch cached indices from prop instead of API
   const fetchCachedNodeIndices = useCallback(() => {
     if (!node?.name) return;
-    
+
     try {
       const nodeData = enhancedNodesData[node.name];
-      
+
       if (nodeData && nodeData.indices) {
         // Convert indices object to array format expected by the UI
-        const indicesArray = Array.isArray(nodeData.indices) 
-          ? nodeData.indices 
+        const indicesArray = Array.isArray(nodeData.indices)
+          ? nodeData.indices
           : Object.entries(nodeData.indices).map(([indexName, indexData]) => ({
-              index: indexName,
-              'doc.count': indexData["doc.count"] || 0,
-              'store.size': formatBytes(indexData["store.size"]),
-              health: 'green', // Default value since cache doesn't store health
-              status: 'open', // Default value since cache doesn't store status
-              uuid: indexName, // Use index name as fallback UUID for cache
-              creation: {
-                date: {
-                  string: new Date().toISOString() // Fallback date
-                }
+            index: indexName,
+            'doc.count': indexData["doc.count"] || 0,
+            'store.size': formatBytes(indexData["store.size"]),
+            health: 'green', // Default value since cache doesn't store health
+            status: 'open', // Default value since cache doesn't store status
+            uuid: indexName, // Use index name as fallback UUID for cache
+            creation: {
+              date: {
+                string: new Date().toISOString() // Fallback date
               }
-            }));
-        
+            }
+          }));
+
         setNodeIndices(indicesArray);
         setUsingCachedData(!nodeData.isRunning); // Use cached data if node is not running
         setIndicesError(nodeData.error || null);
@@ -70,7 +70,6 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
         setIndicesError(nodeData?.error || 'No data available');
       }
     } catch (error) {
-      console.error("Failed to load node indices", error);
       setIndicesError('Failed to load indices data');
       setNodeIndices([]);
     }
@@ -82,12 +81,11 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
       if (showLoading) setIndicesLoading(true);
       setIndicesError(null);
       setUsingCachedData(false);
-      
+
       try {
         const response = await axiosClient.get(`/api/admin/cluster-advanced/${node.name}/indices`);
         setNodeIndices(response.data || []);
       } catch (error) {
-        console.error("Failed to load live node indices", error);
         setIndicesError(error.response?.data?.error || 'Failed to load indices');
         setNodeIndices([]);
       } finally {
@@ -105,7 +103,6 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
       try {
         fetchCachedNodeIndices();
       } catch (error) {
-        console.error("Error in fetchNodeIndices:", error);
         setIndicesError('Failed to fetch indices data');
       } finally {
         if (showLoading) setIndicesLoading(false);
@@ -116,15 +113,15 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
   // Manual refresh function for the retry button
   const handleManualRefresh = useCallback(async () => {
     if (refreshInProgress.current) return;
-    
+
     setIsRefreshingIndices(true);
     refreshInProgress.current = true;
-    
+
     try {
       if (node.isRunning) {
         // For running nodes, fetch live data first, then update cache
         await fetchLiveNodeIndices(false);
-        
+
         // Trigger a centralized cache refresh
         if (onRefreshNodes) {
           await onRefreshNodes(true);
@@ -134,7 +131,6 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
         fetchCachedNodeIndices();
       }
     } catch (error) {
-      console.error("Manual refresh failed:", error);
       setIndicesError(error.response?.data?.error || 'Refresh failed');
     } finally {
       setIsRefreshingIndices(false);
@@ -146,12 +142,11 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
     if (node && node.isRunning) {
       setDiskStatsLoading(true);
       setDiskStatsError(null);
-      
+
       try {
         const response = await axiosClient.get(`/api/admin/cluster-advanced/nodes/${node.name}/stats`);
         setDiskStats(response.data);
       } catch (error) {
-        console.error("Failed to load disk stats", error);
         setDiskStatsError(error.response?.data?.error || 'Failed to load disk statistics');
         setDiskStats(null);
       } finally {
@@ -224,43 +219,34 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
     refreshInProgress.current = true;
     setIsCreatingIndex(true);
     setIndicesError(null); // Clear any previous errors
-    
+
     try {
-      const response = await axiosClient.post(`/api/admin/cluster-advanced/${node.name}/indices`, {
+      await axiosClient.post(`/api/admin/cluster-advanced/${node.name}/indices`, {
         indexName: newIndexName.trim(),
         shards: parseInt(newIndexShards),
         replicas: parseInt(newIndexReplicas),
       });
-      
+
       // Reset form and close
       setShowCreateIndexForm(false);
       setNewIndexName('');
       setNewIndexShards('1');
       setNewIndexReplicas('0');
-      
-      // Backend already refreshes cache after index creation, so we:
-      // 1. Get fresh live data for the modal immediately
-      // 2. Wait briefly for backend to settle
-      // 3. Refresh centralized data once to update other components
-      
+
       // Get fresh live data for the modal immediately
       await fetchLiveNodeIndices(false);
-      
+
       // Wait for backend cache update to complete
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // Single centralized refresh to update all components
       if (onRefreshNodes) {
         await onRefreshNodes(true);
       }
-      
-      // Show success feedback (you could replace with a toast notification)
-      console.log(`✅ Index '${newIndexName.trim()}' created successfully`);
     } catch (error) {
-      console.error("Failed to create index", error);
       const errorMessage = error.response?.data?.error || error.message || 'Failed to create index';
       setIndicesError(`Failed to create index: ${errorMessage}`);
-      
+
       // Don't close the form on error, let user retry
       setShowCreateIndexForm(true);
     } finally {
@@ -282,34 +268,25 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
     refreshInProgress.current = true;
     setIsDeletingIndex(indexToDelete.index);
     setIndicesError(null); // Clear any previous errors
-    
+
     try {
       // Use the correct node-specific API endpoint
       await axiosClient.delete(`/api/admin/cluster-advanced/${node.name}/indices/${indexToDelete.index}`);
-      
-      // Backend already refreshes cache after index deletion, so we:
-      // 1. Update local modal state with fresh data
-      // 2. Wait briefly for backend cache to settle
-      // 3. Refresh centralized data once to update other components
-      
+
       // Get fresh live data for the modal immediately
       await fetchLiveNodeIndices(false);
-      
+
       // Wait for backend cache update to complete
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // Single centralized refresh to update all components
       if (onRefreshNodes) {
         await onRefreshNodes(true);
       }
-      
-      // Show success feedback
-      console.log(`✅ Index '${indexToDelete.index}' deleted successfully`);
     } catch (err) {
-      console.error("Error deleting index", err);
       const errorMessage = err.response?.data?.error || err.message || 'Failed to delete index';
       setIndicesError(`Failed to delete index: ${errorMessage}`);
-      
+
       // For delete errors, we might want to show an alert as well since it's a destructive operation
       alert(`Failed to delete index '${indexToDelete.index}': ${errorMessage}`);
     } finally {
@@ -503,18 +480,17 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                         <span className="text-sm text-neutral-300">{disk.usedPercent}% used</span>
                       </div>
                       <div className="w-full bg-neutral-800 rounded-full h-2">
-                        <div 
-                          className={`h-2 rounded-full ${
-                            disk.usedPercent > 90 ? 'bg-red-500' :
+                        <div
+                          className={`h-2 rounded-full ${disk.usedPercent > 90 ? 'bg-red-500' :
                             disk.usedPercent > 75 ? 'bg-yellow-500' : 'bg-green-500'
-                          }`}
+                            }`}
                           style={{ width: `${disk.usedPercent}%` }}
                         ></div>
                       </div>
                       <div className="flex justify-between text-xs text-neutral-400 mt-1">
-                        <span>Used: {(disk.used / (1024**3)).toFixed(1)} GB</span>
-                        <span>Free: {(disk.free / (1024**3)).toFixed(1)} GB</span>
-                        <span>Total: {(disk.total / (1024**3)).toFixed(1)} GB</span>
+                        <span>Used: {(disk.used / (1024 ** 3)).toFixed(1)} GB</span>
+                        <span>Free: {(disk.free / (1024 ** 3)).toFixed(1)} GB</span>
+                        <span>Total: {(disk.total / (1024 ** 3)).toFixed(1)} GB</span>
                       </div>
                     </div>
                   ))}
@@ -536,7 +512,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
         }
         return (
           <div>
-            {!node.isRunning && ( 
+            {!node.isRunning && (
               <div className="mb-4 p-4 bg-amber-600 rounded-lg border border-amber-500">
                 <div className="flex items-center space-x-3">
                   <FontAwesomeIcon icon={faExclamationTriangle} className="text-amber-100 text-xl" />
@@ -549,7 +525,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                 </div>
               </div>
             )}
-            
+
             {indicesError && (
               <div className="mb-4 p-4 bg-red-600 rounded-lg border border-red-500">
                 <div className="flex items-start space-x-3">
@@ -565,9 +541,9 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                         disabled={disabled || isRefreshingIndices || refreshInProgress.current}
                         className="bg-red-500 hover:bg-red-400 text-white px-3 py-1 rounded text-sm disabled:opacity-50 flex items-center"
                       >
-                        <FontAwesomeIcon 
-                          icon={faCircleNotch} 
-                          className={`mr-1 ${isRefreshingIndices ? 'fa-spin' : ''}`} 
+                        <FontAwesomeIcon
+                          icon={faCircleNotch}
+                          className={`mr-1 ${isRefreshingIndices ? 'fa-spin' : ''}`}
                         />
                         {isRefreshingIndices ? 'Retrying...' : 'Retry'}
                       </button>
@@ -585,7 +561,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                 </div>
               </div>
             )}
-            
+
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-white flex items-center">
                 Indices on {node.name}
@@ -596,18 +572,17 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
               <div className="flex items-center space-x-2">
                 {/* Cache status indicator */}
                 <div className="flex items-center space-x-1">
-                  <span className={`inline-block w-2 h-2 rounded-full ${
-                    node.isRunning 
-                      ? (usingCachedData ? 'bg-yellow-400' : 'bg-green-400')
-                      : 'bg-blue-400'
-                  }`}></span>
+                  <span className={`inline-block w-2 h-2 rounded-full ${node.isRunning
+                    ? (usingCachedData ? 'bg-yellow-400' : 'bg-green-400')
+                    : 'bg-blue-400'
+                    }`}></span>
                   <span className="text-xs text-neutral-400">
-                    {node.isRunning 
-                      ? (usingCachedData ? 'Smart Cache' : 'Live') 
+                    {node.isRunning
+                      ? (usingCachedData ? 'Smart Cache' : 'Live')
                       : 'Cached (Offline)'}
                   </span>
                 </div>
-                
+
                 {/* Refresh button */}
                 <button
                   onClick={handleManualRefresh}
@@ -615,13 +590,13 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                   className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                   title="Refresh indices data"
                 >
-                  <FontAwesomeIcon 
-                    icon={faCircleNotch} 
-                    className={`mr-1 ${isRefreshingIndices ? 'fa-spin' : ''}`} 
+                  <FontAwesomeIcon
+                    icon={faCircleNotch}
+                    className={`mr-1 ${isRefreshingIndices ? 'fa-spin' : ''}`}
                   />
                   {isRefreshingIndices ? 'Refreshing...' : 'Refresh'}
                 </button>
-                
+
                 {/* Create index button */}
                 {node.isRunning ? (
                   <button
@@ -629,9 +604,9 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                     disabled={disabled || isCreatingIndex || refreshInProgress.current}
                     className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
                   >
-                    <FontAwesomeIcon 
-                      icon={isCreatingIndex ? faCircleNotch : faPlus} 
-                      className={`mr-2 ${isCreatingIndex ? 'fa-spin' : ''}`} 
+                    <FontAwesomeIcon
+                      icon={isCreatingIndex ? faCircleNotch : faPlus}
+                      className={`mr-2 ${isCreatingIndex ? 'fa-spin' : ''}`}
                     />
                     {isCreatingIndex ? 'Creating...' : 'Create Index'}
                   </button>
@@ -647,7 +622,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                 )}
               </div>
             </div>
-            
+
             {showCreateIndexForm && (
               <div className="bg-neutral-700 p-6 rounded-lg mb-4 shadow-lg border border-neutral-600">
                 <h4 className="text-xl font-bold mb-4 text-primary flex items-center">
@@ -664,11 +639,10 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                       onChange={(e) => setNewIndexName(e.target.value)}
                       placeholder="e.g. logs-2025"
                       autoFocus
-                      className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
-                        newIndexName && !isValidIndexName 
-                          ? 'border-red-500 focus:ring-red-500' 
-                          : 'border-neutral-600 focus:ring-blue-500'
-                      }`}
+                      className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${newIndexName && !isValidIndexName
+                        ? 'border-red-500 focus:ring-red-500'
+                        : 'border-neutral-600 focus:ring-blue-500'
+                        }`}
                     />
                     {newIndexName && !isValidIndexName && (
                       <p className="text-red-400 text-xs mt-1">
@@ -685,11 +659,10 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                         value={newIndexShards}
                         onChange={(e) => setNewIndexShards(e.target.value)}
                         min="1"
-                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
-                          !isValidShards 
-                            ? 'border-red-500 focus:ring-red-500' 
-                            : 'border-neutral-600 focus:ring-blue-500'
-                        }`}
+                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${!isValidShards
+                          ? 'border-red-500 focus:ring-red-500'
+                          : 'border-neutral-600 focus:ring-blue-500'
+                          }`}
                       />
                       {!isValidShards && (
                         <p className="text-red-400 text-xs mt-1">Must be at least 1</p>
@@ -703,11 +676,10 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                         value={newIndexReplicas}
                         onChange={(e) => setNewIndexReplicas(e.target.value)}
                         min="0"
-                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
-                          !isValidReplicas 
-                            ? 'border-red-500 focus:ring-red-500' 
-                            : 'border-neutral-600 focus:ring-blue-500'
-                        }`}
+                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${!isValidReplicas
+                          ? 'border-red-500 focus:ring-red-500'
+                          : 'border-neutral-600 focus:ring-blue-500'
+                          }`}
                       />
                       {!isValidReplicas && (
                         <p className="text-red-400 text-xs mt-1">Must be 0 or greater</p>
@@ -720,14 +692,14 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                       className="px-5 py-2 rounded bg-primary hover:bg-blue-500 text-white font-semibold shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-600 flex items-center gap-2"
                       disabled={disabled || isCreatingIndex || !node.isRunning || !isFormValid}
                       title={
-                        !node.isRunning ? "Node must be running to create indices" : 
-                        !isFormValid ? "Please fix validation errors" : ""
+                        !node.isRunning ? "Node must be running to create indices" :
+                          !isFormValid ? "Please fix validation errors" : ""
                       }
                     >
-                      {isCreatingIndex ? <FontAwesomeIcon icon={faCircleNotch} spin /> : <FontAwesomeIcon icon={faPlus} />} 
+                      {isCreatingIndex ? <FontAwesomeIcon icon={faCircleNotch} spin /> : <FontAwesomeIcon icon={faPlus} />}
                       {isCreatingIndex ? 'Creating...' : 'Create Index'}
                     </button>
-                                        <button
+                    <button
                       type="button"
                       onClick={() => setShowCreateIndexForm(false)}
                       className="px-4 py-2 rounded bg-neutral-600 hover:bg-neutral-500 text-white font-medium transition-colors"
@@ -739,7 +711,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                 </form>
               </div>
             )}
-            
+
             <div className="relative">
               <table className="w-full text-neutral-100 bg-neutral-600 rounded-lg">
                 <thead className="bg-neutral-500">
@@ -771,28 +743,27 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                     nodeIndices.map(index => (
                       <tr key={index.uuid || index.index} className="border-b border-neutral-500">
                         <td className="py-3 px-4">
-                          <span className={`inline-block w-3 h-3 rounded-full ${
-                            index.health === 'green' ? 'bg-green-500' : 
+                          <span className={`inline-block w-3 h-3 rounded-full ${index.health === 'green' ? 'bg-green-500' :
                             index.health === 'yellow' ? 'bg-yellow-500' : 'bg-red-500'
-                          }`}></span>
+                            }`}></span>
                         </td>
                         <td className="py-3 px-4 font-medium">{index.index}</td>
                         <td className="py-3 px-4">
-                          {(index["doc.count"]  || 0
+                          {(index["doc.count"] || 0
                           ).toLocaleString()}
                         </td>
                         <td className="py-3 px-4">{formatBytes(index['store.size'])}</td>
                         <td className="py-3 px-4">
-                          <button 
-                            onClick={() => handleDeleteClick(index)} 
+                          <button
+                            onClick={() => handleDeleteClick(index)}
                             className="text-red-500 hover:text-red-400 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors p-1"
                             disabled={disabled || !node.isRunning || isDeletingIndex === index.index || isCreatingIndex || refreshInProgress.current}
                             title={
-                              !node.isRunning ? "Start the node to delete indices" : 
-                              isDeletingIndex === index.index ? "Deleting..." : 
-                              isCreatingIndex ? "Wait for index creation to complete" :
-                              refreshInProgress.current ? "Wait for refresh to complete" :
-                              "Delete index"
+                              !node.isRunning ? "Start the node to delete indices" :
+                                isDeletingIndex === index.index ? "Deleting..." :
+                                  isCreatingIndex ? "Wait for index creation to complete" :
+                                    refreshInProgress.current ? "Wait for refresh to complete" :
+                                      "Delete index"
                             }
                           >
                             {isDeletingIndex === index.index ? (
@@ -807,7 +778,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                   )}
                 </tbody>
               </table>
-              
+
               {/* Loading overlay for table updates */}
               {(indicesLoading || isRefreshingIndices) && nodeIndices.length > 0 && (
                 <div className="absolute inset-0 bg-black bg-opacity-20 flex items-center justify-center rounded-lg">
@@ -818,11 +789,11 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
                 </div>
               )}
             </div>
-            
+
             {/* Last update timestamp */}
             {nodeIndices.length > 0 && (
               <div className="text-xs text-neutral-400 mt-2 text-right">
-                {node.isRunning 
+                {node.isRunning
                   ? `Live data • Updated: ${new Date().toLocaleTimeString()}`
                   : `Cached data • Node offline`
                 }
@@ -914,7 +885,7 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
               <button onClick={confirmDelete} className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg">
                 Delete
               </button>
-                            <button onClick={() => setShowDeleteModal(false)} className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg">
+              <button onClick={() => setShowDeleteModal(false)} className="bg-neutral-600 hover:bg-neutral-500 text-white px-6 py-2 rounded-lg">
                 Cancel
               </button>
             </div>
@@ -922,5 +893,5 @@ export default function NodeDetailsModal({ show, onClose, node, enhancedNodesDat
         </div>
       )}
     </>
-  );
+  )
 }

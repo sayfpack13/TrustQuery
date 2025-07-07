@@ -44,8 +44,6 @@ export default function ConfigurationManagement({
       setConfigLoading(true);
       const response = await axiosClient.get("/api/admin/config");
       
-      console.log("Config response received:", response.data); // Debug log
-      
       setConfig(response.data);
       
       // Set selected search indices
@@ -60,10 +58,7 @@ export default function ConfigurationManagement({
           showRawLineByDefault: adminSettings.showRawLineByDefault || false
         });
       setHasUnsavedSystemChanges(false);
-      
-      console.log("Configuration loaded successfully"); // Debug log
     } catch (err) {
-      console.error("Configuration fetch error:", err);
       showNotification("error", err.response?.data?.error || "Failed to fetch configuration", faTimes);
     } finally {
       setConfigLoading(false);
