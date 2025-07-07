@@ -266,21 +266,22 @@ export default function AdminDashboard({ onLogout }) {
           estimateRemainingTime={estimateRemainingTime}
         />
 
-        {/* File Management Tab */}
+        {/* Main content area */}
+        <div className="mt-8">
+          {/* Files Management Tab */}
         {activeTab === "files" && (
           <FilesManagement 
             showNotification={showNotification}
             isAnyTaskRunning={isAnyTaskRunning}
-            showEditModal={false}
             setTasksList={setTasksList}
             setCurrentRunningTaskId={setCurrentRunningTaskId}
-            availableNodes={clusterManagement.localNodes || []}
-            enhancedNodesData={clusterManagement.enhancedNodesData || {}}
-            disabled={!setupCompleted}
+              availableNodes={clusterManagement.localNodes}
+              enhancedNodesData={clusterManagement.enhancedNodesData}
+              disabled={isAnyTaskRunning}
           />
         )}
 
-        {/* Node Management Tab */}
+          {/* Cluster Management Tab */}
         {activeTab === "cluster" && (
           <ClusterManagement 
             localNodes={clusterManagement.localNodes}
@@ -291,22 +292,20 @@ export default function AdminDashboard({ onLogout }) {
             handleStartLocalNode={clusterManagement.handleStartLocalNode}
             handleStopLocalNode={clusterManagement.handleStopLocalNode}
             handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
-            setShowLocalNodeManager={setupCompleted ? setShowLocalNodeManager : () => {}}
+              setShowLocalNodeManager={setShowLocalNodeManager}
             isAnyTaskRunning={isAnyTaskRunning}
-            onEditNode={setupCompleted ? handleEditNode : () => {}}
-            onOpenNodeDetails={setupCompleted ? handleOpenNodeDetails : () => {}}
+              onEditNode={handleEditNode}
+              onOpenNodeDetails={handleOpenNodeDetails}
             showNotification={showNotification}
-            disabled={!setupCompleted}
-          />
-        )}
-
-        {/* Configuration Tab */}
-        {activeTab === "configuration" && (
-          <ConfigurationManagement 
-            showNotification={showNotification}
-            enhancedNodesData={clusterManagement.enhancedNodesData || {}}
-            setShowSetupWizard={setupCompleted ? setShowSetupWizard : () => {}}
-            disabled={!setupCompleted}
+              disabled={isAnyTaskRunning}
+              // Add new cluster management props
+              clustersList={clusterManagement.clustersList}
+              clustersLoading={clusterManagement.clustersLoading}
+              clusterActionLoading={clusterManagement.clusterActionLoading}
+              fetchClusters={clusterManagement.fetchClusters}
+              createCluster={clusterManagement.createCluster}
+              updateCluster={clusterManagement.updateCluster}
+              deleteCluster={clusterManagement.deleteCluster}
           />
         )}
 
@@ -315,10 +314,21 @@ export default function AdminDashboard({ onLogout }) {
           <AccountManagement 
             showNotification={showNotification}
             isAnyTaskRunning={isAnyTaskRunning}
-            enhancedNodesData={clusterManagement.enhancedNodesData || {}}
-            disabled={!setupCompleted}
+              enhancedNodesData={clusterManagement.enhancedNodesData}
+              disabled={isAnyTaskRunning}
+            />
+          )}
+
+          {/* Configuration Tab */}
+          {activeTab === "configuration" && (
+            <ConfigurationManagement
+              showNotification={showNotification}
+              enhancedNodesData={clusterManagement.enhancedNodesData}
+              setShowSetupWizard={setShowSetupWizard}
+              disabled={isAnyTaskRunning}
           />
         )}
+        </div>
       </div>
 
       {/* Modals Section - Moved outside main container for proper overlay */}
@@ -334,6 +344,7 @@ export default function AdminDashboard({ onLogout }) {
           nodeToEdit={nodeToEdit}
           mode={nodeToEdit ? 'edit' : 'create'}
           disabled={!setupCompleted}
+          showNotification={showNotification}
         />
       )}
 

@@ -9,6 +9,11 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
   const [nodeActionLoading, setNodeActionLoading] = useState([]);
   const [enhancedNodesData, setEnhancedNodesData] = useState({});
 
+  // State for cluster management
+  const [clustersList, setClustersList] = useState([]);
+  const [clustersLoading, setClustersLoading] = useState(false);
+  const [clusterActionLoading, setClusterActionLoading] = useState([]);
+
   // State for node creation/editing form
   const [newNodeName, setNewNodeName] = useState('');
   const [newNodeHost, setNewNodeHost] = useState('localhost');
@@ -26,15 +31,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
   // Memory management state
   const [newNodeHeapSize, setNewNodeHeapSize] = useState('');
   const [systemMemoryInfo, setSystemMemoryInfo] = useState(null);
-
-  // Available clusters (derived from existing nodes + default)
-  const clusters = useMemo(() => {
-    const existingClusters = localNodes && Array.isArray(localNodes) ? [...new Set(localNodes.map(n => n.cluster || 'trustquery-cluster'))] : [];
-    if (!existingClusters.includes('trustquery-cluster')) {
-      existingClusters.unshift('trustquery-cluster');
-    }
-    return existingClusters;
-  }, [localNodes]);
 
   // Use ref to store the notification function to avoid dependency changes
   const showNotificationRef = useRef(showNotification);
@@ -58,6 +54,80 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       setClusterLoading(false);
     }
   }, []);
+
+  // Available clusters: always use clustersList from backend
+  const clusters = useMemo(() => {
+    return clustersList && clustersList.length > 0
+      ? clustersList.map(cluster => cluster.name)
+      : ['trustquery-cluster'];
+  }, [clustersList]);
+
+  // Fetch all clusters
+  const fetchClusters = useCallback(async () => {
+    setClustersLoading(true);
+    try {
+      const response = await axiosClient.get('/api/admin/cluster-advanced/clusters');
+      setClustersList(response.data.clusters || []);
+      return response.data.clusters;
+    } catch (error) {
+      showNotificationRef.current('error', 'Failed to fetch clusters', faExclamationTriangle);
+      return [];
+    } finally {
+      setClustersLoading(false);
+    }
+  }, []);
+
+  // Update cluster name
+  const updateCluster = useCallback(async (clusterName, newClusterName) => {
+    if (!clusterName || !newClusterName) {
+      showNotificationRef.current('error', 'Cluster name and new name are required', faExclamationTriangle);
+      return;
+    }
+    setClusterActionLoading(prev => [...prev, clusterName]);
+    try {
+      const response = await axiosClient.put(`/api/admin/cluster-advanced/clusters/${clusterName}`, {
+        newName: newClusterName
+      });
+      showNotificationRef.current('success', `Cluster "${clusterName}" renamed to "${newClusterName}" successfully`, faCheckCircle);
+      // Always refresh clusters after rename
+      await fetchClusters();
+      await fetchLocalNodes();
+      return response.data;
+    } catch (error) {
+      showNotificationRef.current('error', `Failed to update cluster: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      throw error;
+    } finally {
+      setClusterActionLoading(prev => prev.filter(name => name !== clusterName));
+    }
+  }, [fetchClusters, fetchLocalNodes]);
+
+  // Delete cluster
+  const deleteCluster = useCallback(async (clusterName, targetCluster = null) => {
+    if (!clusterName) {
+      showNotificationRef.current('error', 'Cluster name is required', faExclamationTriangle);
+      return;
+    }
+    setClusterActionLoading(prev => [...prev, clusterName]);
+    try {
+      const requestBody = targetCluster ? { targetCluster } : {};
+      const response = await axiosClient.delete(`/api/admin/cluster-advanced/clusters/${clusterName}`, {
+        data: requestBody
+      });
+      showNotificationRef.current('success', response.data.message, faCheckCircle);
+      // Always refresh clusters after delete
+      await fetchClusters();
+      await fetchLocalNodes();
+      return response.data;
+    } catch (error) {
+      if (error.response?.status === 409 && error.response?.data?.reason === 'cluster_not_empty') {
+        throw error;
+      }
+      showNotificationRef.current('error', `Failed to delete cluster: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      throw error;
+    } finally {
+      setClusterActionLoading(prev => prev.filter(name => name !== clusterName));
+    }
+  }, [fetchClusters, fetchLocalNodes]);
 
   // Fetch system memory info
   const fetchSystemMemoryInfo = useCallback(async () => {
@@ -282,13 +352,19 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
 
   const createCluster = useCallback(async (clusterName) => {
     try {
-      // For now, we'll just add it to the cluster list when a node is created with it
-      // This could be extended to actually register clusters on the backend
-      showNotificationRef.current('success', `Cluster "${clusterName}" will be created when first node is added`, faCheckCircle);
+      // Call the backend API to create the cluster
+      const response = await axiosClient.post('/api/admin/cluster-advanced/clusters', { name: clusterName });
+      showNotificationRef.current('success', `Cluster "${clusterName}" created successfully`, faCheckCircle);
+      
+      // Refresh clusters list after creating a new cluster
+      await fetchClusters();
+      
+      return response.data;
     } catch (error) {
-      showNotificationRef.current('error', `Failed to create cluster: ${error.message}`, faExclamationTriangle);
+      showNotificationRef.current('error', `Failed to create cluster: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      throw error;
     }
-  }, []);
+  }, [fetchClusters]);
 
   // Move node to a new location
   const moveNode = useCallback(async (nodeName, newPath, preserveData = true) => {
@@ -335,6 +411,23 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
     }
   }, [fetchLocalNodes]);
 
+  const changeNodeCluster = useCallback(async (nodeName, clusterName) => {
+    try {
+      const response = await axiosClient.put(`/api/admin/cluster-advanced/nodes/${nodeName}/cluster`, { cluster: clusterName });
+      showNotificationRef.current('success', `Node "${nodeName}" moved to cluster "${clusterName}"`, faCheckCircle);
+      fetchLocalNodes(); // Refresh node list to show updated cluster assignment
+      return response.data;
+    } catch (error) {
+      showNotificationRef.current('error', `Failed to change node cluster: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      throw error;
+    }
+  }, [fetchLocalNodes]);
+
+  // Initialize by fetching clusters
+  useEffect(() => {
+    fetchClusters();
+  }, [fetchClusters]);
+
   return {
     localNodes,
     enhancedNodesData,
@@ -347,6 +440,13 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
     handleStartLocalNode,
     handleStopLocalNode,
     getNodeDetails,
+    // Cluster management
+    clustersList,
+    clustersLoading,
+    clusterActionLoading,
+    fetchClusters,
+    updateCluster,
+    deleteCluster,
     // Form state
     newNodeName,
     setNewNodeName,
@@ -370,6 +470,7 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
     fetchSystemMemoryInfo,
     clusters,
     createCluster,
+    changeNodeCluster,
     resetNodeForm,
     moveNode,
     copyNode

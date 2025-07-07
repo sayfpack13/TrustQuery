@@ -28,7 +28,8 @@ const LocalNodeManager = ({
   clusterManagement,
   mode = 'create', // 'create' or 'edit'
   nodeToEdit,
-  disabled = false
+  disabled = false,
+  showNotification
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(true);
   const [newClusterName, setNewClusterName] = useState('');
@@ -81,6 +82,7 @@ const LocalNodeManager = ({
     clusters,
     createLocalNode,
     createCluster,
+    changeNodeCluster,
     updateLocalNode,
     moveNode,
     copyNode
@@ -176,8 +178,14 @@ const LocalNodeManager = ({
       setNewNodeHost('localhost');
       setNewNodePort('9200');
       setNewNodeTransportPort('9300');
-      setNewNodeCluster('trustquery-cluster');
-      
+
+      // Set cluster to first available cluster if present, else fallback
+      if (clusters && clusters.length > 0) {
+        setNewNodeCluster(clusters[0]);
+      } else {
+        setNewNodeCluster('trustquery-cluster');
+      }
+
       // Only set default paths in create mode
       if (backendBasePath) {
         setNewNodeDataPath(`${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}${defaultName}${backendBasePath.includes('\\') ? '\\' : '/'}data`);
@@ -186,7 +194,7 @@ const LocalNodeManager = ({
         setNewNodeDataPath('');
         setNewNodeLogsPath('');
       }
-      
+
       setNewNodeHeapSize('1g');
       setNewNodeRoles({
         master: true,
@@ -423,12 +431,27 @@ const LocalNodeManager = ({
   const handleClusterChange = async (clusterName) => {
     setNewNodeCluster(clusterName);
     
+    // If in edit mode and the node exists, offer to change the cluster assignment
+    if (mode === 'edit' && nodeToEdit && clusterName !== nodeToEdit.cluster) {
+      // Only attempt to change cluster if the node is not running
+      if (nodeToEdit.isRunning) {
+        // Show a warning that node must be stopped first
+        showNotification('warning', 'Node must be stopped before changing its cluster', faExclamationTriangle);
+        return;
+      }
+      
+      try {
+        await changeNodeCluster(nodeToEdit.name, clusterName);
+        // No need to update state as fetchLocalNodes will refresh everything
+      } catch (error) {
+        // Error is already handled in the hook
+      }
+    }
+    
     // Clear any pending validation timeout to avoid conflicts
     if (validationTimeoutRef.current) {
       clearTimeout(validationTimeoutRef.current);
     }
-    
-    // No auto-validation here - only manual validation on button click
   };
 
   return (
@@ -529,6 +552,13 @@ const LocalNodeManager = ({
                   <FontAwesomeIcon icon={faPlus} />
                 </button>
               </div>
+              {/* Add warning message for running nodes in edit mode */}
+              {mode === 'edit' && nodeToEdit?.isRunning && (
+                <p className="text-amber-400 text-xs mt-1">
+                  <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
+                  Node must be stopped before changing its cluster
+                </p>
+              )}
               {showNewCluster && (
                 <div className="mt-2 flex space-x-2">
                   <input

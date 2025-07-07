@@ -148,9 +148,11 @@ async function createNode(nodeConfig) {
       dataPath,
       logsPath,
       roles = { master: true, data: true, ingest: true },
-      clusterName = 'trustquery-cluster',
-      heapSize = '1g'  // Add heapSize parameter with default
+      heapSize = '1g'
     } = nodeConfig;
+
+    // Accept cluster name from either 'cluster' or 'clusterName' (frontend sends 'cluster')
+    const clusterName = nodeConfig.cluster || nodeConfig.clusterName || 'trustquery-cluster';
 
     if (!name) {
       throw new Error('Node name is required');
@@ -230,7 +232,7 @@ async function createNode(nodeConfig) {
         name,
         dataPath: finalDataPath,
         logsPath: finalLogsPath,
-        clusterName,
+        cluster: clusterName, // Use 'cluster' for consistency with frontend and config.json
         port,
         configPath,
         servicePath
