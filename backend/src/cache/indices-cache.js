@@ -90,7 +90,7 @@ async function refreshCacheForRunningNodes(nodes) {
                     for (const [indexName, indexStats] of Object.entries(statsData.indices)) {
                         if (indexStats && indexStats.primaries && indexStats.primaries.docs && indexStats.primaries.store) {
                             indices[indexName] = {
-                                "doc.count": indexStats.primaries.doc.count || 0,
+                                "doc.count": indexStats.primaries.docs.count || 0,
                                 "store.size": indexStats.primaries.store.size_in_bytes || 0,
                             };
                         }
