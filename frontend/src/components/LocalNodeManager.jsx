@@ -146,41 +146,55 @@ const LocalNodeManager = ({
       const newName = e.target.value;
       const oldName = newNodeName;
       setNewNodeName(newName);
-      updatePathsForNewName(newName, oldName, newNodeDataPath, newNodeLogsPath, setNewNodeDataPath, setNewNodeLogsPath);
+      
+      // Only update paths in create mode
+      if (mode === 'create') {
+        updatePathsForNewName(newName, oldName, newNodeDataPath, newNodeLogsPath, setNewNodeDataPath, setNewNodeLogsPath);
+      }
   };
 
   useEffect(() => {
     if (mode === 'edit' && nodeToEdit) {
+      // In edit mode, use the exact paths from the existing node
       setNewNodeName(nodeToEdit.name || '');
       setNewNodeHost(nodeToEdit.host || 'localhost');
       setNewNodePort(nodeToEdit.port || '9200');
       setNewNodeTransportPort(nodeToEdit.transportPort || '9300');
       setNewNodeCluster(nodeToEdit.cluster || 'trustquery-cluster');
-      setNewNodeDataPath(nodeToEdit.dataPath || `C:\\elasticsearch\\nodes\\${nodeToEdit.name}\\data`);
-      setNewNodeLogsPath(nodeToEdit.logsPath || `C:\\elasticsearch\\nodes\\${nodeToEdit.name}\\logs`);
-      setNewNodeHeapSize(nodeToEdit.heapSize || '1g'); // Set default heap size if not provided
+      setNewNodeDataPath(nodeToEdit.dataPath); // Use exact path, no default
+      setNewNodeLogsPath(nodeToEdit.logsPath); // Use exact path, no default
+      setNewNodeHeapSize(nodeToEdit.heapSize || '1g');
       setNewNodeRoles(nodeToEdit.roles || {
         master: true,
         data: true,
         ingest: true,
       });
     } else if (mode === 'create') {
-      // Reset form for create mode
-      setNewNodeName('');
+      // Reset form for create mode with default paths
+      const defaultName = '';
+      setNewNodeName(defaultName);
       setNewNodeHost('localhost');
       setNewNodePort('9200');
       setNewNodeTransportPort('9300');
       setNewNodeCluster('trustquery-cluster');
-      setNewNodeDataPath('');
-      setNewNodeLogsPath('');
-      setNewNodeHeapSize('1g'); // Set default heap size for new nodes
+      
+      // Only set default paths in create mode
+      if (backendBasePath) {
+        setNewNodeDataPath(`${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}${defaultName}${backendBasePath.includes('\\') ? '\\' : '/'}data`);
+        setNewNodeLogsPath(`${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}${defaultName}${backendBasePath.includes('\\') ? '\\' : '/'}logs`);
+      } else {
+        setNewNodeDataPath('');
+        setNewNodeLogsPath('');
+      }
+      
+      setNewNodeHeapSize('1g');
       setNewNodeRoles({
         master: true,
         data: true,
         ingest: true,
       });
     }
-  }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles, setNewNodeHeapSize]);
+  }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles, setNewNodeHeapSize, backendBasePath]);
 
   // Remove auto-validation on input change - validation now only happens on button click
 
@@ -934,10 +948,9 @@ const LocalNodeManager = ({
                   port: parseInt(newNodePort),
                   transportPort: parseInt(newNodeTransportPort),
                   cluster: newNodeCluster,
-                  dataPath: newNodeDataPath,
-                  logsPath: newNodeLogsPath,
                   roles: newNodeRoles,
                   heapSize: newNodeHeapSize
+                  // Explicitly omit dataPath and logsPath in edit mode
                 };
                 
                 console.log('Updating node with config:', nodeConfig);
