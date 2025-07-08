@@ -151,12 +151,9 @@ async function updateNode(nodeName, updates, options = {}) {
 async function removeNode(nodeName) {
   let wasRunning = false;
   try {
-    console.log(`🗑️ Starting removal process for node: ${nodeName}`);
-
     // Check if node is running and stop it first
     wasRunning = await isNodeRunning(nodeName);
     if (wasRunning) {
-      console.log(`🛑 Node ${nodeName} is running, stopping it first...`);
       try {
         await stopNode(nodeName);
 

@@ -21,38 +21,23 @@ function initializeElasticsearchClients() {
     .filter(Boolean);
   if (nodeUrls.length > 0) {
     es = new Client({ nodes: nodeUrls });
-    console.log(
-      `🔍 Initialized main Elasticsearch client with nodes: ${nodeUrls.join(
-        ", "
-      )}`
-    );
   } else {
     // Fall back to default configuration
     const { DEFAULT_CONFIG } = require("../config");
     const defaultNodes = DEFAULT_CONFIG.elasticsearchNodes;
     es = new Client({ nodes: defaultNodes });
-    console.log(
-      `🔍 Initialized main Elasticsearch client with default nodes: ${defaultNodes.join(
-        ", "
-      )}`
-    );
   }
 
   const writeNode = getConfig("writeNode");
   if (writeNode) {
     esWrite = new Client({ node: writeNode });
-    console.log(`✍️ Initialized write client for node: ${writeNode}`);
   } else {
     // Fall back to default write node or use main client
     const { DEFAULT_CONFIG } = require("../config");
     const defaultWriteNode = DEFAULT_CONFIG.writeNode;
     if (defaultWriteNode) {
       esWrite = new Client({ node: defaultWriteNode });
-      console.log(
-        `✍️ Initialized write client with default node: ${defaultWriteNode}`
-      );
     } else {
-      console.log("✍️ Using main client for writes");
       esWrite = es;
     }
   }
@@ -61,20 +46,13 @@ function initializeElasticsearchClients() {
   const writeNodeMetadata = buildNodeMetadata(nodeMetadata?.[writeNodeName] || { name: writeNodeName });
   if (writeNodeMetadata && writeNodeMetadata.nodeUrl) {
     esWrite = new Client({ node: writeNodeMetadata.nodeUrl });
-    console.log(
-      `✍️ Initialized write client for node: ${writeNodeMetadata.nodeUrl}`
-    );
   } else {
     // Fall back to default write node or use main client
     const { DEFAULT_CONFIG } = require("../config");
     const defaultWriteNode = DEFAULT_CONFIG.writeNode;
     if (defaultWriteNode) {
       esWrite = new Client({ node: defaultWriteNode });
-      console.log(
-        `✍️ Initialized write client with default node: ${defaultWriteNode}`
-      );
     } else {
-      console.log("✍️ Using main client for writes");
       esWrite = es;
     }
   }
@@ -106,7 +84,6 @@ async function isElasticsearchAvailable() {
     await es.ping();
     return true;
   } catch (error) {
-    console.warn("⚠️ Elasticsearch not available:", error.message);
     return false;
   }
 }

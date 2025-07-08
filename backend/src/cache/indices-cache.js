@@ -79,9 +79,9 @@ async function refreshClusterCache() {
     const port = node.port || 9200;
     const nodeUrl = `http://${host}:${port}`;
 
-    // Use port-based check for node status
-    const portOpen = await isPortOpen(host, port, 1000);
-    if (portOpen) {
+    // Use improved isNodeRunning (port + HTTP check)
+    const nodeActuallyRunning = await clusterManager.isNodeRunning(nodeName);
+    if (nodeActuallyRunning) {
       // Node is online, fetch fresh data
       try {
         const client = getSingleNodeClient(nodeUrl);
@@ -150,8 +150,8 @@ async function refreshClusterCache() {
         }
       }
     } else {
-      // Port is closed, node is offline
-      console.log(`Node ${nodeName} port ${port} is closed (offline).`);
+      // Node is not truly running, mark as offline
+      console.log(`Node ${nodeName} is not truly running (port or HTTP check failed).`);
       if (currentCache[nodeName]) {
         newCache[nodeName] = {
           ...currentCache[nodeName],

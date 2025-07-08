@@ -165,8 +165,15 @@ export const useAdminDashboard = () => {
     return timeString.trim();
   };
 
-  // Function to remove a task from the list (dismiss from UI)
-  const removeTask = (idToRemove) => {
+  // Function to remove a task from the list (dismiss from UI and backend)
+  const removeTask = async (idToRemove) => {
+    try {
+      // Call backend to delete the task if completed
+      await axiosClient.delete(`/api/admin/tasks/${idToRemove}`);
+    } catch (err) {
+      // Ignore backend errors for now, still remove from UI
+      console.error('Failed to delete task in backend:', err);
+    }
     setTasksList((prev) => prev.filter((t) => t.taskId !== idToRemove));
     // If the task being removed is the currently running one, clear currentRunningTaskId
     if (idToRemove === currentRunningTaskId) {

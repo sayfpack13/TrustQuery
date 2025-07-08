@@ -2,7 +2,7 @@ const net = require("net");
 const { getConfig } = require("../config");
 
 /**
- * Check if a node is running and ready (TCP port check)
+ * Check if a node is running and ready (TCP port + HTTP check)
  */
 async function isNodeRunning(nodeName) {
   const nodeMetadata = getConfig("nodeMetadata") || {};
@@ -10,7 +10,23 @@ async function isNodeRunning(nodeName) {
   if (!metadata) return false;
   const host = metadata.host || "localhost";
   const port = metadata.port || 9200;
-  return isPortOpen(host, port, 1000);
+  // First, check if the port is open
+  const portOpen = await isPortOpen(host, port, 1000);
+  if (!portOpen) return false;
+  // Next, check if the Elasticsearch HTTP endpoint responds
+  try {
+    const url = `http://${host}:${port}/`;
+    const res = await fetch(url, { timeout: 1000 });
+    if (res.status === 200) {
+      const body = await res.json();
+      if (body && body.version) {
+        return true;
+      }
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
 }
 
 /**

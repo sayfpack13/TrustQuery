@@ -179,7 +179,6 @@ router.get('/system-info', verifyJwt, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error getting system info:', error);
     res.status(500).json({ error: 'Failed to get system information', details: error.message });
   }
 });
@@ -193,7 +192,6 @@ router.get("/system-memory", verifyJwt, async (req, res) => {
       memory: memoryInfo
     });
   } catch (error) {
-    console.error('Error getting system memory:', error);
     res.status(500).json({ error: 'Failed to get system memory information' });
   }
 });
@@ -416,7 +414,6 @@ router.post('/validate-elasticsearch', verifyJwt, async (req, res) => {
             }
           } catch (cmdError) {
             // Continue to next command
-            console.log(`Version command failed: ${versionCommand}`, cmdError.message);
           }
         }
         
@@ -476,7 +473,6 @@ router.post('/validate-elasticsearch', verifyJwt, async (req, res) => {
 
     res.json(validation);
   } catch (error) {
-    console.error('Error validating configuration:', error);
     res.status(500).json({ error: 'Failed to validate configuration', details: error.message });
   }
 });
@@ -539,7 +535,6 @@ router.post('/initialize', verifyJwt, async (req, res) => {
     for (const dir of directoriesToCreate) {
       try {
         await fs.mkdir(dir, { recursive: true });
-        console.log(`Created directory: ${dir}`);
       } catch (error) {
         if (error.code !== 'EEXIST') {
           console.warn(`Warning: Could not create directory ${dir}:`, error.message);
@@ -564,7 +559,6 @@ router.post('/initialize', verifyJwt, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error initializing setup:', error);
     res.status(500).json({ error: 'Failed to initialize setup', details: error.message });
   }
 });
@@ -606,7 +600,6 @@ router.get('/status', verifyJwt, async (req, res) => {
       isFirstTimeUse: isFirstTime
     });
   } catch (error) {
-    console.error('Error getting setup status:', error);
     res.status(500).json({ error: 'Failed to get setup status', details: error.message });
   }
 });
@@ -705,7 +698,6 @@ router.post('/test-connection', verifyJwt, async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Error testing connection:', error);
     res.json({
       connected: false,
       url: `http://${req.body.host || 'localhost'}:${req.body.port || 9200}`,
@@ -774,7 +766,6 @@ router.post("/create-node", verifyJwt, async (req, res) => {
 
     // ... rest of existing code ...
   } catch (error) {
-    console.error('Error creating node:', error);
     res.status(500).json({ error: 'Failed to create node', details: error.message });
   }
 });
@@ -833,7 +824,6 @@ router.put("/update-node/:nodeName", verifyJwt, async (req, res) => {
       result
     });
   } catch (error) {
-    console.error(`Error updating node ${req.params.nodeName}:`, error);
     res.status(500).json({ error: 'Failed to update node', details: error.message });
   }
 });

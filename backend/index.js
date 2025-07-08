@@ -479,8 +479,6 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
 
   (async () => {
     try {
-      console.log(`Task ${taskId}: Starting parsing for ${filename}`);
-
       // Determine target index and node for this parsing operation
       const parseTargetIndex = targetIndex || getSelectedIndex();
       let parseTargetNode = targetNode || getConfig("writeNode");
@@ -536,10 +534,7 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
         }
       );
 
-      console.log(`Task ${taskId}: Successfully parsed and indexed ${totalLinesInFile} lines.`);
-
       await fs.rename(filePath, parsedFilePath);
-      console.log(`Task ${taskId}: Moved ${filename} to parsed directory.`);
 
       updateTask(taskId, {
         status: "completed",
@@ -1229,10 +1224,9 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
 
 // GET all current tasks
 app.get("/api/admin/tasks", verifyJwt, (req, res) => {
-  // Filter for tasks that are not completed and not in an error state.
+  // Return all tasks so the frontend can filter for active/recent/completed
   const allTasks = getAllTasks();
-  const activeTasks = Object.values(allTasks).filter((task) => !task.completed && task.status !== "error");
-  res.json(activeTasks);
+  res.json(Object.values(allTasks));
 });
 
 // GET a specific task
@@ -1244,6 +1238,26 @@ app.get("/api/admin/tasks/:taskId", verifyJwt, (req, res) => {
   } else {
     res.status(404).json({ error: "Task not found" });
   }
+});
+
+// DELETE a specific task (only if completed or errored)
+const tasksStore = require("./src/tasks");
+app.delete("/api/admin/tasks/:taskId", verifyJwt, (req, res) => {
+  const { taskId } = req.params;
+  const task = getTask(taskId);
+  if (!task) {
+    return res.status(404).json({ error: "Task not found" });
+  }
+  if (!task.completed && task.status !== "error") {
+    return res.status(400).json({ error: "Cannot delete a task that is not completed or errored" });
+  }
+  // Actually delete from the in-memory store
+  if (tasksStore && tasksStore.deleteTask) {
+    tasksStore.deleteTask(taskId);
+  } else if (tasksStore.tasks) {
+    delete tasksStore.tasks[taskId];
+  }
+  res.json({ message: "Task deleted" });
 });
 
 // POST task actions (clear completed/error, clear all)
@@ -1584,28 +1598,20 @@ app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
 // POST set selected index for new data operations
 app.post("/api/admin/es/select-index", verifyJwt, async (req, res) => {
   const { indexName } = req.body;
-  console.log(`🔄 Received request to change index to: ${indexName}`);
-
   if (!indexName || typeof indexName !== "string") {
-    console.log(`❌ Invalid index name: ${indexName}`);
     return res.status(400).json({ error: "Index name is required" });
   }
 
   try {
-    console.log(`🔍 Checking if index '${indexName}' exists...`);
     // Verify the index exists
     const es = getCurrentES();
     const exists = await es.indices.exists({ index: indexName });
     if (!exists) {
-      console.log(`❌ Index '${indexName}' does not exist`);
       return res.status(404).json({ error: `Index '${indexName}' does not exist` });
     }
 
-    console.log(`💾 Updating selected index to '${indexName}'...`);
     // Update the selected index with proper error handling
     await setSelectedIndex(indexName);
-
-    console.log(`✅ Selected index successfully changed to: ${indexName}`);
 
     res.json({
       message: `Selected index set to '${indexName}'`,

@@ -29,7 +29,6 @@ async function createBaseDirectories(env) {
   for (const dir of baseDirs) {
     try {
       await fs.mkdir(dir, { recursive: true });
-      console.log(`📁 Created directory: ${dir}`);
     } catch (error) {
       if (error.code === "EPERM") {
         throw new Error(

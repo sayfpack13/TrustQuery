@@ -61,7 +61,7 @@ export default function AdminDashboard({ onLogout }) {
   // const [showSetupBanner, setShowSetupBanner] = useState(true); // REMOVE setup banner state
 
   // Custom hook for cluster management
-  const clusterManagement = useClusterManagement(showNotification);
+  const clusterManagement = useClusterManagement(showNotification, fetchAllTasks);
 
   // Fetch tasks on mount and check first time use
   useEffect(() => {
@@ -344,16 +344,12 @@ export default function AdminDashboard({ onLogout }) {
                   fetchLocalNodes={clusterManagement.fetchLocalNodes}
                   handleStartLocalNode={clusterManagement.handleStartLocalNode}
                   handleStopLocalNode={clusterManagement.handleStopLocalNode}
-                  handleDeleteLocalNode={
-                    clusterManagement.handleDeleteLocalNode
-                  }
+                  handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
                   setShowLocalNodeManager={setShowLocalNodeManager}
                   isAnyTaskRunning={isAnyTaskRunning}
                   onEditNode={handleEditNode}
                   onOpenNodeDetails={handleOpenNodeDetails}
                   showNotification={showNotification}
-                  disabled={isAnyTaskRunning}
-                  // Add new cluster management props
                   clustersList={clusterManagement.clustersList}
                   clustersLoading={clusterManagement.clustersLoading}
                   clusterActionLoading={clusterManagement.clusterActionLoading}
@@ -361,6 +357,8 @@ export default function AdminDashboard({ onLogout }) {
                   createCluster={clusterManagement.createCluster}
                   updateCluster={clusterManagement.updateCluster}
                   deleteCluster={clusterManagement.deleteCluster}
+                  fetchAllTasks={fetchAllTasks}
+                  tasksList={tasksList}
                 />
               )}
 

@@ -12,18 +12,15 @@ export default function TaskDetails({ tasks, removeTask, estimateRemainingTime }
   // Sort tasks to show most recent first
   const sortedTasks = [...tasks].sort((a, b) => b.startTime - a.startTime);
 
-  // Filter to show only active or recently completed/errored tasks (e.g., last 5)
-  // Show active tasks or tasks completed/errored in last 10 minutes (600,000 ms)
-  const recentTasks = sortedTasks
-    .filter((task) => !task.completed || (Date.now() - task.startTime < 600000 && task.progress > 0)) // Also filter out tasks with 0 progress that might be "initializing" too long
-    .slice(0, 5); // Limit to top 5 recent tasks
+  // Show all tasks (in-progress, completed, errored) with no time limitation
+  const recentTasks = sortedTasks.slice(0, 20); // Show up to 20 tasks for UI sanity
 
   if (!recentTasks.length) return null;
 
   return (
     <div className="mb-8 p-4 bg-gradient-to-br from-neutral-800 to-neutral-900 rounded-lg shadow-xl border border-neutral-700">
       <h3 className="text-xl font-semibold text-white mb-4 flex items-center">
-        <FontAwesomeIcon icon={faListCheck} className="mr-2 text-blue-400" /> Active/Recent Tasks
+        <FontAwesomeIcon icon={faListCheck} className="mr-2 text-blue-400" /> All Tasks
       </h3>
       <ul className="space-y-4 max-h-60 overflow-y-auto pr-2">
         {recentTasks.map((task) => {
@@ -60,7 +57,8 @@ export default function TaskDetails({ tasks, removeTask, estimateRemainingTime }
                   />
                   {task.type} {task.filename ? `(${task.filename})` : ""}
                 </span>
-                {task.status === "completed" || task.status === "error" ? (
+                {/* Only allow delete for completed tasks */}
+                {isCompleted && (
                   <button
                     onClick={() => removeTask(task.taskId)}
                     className="text-neutral-400 hover:text-white transition-colors duration-150"
@@ -68,7 +66,7 @@ export default function TaskDetails({ tasks, removeTask, estimateRemainingTime }
                   >
                     <FontAwesomeIcon icon={faTimes} />
                   </button>
-                ) : null}
+                )}
               </div>
               <div className="w-full bg-neutral-700 rounded-full h-2.5">
                 <div

@@ -81,7 +81,6 @@ async function initialize() {
       );
     }
     await createBaseDirectories(env);
-    console.log("✅ Elasticsearch Cluster Manager initialized");
     return true;
   } catch (error) {
     console.error("❌ Failed to initialize cluster manager:", error);

@@ -836,23 +836,29 @@ router.post("/nodes/:nodeName/start", verifyJwt, async (req, res) => {
   try {
     const { nodeName } = req.params;
     // Create a persistent task for starting the node
-    const taskId = createTask("Start Node", "starting", nodeName);
+    const taskId = createTask("Start Node", "starting", null, nodeName);
+    // Set progress and total to 1 so it appears in frontend
+    updateTask(taskId, { progress: 1, total: 1 });
     res.json({ taskId });
 
     (async () => {
       try {
-        updateTask(taskId, { status: "starting", message: `Starting node ${nodeName}...` });
+        updateTask(taskId, { status: "starting", message: `Starting node ${nodeName}...`, progress: 1, total: 1 });
         const result = await clusterManager.startNode(nodeName);
         updateTask(taskId, {
           status: "completed",
           completed: true,
           message: result.message || `Node \"${nodeName}\" started successfully`,
+          progress: 1,
+          total: 1
         });
       } catch (error) {
         updateTask(taskId, {
           status: "error",
           error: error.message,
           completed: true,
+          progress: 1,
+          total: 1
         });
       }
     })();
@@ -893,7 +899,6 @@ router.post("/nodes/:nodeName/stop", verifyJwt, async (req, res) => {
 router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
   try {
     const { nodeName } = req.params;
-    console.log(`🗑️ Attempting to remove node: ${nodeName}`);
     // Remove from cluster manager (this will handle filesystem cleanup gracefully)
     const removeResult = await clusterManager.removeNode(nodeName);
     if (removeResult.warnings && removeResult.warnings.length > 0) {
@@ -907,7 +912,6 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
     try {
       const { removeNodeFromCache } = require("../cache/indices-cache");
       await removeNodeFromCache(nodeName);
-      console.log(`📝 Removed node from indices cache: ${nodeName}`);
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to remove node from indices cache:`,
@@ -919,13 +923,11 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
     const currentNodes = getConfig("elasticsearchNodes") || [];
     const updatedNodes = currentNodes.filter((n) => n !== nodeName);
     await setConfig("elasticsearchNodes", updatedNodes);
-    console.log(`📝 Removed node from elasticsearchNodes: ${nodeName}`);
 
     const nodeMetadata = getConfig("nodeMetadata") || {};
     if (nodeMetadata[nodeName]) {
       delete nodeMetadata[nodeName];
       await setConfig("nodeMetadata", nodeMetadata);
-      console.log(`📝 Removed node metadata for: ${nodeName}`);
     }
 
     // Update write node if necessary
@@ -933,10 +935,8 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
     if (currentWriteNode === nodeName) {
       if (updatedNodes.length > 0) {
         await setConfig("writeNode", updatedNodes[0]);
-        console.log(`📝 Updated write node to: ${updatedNodes[0]}`);
       } else {
         await setConfig("writeNode", null);
-        console.log(`📝 Cleared write node (no nodes remaining)`);
       }
     }
 
@@ -977,9 +977,6 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
           const updatedNodes = currentNodes.filter((u) => u !== url);
           await setConfig("elasticsearchNodes", updatedNodes);
           cleaned = true;
-          console.log(
-            `🧹 Emergency cleanup: removed orphaned config for ${nodeName}`
-          );
           break;
         }
       }
@@ -1097,10 +1094,6 @@ router.get("/local-nodes", verifyJwt, async (req, res) => {
 // POST refresh local nodes data and indices cache
 router.post("/local-nodes/refresh", verifyJwt, async (req, res) => {
   try {
-    console.log(
-      "🔄 Performing smart refresh of local nodes data and indices cache..."
-    );
-
     // Use smart refresh that only updates running nodes
     const refreshedCache = await refreshClusterCache();
 
@@ -1324,22 +1317,16 @@ router.delete("/:nodeName/indices/:indexName", verifyJwt, async (req, res) => {
 // GET individual node details
 router.get("/nodes/:nodeName", verifyJwt, async (req, res) => {
   try {
-    console.log(`🔍 Retrieving details for node: ${req.params.nodeName}`);
     const { nodeName } = req.params;
-
     // Get cluster status to find the node (same source as local-nodes endpoint)
     const clusterStatus = await clusterManager.getClusterStatus();
-    console.log(`📝 Cluster has ${clusterStatus.nodes.length} nodes`);
 
     // Find the node by name
     const nodeData = clusterStatus.nodes.find((node) => node.name === nodeName);
 
     if (!nodeData) {
-      console.log(`❌ Node "${nodeName}" not found in cluster status`);
       return res.status(404).json({ error: `Node "${nodeName}" not found` });
     }
-
-    console.log(`✅ Found node "${nodeName}"`);
 
     // Build node URL for compatibility
     const nodeUrl = `http://${nodeData.host}:${nodeData.port}`;
@@ -1365,8 +1352,6 @@ router.post("/nodes/:nodeName/move", verifyJwt, async (req, res) => {
     if (!newPath || typeof newPath !== "string") {
       return res.status(400).json({ error: "New path is required" });
     }
-
-    console.log(`🚚 Moving node "${nodeName}" to: ${newPath}`);
 
     // Ensure node is stopped before moving
     const isRunning = await clusterManager.isNodeRunning(nodeName);
@@ -1453,10 +1438,6 @@ router.post("/nodes/:nodeName/copy", verifyJwt, async (req, res) => {
       return res.status(400).json({ error: "New path is required" });
     }
 
-    console.log(
-      `📋 Copying node "${nodeName}" to "${newNodeName}" at: ${newPath}`
-    );
-
     // Check if new node name already exists
     const existingMetadata = getConfig("nodeMetadata") || {};
     const nodeExists = Object.values(existingMetadata).some(
@@ -1534,7 +1515,6 @@ router.post("/nodes/:nodeName/copy", verifyJwt, async (req, res) => {
 // Manual node metadata verification endpoint (for testing/manual cleanup)
 router.post("/nodes/verify-metadata", verifyJwt, async (req, res) => {
   try {
-    console.log("🔍 Manual node metadata verification requested");
     await clusterManager.verifyNodeMetadata();
     res.json({
       message: "Node metadata verification completed successfully",
@@ -1551,9 +1531,7 @@ router.post("/nodes/verify-metadata", verifyJwt, async (req, res) => {
 // GET node disk usage and stats
 router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
   try {
-    console.log(`🔍 Retrieving stats for node: ${req.params.nodeName}`);
     const { nodeName } = req.params;
-
     // Get node metadata to resolve nodeUrl
     const config = getConfig();
     const nodeMetadata = config.nodeMetadata || {};

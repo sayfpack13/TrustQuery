@@ -5,7 +5,7 @@ const { randomUUID } = require("crypto");
 const tasks = {};
 
 // Helper function to create a new task and add it to the in-memory store
-function createTask(type, initialStatus = "pending", filename = null) {
+function createTask(type, initialStatus = "pending", filename = null, nodeName = null) {
   const taskId = randomUUID();
   tasks[taskId] = {
     taskId: taskId,
@@ -18,6 +18,7 @@ function createTask(type, initialStatus = "pending", filename = null) {
     startTime: Date.now(),
     fileMovedCount: 0,
     filename: filename,
+    nodeName: nodeName,
   };
   return taskId;
 }
@@ -59,11 +60,17 @@ function cleanupOldTasks() {
   });
 }
 
+// Helper function to delete a task by taskId
+function deleteTask(taskId) {
+  delete tasks[taskId];
+}
+
 module.exports = {
   createTask,
   updateTask,
   getActiveTasks,
   getTask,
   getAllTasks,
-  cleanupOldTasks
+  cleanupOldTasks,
+  deleteTask
 }; 

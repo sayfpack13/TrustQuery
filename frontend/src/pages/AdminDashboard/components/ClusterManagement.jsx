@@ -51,6 +51,8 @@ export default function ClusterManagement({
   createCluster,
   updateCluster,
   deleteCluster,
+  fetchAllTasks,
+  tasksList = [], // <-- add default
 }) {
   // Use the enhanced data from the hook instead of local state
   const enhancedNodesData = enhancedNodesDataProp || {};
@@ -260,6 +262,16 @@ export default function ClusterManagement({
     } catch (error) {
       // Error is already handled in the hook
     }
+  };
+
+  // Helper to check if a node has a running task
+  const isNodeTaskRunning = (nodeName) => {
+    return tasksList.some(
+      (task) =>
+        task.nodeName === nodeName &&
+        !task.completed &&
+        task.status !== "error"
+    );
   };
 
   return (
@@ -1365,13 +1377,14 @@ export default function ClusterManagement({
                                 </button>
                               ) : (
                                 <button
-                                  onClick={() =>
-                                    handleStartLocalNode(node.name)
-                                  }
-                                  disabled={isLoading}
+                                  onClick={async () => {
+                                    await handleStartLocalNode(node.name);
+                                    if (typeof fetchAllTasks === 'function') fetchAllTasks();
+                                  }}
+                                  disabled={isLoading || isNodeTaskRunning(node.name)}
                                   className={buttonStyles.create}
                                 >
-                                  {isLoading ? (
+                                  {(isLoading || isNodeTaskRunning(node.name)) ? (
                                     <FontAwesomeIcon icon={faSpinner} spin />
                                   ) : (
                                     "Start"

@@ -60,14 +60,10 @@ async function loadConfig() {
       migrated = true;
     }
     if (migrated) {
-      console.log('🔄 Migrated old config.json to add missing elasticsearchConfig/setupWizard basePath.');
       await saveConfig();
     }
-    // Check for important fields
-    console.log("✅ Configuration loaded from file and contains all critical fields.");
   } catch (error) {
     if (error.code === 'ENOENT') {
-      console.log("📝 No config file found, creating default configuration");
       await saveConfig();
     } else {
       console.error("❌ Error loading config:", error);
@@ -80,9 +76,7 @@ async function loadConfig() {
 // Save configuration to file
 async function saveConfig() {
   try {
-    console.log(`💾 Saving configuration to ${CONFIG_FILE}...`);
     await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2));
-    console.log("✅ Configuration saved to file");
   } catch (error) {
     console.error("❌ Error saving config:", error);
     throw error;
@@ -152,7 +146,6 @@ async function setFullConfig(newConfig) {
   try {
     config = { ...newConfig };
     await saveConfig();
-    console.log('✅ Full config overwritten.');
   } catch (error) {
     console.error('❌ Error overwriting full config:', error);
     throw error;

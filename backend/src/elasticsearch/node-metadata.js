@@ -170,7 +170,6 @@ async function verifyNodeMetadata() {
 
           // If node exists in filesystem but not in metadata, add it
           if (!nodeMetadata[definitiveNodeName]) {
-            console.log(`📝 Adding missing metadata for node ${definitiveNodeName}`);
             const nodeBaseDir = path.join(nodesDir, nodeDirName);
             const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
             
@@ -266,7 +265,6 @@ async function verifyNodeMetadata() {
   if (needsSave) {
     await setConfig("nodeMetadata", nodeMetadata);
     await setConfig("elasticsearchNodes", elasticsearchNodes);
-    console.log("💾 Saved updated node metadata to configuration");
   }
 
   return {

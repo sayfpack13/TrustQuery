@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import axiosClient from '../api/axiosClient';
 import { faExclamationTriangle, faCheckCircle, faCircleNotch } from '@fortawesome/free-solid-svg-icons';
 
-export const useClusterManagement = (showNotification, onCacheRefreshed = null) => {
+export const useClusterManagement = (showNotification,  fetchAllTasks = null) => {
   // State for locally managed node configurations
   const [localNodes, setLocalNodes] = useState([]);
   const [clusterLoading, setClusterLoading] = useState(false);
@@ -234,27 +234,23 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
     setNodeActionLoading(prev => [...prev, nodeName]);
     try {
       showNotificationRef.current('info', `Starting node "${nodeName}"...`, faCircleNotch, true);
-      
-      // Call the start endpoint
-      await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/start`);
-      
+      // Call the start endpoint and get the taskId
+      const response = await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/start`);
+      if (typeof fetchAllTasks === 'function') {
+        fetchAllTasks(); // Fetch tasks immediately after backend responds
+      }
       // Poll for actual started status instead of using timeout
       const pollForNodeStart = async (maxAttempts = 15, interval = 2000) => {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           await new Promise(resolve => setTimeout(resolve, interval));
-          
           try {
             // Force refresh for polling to get accurate status
             const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=true');
             const freshNodes = response.data.nodes || [];
             const freshEnhancedData = response.data.indicesByNodes || {};
-            
-            // Update state with fresh data
             setLocalNodes(freshNodes);
             setEnhancedNodesData(freshEnhancedData);
-            
             const targetNode = freshNodes.find(n => n.name === nodeName);
-            
             if (targetNode?.isRunning) {
               showNotificationRef.current('success', `Node "${nodeName}" started successfully!`, faCheckCircle);
               return true;
@@ -263,16 +259,13 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
             // Continue polling on error
           }
         }
-        
         // If we get here, the node didn't start within the timeout
         showNotificationRef.current('warning', `Node "${nodeName}" may still be starting. Please check its status.`, faExclamationTriangle);
         await fetchLocalNodes(true); // Final refresh to get actual status
         return false;
       };
-      
       // Start polling and wait for result
       await pollForNodeStart();
-      
     } catch (error) {
       showNotificationRef.current('error', `Failed to start node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
       // Refresh nodes data anyway to get current status

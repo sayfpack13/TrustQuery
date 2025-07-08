@@ -45,13 +45,57 @@ async function startNode(nodeName) {
   // Check if node is already running
   const isRunning = await isNodeRunning(nodeName);
   if (isRunning) {
-    console.log(`Node ${nodeName} is already running`);
     return { success: true, message: `Node ${nodeName} is already running` };
   }
 
   try {
-    console.log(`Attempting to start node ${nodeName}...`);
     
+    // Force close any process using the node's HTTP port before starting
+    const portToFree = metadata.port;
+    if (portToFree) {
+      if (process.platform === 'win32') {
+        // Find and kill process using the port on Windows
+        const { execSync } = require('child_process');
+        try {
+          const output = execSync(`netstat -ano | findstr :${portToFree}`);
+          const lines = output.toString().split('\n');
+          for (const line of lines) {
+            if (line.includes('LISTENING')) {
+              const parts = line.trim().split(/\s+/);
+              const pid = parts[parts.length - 1];
+              if (pid && pid !== '0') {
+                try {
+                  execSync(`taskkill /F /PID ${pid}`);
+                } catch (killErr) {
+                  console.warn(`[WARN] Failed to kill PID ${pid}:`, killErr.message);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          // No process found, ignore
+        }
+      } else {
+        // Find and kill process using the port on Linux/macOS
+        const { execSync } = require('child_process');
+        try {
+          const output = execSync(`lsof -i :${portToFree} -t`);
+          const pids = output.toString().split('\n').filter(Boolean);
+          for (const pid of pids) {
+            if (pid && pid !== '0') {
+              try {
+                execSync(`kill -9 ${pid}`);
+              } catch (killErr) {
+                console.warn(`[WARN] Failed to kill PID ${pid}:`, killErr.message);
+              }
+            }
+          }
+        } catch (err) {
+          // No process found, ignore
+        }
+      }
+    }
+
     // Construct nodeUrl if not available
     if (!metadata.nodeUrl && metadata.host && metadata.port) {
       metadata.nodeUrl = `http://${metadata.host}:${metadata.port}`;
@@ -69,7 +113,6 @@ async function startNode(nodeName) {
           throw new Error(`Service script ${metadata.servicePath} is not executable. Please run 'chmod +x ${metadata.servicePath}'`);
         }
       }
-      console.log(`Starting node ${nodeName} using service script: ${metadata.servicePath}`);
       let spawnCmd, spawnArgs;
       if (process.platform === 'win32') {
         spawnCmd = metadata.servicePath;
@@ -94,7 +137,6 @@ async function startNode(nodeName) {
       } else {
         nodeBin = elasticsearchConfig.executable || path.join(elasticsearchConfig.basePath, "bin", "elasticsearch");
       }
-      console.log(`Starting node ${nodeName} using executable: ${nodeBin}`);
       // Pass node-specific configuration
       const args = [
         `-Ecluster.name=${metadata.cluster || "trustquery-cluster"}`,
@@ -124,7 +166,6 @@ async function startNode(nodeName) {
     }
 
     // Wait for node to start (up to 120 seconds)
-    console.log(`Waiting for node ${nodeName} to start...`);
     
     for (let i = 0; i < 120; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -193,7 +234,6 @@ async function stopNode(nodeName) {
         }
         
         if (pid) {
-          console.log(`Stopping node ${nodeName} with PID ${pid}`);
           spawn('taskkill', ['/F', '/PID', pid], { shell: true });
           return { success: true, message: `Node ${nodeName} stopped successfully` };
         }
