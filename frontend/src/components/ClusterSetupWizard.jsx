@@ -714,7 +714,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       <div className="flex justify-between">
         <button
           onClick={onClose}
-          className={buttonStyles.cancel + " px-6 py-2"}
+          className={buttonStyles.cancel }
         >
           Cancel
         </button>

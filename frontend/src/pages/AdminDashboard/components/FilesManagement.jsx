@@ -443,7 +443,7 @@ className={buttonStyles.delete}
           <button
             onClick={handleParseAll}
             disabled={disabled || unparsedFiles.length === 0 || isAnyTaskRunning || showEditModal}
-            className={buttonStyles.refresh}
+            className={buttonStyles.neutral}
           >
             <FontAwesomeIcon icon={faCog} className="mr-2" />
             Parse All Files

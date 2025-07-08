@@ -13,14 +13,15 @@ import {
   faDatabase,
   faFilter,
   faRefresh,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
-import buttonStyles from '../../../components/ButtonStyles';
+import buttonStyles from "../../../components/ButtonStyles";
 
-export default function AccountManagement({ 
+export default function AccountManagement({
   showNotification,
   isAnyTaskRunning,
   enhancedNodesData = {},
-  disabled = false
+  disabled = false,
 }) {
   // Spinner for loading states
   const spinner = (
@@ -34,28 +35,28 @@ export default function AccountManagement({
   const pageSize = 20;
 
   // Node and index filtering state
-  const [selectedNode, setSelectedNode] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState('');
-  
+  const [selectedNode, setSelectedNode] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState("");
+
   // Use enhancedNodesData prop to extract available nodes and indices
   const availableNodes = React.useMemo(() => {
     return Object.entries(enhancedNodesData).map(([nodeName, nodeData]) => ({
       name: nodeName,
       url: nodeData.nodeUrl,
       isRunning: nodeData.isRunning,
-      indices: nodeData.indices || []
+      indices: nodeData.indices || [],
     }));
   }, [enhancedNodesData]);
-  
+
   const availableIndices = React.useMemo(() => {
     const allIndices = [];
     Object.entries(enhancedNodesData).forEach(([nodeName, nodeData]) => {
       if (nodeData.indices) {
-        nodeData.indices.forEach(index => {
-          if (!allIndices.find(idx => idx.index === index.index)) {
+        nodeData.indices.forEach((index) => {
+          if (!allIndices.find((idx) => idx.index === index.index)) {
             allIndices.push({
               ...index,
-              nodeName: nodeName
+              nodeName: nodeName,
             });
           }
         });
@@ -89,13 +90,15 @@ export default function AccountManagement({
   const fetchAccounts = useCallback(async () => {
     try {
       setLoading(true);
-      
+
       // Fetch accounts normally (with node/index filter if selected)
       const params = { page, size: pageSize };
       if (selectedNode) params.node = selectedNode;
       if (selectedIndex) params.index = selectedIndex;
-      
-      const accountsRes = await axiosClient.get("/api/admin/accounts", { params });
+
+      const accountsRes = await axiosClient.get("/api/admin/accounts", {
+        params,
+      });
 
       const fetchedAccounts = accountsRes.data.results || [];
       setAccounts(fetchedAccounts);
@@ -112,11 +115,22 @@ export default function AccountManagement({
       setShowEditModal(false);
       setCurrentEditingAccount(null);
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to fetch accounts", faTimes);
+      showNotification(
+        "error",
+        err.response?.data?.error || "Failed to fetch accounts",
+        faTimes
+      );
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, showNotification, selectedNode, selectedIndex, availableNodes]);
+  }, [
+    page,
+    pageSize,
+    showNotification,
+    selectedNode,
+    selectedIndex,
+    availableNodes,
+  ]);
 
   useEffect(() => {
     if (availableNodes.length > 0) {
@@ -182,18 +196,29 @@ export default function AccountManagement({
 
     setEditLoading(true);
     try {
-      await axiosClient.put(`/api/admin/accounts/${currentEditingAccount.id}`, editFormData);
-      showNotification("success", "Account updated successfully!", faCheckCircle);
-      
+      await axiosClient.put(
+        `/api/admin/accounts/${currentEditingAccount.id}`,
+        editFormData
+      );
+      showNotification(
+        "success",
+        "Account updated successfully!",
+        faCheckCircle
+      );
+
       // Close modal on success
       setShowEditModal(false);
       setCurrentEditingAccount(null);
       setEditFormData({ url: "", username: "", password: "" });
-      
+
       // Refresh the data
       await fetchAccounts();
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to update account", faTimes);
+      showNotification(
+        "error",
+        err.response?.data?.error || "Failed to update account",
+        faTimes
+      );
       // Keep modal open on error so user can retry
     } finally {
       setEditLoading(false);
@@ -215,15 +240,23 @@ export default function AccountManagement({
 
     if (loading || deletingAccountIds.has(accountId)) return; // Prevent double operations
 
-    setDeletingAccountIds(prev => new Set([...prev, accountId]));
+    setDeletingAccountIds((prev) => new Set([...prev, accountId]));
     try {
       await axiosClient.delete(`/api/admin/accounts/${accountId}`);
-      showNotification("success", "Account deleted successfully!", faCheckCircle);
+      showNotification(
+        "success",
+        "Account deleted successfully!",
+        faCheckCircle
+      );
       await fetchAccounts(); // Refresh the data
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to delete account", faTimes);
+      showNotification(
+        "error",
+        err.response?.data?.error || "Failed to delete account",
+        faTimes
+      );
     } finally {
-      setDeletingAccountIds(prev => {
+      setDeletingAccountIds((prev) => {
         const newSet = new Set(prev);
         newSet.delete(accountId);
         return newSet;
@@ -235,7 +268,11 @@ export default function AccountManagement({
   const handleDeleteSelected = async () => {
     if (selected.length === 0 || loading) return;
 
-    if (!window.confirm(`Are you sure you want to delete ${selected.length} selected account(s)?`)) {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete ${selected.length} selected account(s)?`
+      )
+    ) {
       return;
     }
 
@@ -246,11 +283,19 @@ export default function AccountManagement({
         axiosClient.delete(`/api/admin/accounts/${account.id}`)
       );
       await Promise.all(deletePromises);
-      showNotification("success", `${selected.length} account(s) deleted successfully!`, faCheckCircle);
+      showNotification(
+        "success",
+        `${selected.length} account(s) deleted successfully!`,
+        faCheckCircle
+      );
       setSelected([]); // Clear selection
       await fetchAccounts(); // Refresh the data
     } catch (err) {
-      showNotification("error", err.response?.data?.error || "Failed to delete selected accounts", faTimes);
+      showNotification(
+        "error",
+        err.response?.data?.error || "Failed to delete selected accounts",
+        faTimes
+      );
     } finally {
       setLoading(false);
     }
@@ -302,7 +347,10 @@ export default function AccountManagement({
     return (
       <>
         {buttons}
-        <form onSubmit={handlePageInputSubmit} className="flex items-center ml-4">
+        <form
+          onSubmit={handlePageInputSubmit}
+          className="flex items-center ml-4"
+        >
           <span className="text-neutral-400 text-sm mr-2">Go to page:</span>
           <input
             type="number"
@@ -331,16 +379,21 @@ export default function AccountManagement({
               onClick={toggleGlobalPasswordVisibility}
               disabled={disabled}
             >
-              <FontAwesomeIcon icon={showAllPasswords ? faEyeSlash : faEye} className="mr-2" />
+              <FontAwesomeIcon
+                icon={showAllPasswords ? faEyeSlash : faEye}
+                className="mr-2"
+              />
               {showAllPasswords ? "Hide All Passwords" : "Show All Passwords"}
             </button>
             <button
               className={buttonStyles.delete}
               onClick={handleDeleteSelected}
-              disabled={disabled || selected.length === 0 || isAnyTaskRunning || loading}
+              disabled={
+                disabled || selected.length === 0 || isAnyTaskRunning || loading
+              }
             >
               <FontAwesomeIcon icon={faTrash} className="mr-2" />
-              {loading ? 'Deleting...' : `Delete Selected (${selected.length})`}
+              {loading ? "Deleting..." : `Delete Selected (${selected.length})`}
               {loading && spinner}
             </button>
           </div>
@@ -353,7 +406,7 @@ export default function AccountManagement({
               <FontAwesomeIcon icon={faFilter} className="text-blue-400" />
               <span className="text-white font-medium">Filter:</span>
             </div>
-            
+
             <div className="flex items-center space-x-2">
               <FontAwesomeIcon icon={faServer} className="text-green-400" />
               <label className="text-neutral-300">Node:</label>
@@ -364,9 +417,9 @@ export default function AccountManagement({
                 disabled={disabled || loading}
               >
                 <option value="">All Nodes</option>
-                {availableNodes.map(node => (
+                {availableNodes.map((node) => (
                   <option key={node.name} value={node.name}>
-                    {node.name} {node.isRunning ? '(Running)' : '(Stopped)'}
+                    {node.name} {node.isRunning ? "(Running)" : "(Stopped)"}
                   </option>
                 ))}
               </select>
@@ -383,13 +436,17 @@ export default function AccountManagement({
               >
                 <option value="">All Indices</option>
                 {availableIndices
-                  .filter(index => !selectedNode || index.nodeName === selectedNode)
-                  .map(index => (
-                    <option key={`${index.nodeName}-${index.index}`} value={index.index}>
+                  .filter(
+                    (index) => !selectedNode || index.nodeName === selectedNode
+                  )
+                  .map((index) => (
+                    <option
+                      key={`${index.nodeName}-${index.index}`}
+                      value={index.index}
+                    >
                       {index.index} ({index.nodeName})
                     </option>
-                  ))
-                }
+                  ))}
               </select>
             </div>
 
@@ -401,8 +458,10 @@ export default function AccountManagement({
               }}
               disabled={disabled || loading}
             >
-              
-              <FontAwesomeIcon icon={faRefresh} className="mr-2" />
+              <FontAwesomeIcon
+                icon={loading ? faSpinner : faRefresh}
+                className={"mr-2" + (loading ? " fa-spin" : "")}
+              />
               Refresh
             </button>
           </div>
@@ -418,8 +477,7 @@ export default function AccountManagement({
                     type="checkbox"
                     className="form-checkbox h-4 w-4 text-blue-400 rounded focus:ring-blue-400 bg-neutral-600 border-neutral-500 cursor-pointer"
                     checked={
-                      selected.length === accounts.length &&
-                      accounts.length > 0
+                      selected.length === accounts.length && accounts.length > 0
                     }
                     onChange={selectAll}
                   />
@@ -427,148 +485,166 @@ export default function AccountManagement({
                 <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
                   URL
                 </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                      Username
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                      Password
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                      Source File
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                      Node
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                      Index
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-700">
-                  {loading ? (
-                    <tr>
-                      <td
-                        colSpan="8"
-                        className="px-6 py-4 text-center text-neutral-400"
-                      >
-                        Loading records...
-                      </td>
-                    </tr>
-                  ) : accounts.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan="8"
-                        className="px-6 py-4 text-center text-neutral-400"
-                      >
-                        No records found.
-                      </td>
-                    </tr>
-                  ) : (
-                    accounts.map((account) => (
-                      <tr
-                        key={account.id}
-                        className="hover:bg-neutral-700 transition duration-150 ease-in-out"
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <input
-                            type="checkbox"
-                            className="form-checkbox h-4 w-4 text-blue-400 rounded focus:ring-blue-400 bg-neutral-600 border-neutral-500 cursor-pointer"
-                            checked={selected.includes(account)}
-                            onChange={() => toggleSelect(account)}
+                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                  Username
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                  Password
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                  Source File
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                  Node
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                  Index
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-700">
+              {loading ? (
+                <tr>
+                  <td
+                    colSpan="8"
+                    className="px-6 py-4 text-center text-neutral-400"
+                  >
+                    Loading records...
+                  </td>
+                </tr>
+              ) : accounts.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan="8"
+                    className="px-6 py-4 text-center text-neutral-400"
+                  >
+                    No records found.
+                  </td>
+                </tr>
+              ) : (
+                accounts.map((account) => (
+                  <tr
+                    key={account.id}
+                    className="hover:bg-neutral-700 transition duration-150 ease-in-out"
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        className="form-checkbox h-4 w-4 text-blue-400 rounded focus:ring-blue-400 bg-neutral-600 border-neutral-500 cursor-pointer"
+                        checked={selected.includes(account)}
+                        onChange={() => toggleSelect(account)}
+                      />
+                    </td>
+                    <td className="px-6 py-4 text-sm text-neutral-200 break-all">
+                      {account.url}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                      {account.username}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                      <div className="flex items-center">
+                        {showAllPasswords || !hiddenPasswords[account.id] ? (
+                          <span>{account.password}</span>
+                        ) : (
+                          <span>••••••••</span>
+                        )}
+                        <button
+                          onClick={() => togglePasswordVisibility(account.id)}
+                          className="ml-2 text-neutral-400 hover:text-blue-400 transition-colors"
+                        >
+                          <FontAwesomeIcon
+                            icon={
+                              showAllPasswords || !hiddenPasswords[account.id]
+                                ? faEyeSlash
+                                : faEye
+                            }
+                            className="text-base"
                           />
-                        </td>
-                        <td className="px-6 py-4 text-sm text-neutral-200 break-all">
-                          {account.url}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                          {account.username}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                          <div className="flex items-center">
-                            {showAllPasswords || !hiddenPasswords[account.id] ? (
-                              <span>{account.password}</span>
-                            ) : (
-                              <span>••••••••</span>
-                            )}
-                            <button
-                              onClick={() => togglePasswordVisibility(account.id)}
-                              className="ml-2 text-neutral-400 hover:text-blue-400 transition-colors"
-                            >
-                              <FontAwesomeIcon
-                                icon={
-                                  showAllPasswords || !hiddenPasswords[account.id]
-                                    ? faEyeSlash
-                                    : faEye
-                                }
-                                className="text-base"
-                              />
-                            </button>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                          {account.sourceFile}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                          <div className="flex items-center space-x-2">
-                            <FontAwesomeIcon icon={faServer} className="text-green-400" />
-                            <span>{account._source?.node || account.node || 'Unknown'}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                          <div className="flex items-center space-x-2">
-                            <FontAwesomeIcon icon={faDatabase} className="text-blue-400" />
-                            <span>{account._index || account.index || 'Unknown'}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <div className="flex space-x-3">
-                            <button
-                              className={buttonStyles.primary + " p-3"}
-                              onClick={() => handleEditClick(account)}
-                              disabled={disabled || editLoading || deletingAccountIds.has(account.id)}
-                              title="Edit Account"
-                            >
-                              <FontAwesomeIcon icon={faEdit} />
-                            </button>
-                            <button
-                              className={buttonStyles.delete + " p-3"}
-                              onClick={() => handleDeleteAccount(account.id)}
-                              disabled={disabled || loading || deletingAccountIds.has(account.id)}
-                              title="Delete Account"
-                            >
-                              <FontAwesomeIcon icon={faTrash} />
-                              {deletingAccountIds.has(account.id) && spinner}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                      {account.sourceFile}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                      <div className="flex items-center space-x-2">
+                        <FontAwesomeIcon
+                          icon={faServer}
+                          className="text-green-400"
+                        />
+                        <span>
+                          {account._source?.node || account.node || "Unknown"}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
+                      <div className="flex items-center space-x-2">
+                        <FontAwesomeIcon
+                          icon={faDatabase}
+                          className="text-blue-400"
+                        />
+                        <span>
+                          {account._index || account.index || "Unknown"}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <div className="flex space-x-3">
+                        <button
+                          className={buttonStyles.primary + " p-3"}
+                          onClick={() => handleEditClick(account)}
+                          disabled={
+                            disabled ||
+                            editLoading ||
+                            deletingAccountIds.has(account.id)
+                          }
+                          title="Edit Account"
+                        >
+                          <FontAwesomeIcon icon={faEdit} />
+                        </button>
+                        <button
+                          className={buttonStyles.delete + " p-3"}
+                          onClick={() => handleDeleteAccount(account.id)}
+                          disabled={
+                            disabled ||
+                            loading ||
+                            deletingAccountIds.has(account.id)
+                          }
+                          title="Delete Account"
+                        >
+                          <FontAwesomeIcon icon={faTrash} />
+                          {deletingAccountIds.has(account.id) && spinner}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
 
-            {/* Pagination Controls */}
-            <div className="mt-6 flex justify-center items-center space-x-2">
-              <button
-                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                disabled={disabled || page === 1 || loading}
-                className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
-              >
-                Previous
-              </button>
-              {renderPaginationButtons()}
-              <button
-                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-                disabled={disabled || page === totalPages || loading}
-                className="bg-neutral-700 hover:bg-neutral-600 text-white px-4 py-2 rounded-lg shadow-md disabled:opacity-50 transform hover:scale-105 active:scale-95 transition"
-              >
-                Next
-              </button>
-            </div>
+        {/* Pagination Controls */}
+        <div className="mt-6 flex justify-center items-center space-x-2">
+          <button
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            disabled={disabled || page === 1 || loading}
+            className={buttonStyles.neutral}
+          >
+            Previous
+          </button>
+          {renderPaginationButtons()}
+          <button
+            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+            disabled={disabled || page === totalPages || loading}
+            className={buttonStyles.neutral}
+          >
+            Next
+          </button>
+        </div>
       </section>
 
       {/* Edit Account Modal */}
@@ -650,7 +726,9 @@ export default function AccountManagement({
                 onClick={handleSaveEdit}
                 disabled={disabled || editLoading}
               >
-                {editLoading && <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />}
+                {editLoading && (
+                  <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />
+                )}
                 Save Changes
               </button>
               <button

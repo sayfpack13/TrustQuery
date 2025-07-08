@@ -1,9 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faCircleNotch, faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
+import {
+  faCircleNotch,
+  faChevronDown,
+  faChevronUp,
+} from "@fortawesome/free-solid-svg-icons";
 import SearchResultItem from "../components/SearchResultItem";
 import useSound from "../components/useSound";
 import Globe from "react-globe.gl";
+import buttonStyles from "../components/ButtonStyles";
 
 export default function HomePage() {
   const [query, setQuery] = useState("");
@@ -19,7 +24,7 @@ export default function HomePage() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
-  const [totalResults, setTotalResults] = useState(0);  // State for total collected data
+  const [totalResults, setTotalResults] = useState(0); // State for total collected data
   const [totalCollectedData, setTotalCollectedData] = useState(0);
   const [searchedIndicesForTotal, setSearchedIndicesForTotal] = useState([]);
   const [searchMessage, setSearchMessage] = useState("");
@@ -140,7 +145,9 @@ export default function HomePage() {
       }
 
       // Build the search URL
-      let searchUrl = `/api/search?q=${encodeURIComponent(queryToFetch)}&page=${pageToFetch}&size=${itemsPerPage}`;
+      let searchUrl = `/api/search?q=${encodeURIComponent(
+        queryToFetch
+      )}&page=${pageToFetch}&size=${itemsPerPage}`;
 
       const res = await fetch(searchUrl, {
         headers: headers,
@@ -188,7 +195,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  };  // FIX: New useEffect to trigger search when searchTerm or currentPage changes
+  }; // FIX: New useEffect to trigger search when searchTerm or currentPage changes
   useEffect(() => {
     if (searchTerm) {
       fetchResults(searchTerm, currentPage);
@@ -370,12 +377,11 @@ export default function HomePage() {
         </p>
         {totalCollectedData > 0 && (
           <div className="text-center text-info text-md mb-4 animate-pulse">
-            <p>
-              Total records: {totalCollectedData.toLocaleString()}
-            </p>
+            <p>Total records: {totalCollectedData.toLocaleString()}</p>
             {searchedIndicesForTotal.length > 1 && (
               <p className="text-xs text-neutral-400 mt-1">
-                Across {searchedIndicesForTotal.length} indices: {searchedIndicesForTotal.join(', ')}
+                Across {searchedIndicesForTotal.length} indices:{" "}
+                {searchedIndicesForTotal.join(", ")}
               </p>
             )}
           </div>
@@ -429,12 +435,11 @@ export default function HomePage() {
         {totalResults > 0 && searchTerm.trim() && (
           <div className="text-center mt-12 mb-4 animate-fade-in-up">
             <p className="text-3xl font-extrabold text-accent">
-              Found <span className="text-4xl font-black">{totalResults}</span> results
+              Found <span className="text-4xl font-black">{totalResults}</span>{" "}
+              results
             </p>
             {searchMessage && (
-              <p className="text-sm text-neutral-400 mt-2">
-                {searchMessage}
-              </p>
+              <p className="text-sm text-neutral-400 mt-2">{searchMessage}</p>
             )}
           </div>
         )}
@@ -450,7 +455,7 @@ export default function HomePage() {
             <button
               onClick={() => goToPage(currentPage - 1)}
               disabled={currentPage === 1 || loading}
-              className="px-4 py-2 bg-button-bg text-white rounded-md hover:bg-button-hover-bg disabled:opacity-50 disabled:cursor-not-allowed transition duration-200"
+              className={buttonStyles.neutral}
             >
               Previous
             </button>
@@ -458,7 +463,7 @@ export default function HomePage() {
             <button
               onClick={() => goToPage(currentPage + 1)}
               disabled={currentPage === totalPages || loading}
-              className="px-4 py-2 bg-button-bg text-white rounded-md hover:bg-button-hover-bg disabled:opacity-50 disabled:cursor-not-allowed transition duration-200"
+              className={buttonStyles.neutral}
             >
               Next
             </button>
