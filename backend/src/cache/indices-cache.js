@@ -1,8 +1,11 @@
 const fs = require("fs").promises;
 const path = require("path");
 const { getSingleNodeClient } = require("../elasticsearch/client");
-const { getConfig } = require("../config");
+const { getConfig, setConfig } = require("../config");
 const clusterManager = require("../elasticsearch/cluster-manager");
+const { getClient } = require("../elasticsearch/client");
+const { buildNodeMetadata } = require("../elasticsearch/node-metadata");
+const { refreshCache } = require("./cache-manager");
 
 const CACHE_FILE = path.join(
   __dirname,
@@ -198,11 +201,6 @@ async function removeNodeFromCache(nodeName) {
   }
 }
 
-async function refreshCache() {
-  // Legacy function - just redirect to the new smart refresh
-  return await refreshCacheForRunningNodes();
-}
-
 async function syncSearchIndices() {
   // This function syncs the searchIndices configuration by removing any indices
   // that no longer exist across all nodes
@@ -296,7 +294,7 @@ async function getCacheFiltered() {
   const processedCache = {};
 
   // Use canonical node metadata structure for all nodes
-  const { buildNodeMetadata } = require("../elasticsearch/cluster-manager");
+  const { buildNodeMetadata } = require("../elasticsearch/node-metadata");
   const nodeMetadata = (config && config.nodeMetadata) || {};
 
   for (const [nodeName, nodeData] of Object.entries(cache)) {
@@ -341,6 +339,29 @@ async function getCacheFiltered() {
   }
 })();
 
+// Get cached data for all nodes
+async function getCachedData() {
+  try {
+    const data = await fs.readFile(CACHE_FILE, "utf8");
+    return JSON.parse(data);
+  } catch (error) {
+    console.error("Error reading cache file:", error);
+    return {};
+  }
+}
+
+// Get cached data for a specific node
+async function getCachedNodeData(nodeName) {
+  const cache = await getCachedData();
+  return cache[nodeName] || null;
+}
+
+// Get cached indices for a specific node
+async function getCachedNodeIndices(nodeName) {
+  const nodeData = await getCachedNodeData(nodeName);
+  return nodeData?.indices || [];
+}
+
 module.exports = {
   getOrSetCache,
   refreshCache,
@@ -350,4 +371,7 @@ module.exports = {
   getCache,
   setCache,
   getCacheFiltered,
+  getCachedData,
+  getCachedNodeData,
+  getCachedNodeIndices,
 };

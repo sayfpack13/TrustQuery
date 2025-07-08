@@ -1,0 +1,254 @@
+const { spawn } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+const { getConfig, setConfig } = require("../config");
+const { getEnvAndConfig } = require("./node-config");
+const { refreshAfterOperation } = require("../cache/cache-manager");
+
+/**
+ * Find process ID by port
+ */
+async function findPidByPort(port) {
+  try {
+    const env = getEnvAndConfig();
+    if (env.isWindows) {
+      const { execSync } = require("child_process");
+      const result = execSync(
+        `netstat -ano | findstr :${port} | findstr LISTENING`,
+        { encoding: "utf8" }
+      );
+      const match = result.match(/\s+(\d+)\s*$/);
+      return match ? parseInt(match[1]) : null;
+    } else {
+      const { execSync } = require("child_process");
+      const result = execSync(`lsof -i:${port} -t`, { encoding: "utf8" });
+      return parseInt(result.trim());
+    }
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Check if a node is running and ready
+ */
+async function isNodeRunning(nodeName) {
+  const nodeMetadata = getConfig("nodeMetadata") || {};
+  const metadata = nodeMetadata[nodeName];
+  if (!metadata) return false;
+
+  // Construct nodeUrl if not available
+  const nodeUrl = metadata.nodeUrl || 
+    (metadata.host && metadata.port ? `http://${metadata.host}:${metadata.port}` : undefined);
+  
+  if (!nodeUrl) {
+    // Try port-based detection as fallback
+    if (metadata.port) {
+      try {
+        const pid = await findPidByPort(metadata.port);
+        if (pid) return true;
+      } catch (error) {
+        // Silently fail and return false
+      }
+    }
+    return false;
+  }
+
+  try {
+    // Add a timeout to the fetch request
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+    
+    // First check if the node is responding at all
+    const response = await fetch(nodeUrl, { 
+      signal: controller.signal,
+      method: 'HEAD' // Use HEAD request for faster checking
+    });
+    
+    clearTimeout(timeoutId);
+    
+    // If we get any response, consider the node running
+    return response.status < 500; // Accept any non-server error response
+  } catch (error) {
+    // Try port-based detection as fallback
+    if (metadata.port) {
+      try {
+        const pid = await findPidByPort(metadata.port);
+        if (pid) return true;
+      } catch (portError) {
+        // Silently fail
+      }
+    }
+    
+    return false;
+  }
+}
+
+/**
+ * Start a node
+ */
+async function startNode(nodeName) {
+  const nodeMetadata = getConfig("nodeMetadata") || {};
+  const metadata = nodeMetadata[nodeName];
+  const elasticsearchConfig = getConfig("elasticsearchConfig");
+  
+  if (!metadata) {
+    throw new Error(`Node ${nodeName} not found in configuration`);
+  }
+  
+  // Check if node is already running
+  const isRunning = await isNodeRunning(nodeName);
+  if (isRunning) {
+    console.log(`Node ${nodeName} is already running`);
+    return { success: true, message: `Node ${nodeName} is already running` };
+  }
+
+  try {
+    console.log(`Attempting to start node ${nodeName}...`);
+    
+    // Construct nodeUrl if not available
+    if (!metadata.nodeUrl && metadata.host && metadata.port) {
+      metadata.nodeUrl = `http://${metadata.host}:${metadata.port}`;
+      // Update the nodeMetadata in config
+      await setConfig("nodeMetadata", nodeMetadata);
+    }
+    
+    // First try to use servicePath if available
+    if (metadata.servicePath && fs.existsSync(metadata.servicePath)) {
+      console.log(`Starting node ${nodeName} using service script: ${metadata.servicePath}`);
+      const nodeProcess = spawn(metadata.servicePath, [], {
+        detached: true,
+        stdio: "ignore",
+        shell: true,
+      });
+      
+      nodeProcess.unref();
+    } 
+    // Fall back to using elasticsearchConfig.basePath + bin/elasticsearch
+    else if (elasticsearchConfig && elasticsearchConfig.basePath) {
+      const nodeBin = elasticsearchConfig.executable || path.join(elasticsearchConfig.basePath, "bin", "elasticsearch.bat");
+      console.log(`Starting node ${nodeName} using executable: ${nodeBin}`);
+      
+      // Pass node-specific configuration
+      const args = [
+        `-Ecluster.name=${metadata.cluster || "trustquery-cluster"}`,
+        `-Enode.name=${metadata.name}`,
+        `-Epath.data=${metadata.dataPath}`,
+        `-Epath.logs=${metadata.logsPath}`,
+        `-Ehttp.port=${metadata.port}`,
+        `-Etransport.port=${metadata.transportPort}`
+      ];
+      
+      const nodeProcess = spawn(nodeBin, args, {
+        detached: true,
+        stdio: "ignore",
+        shell: true,
+      });
+      
+      nodeProcess.unref();
+    } else {
+      throw new Error(`No valid start method found for node ${nodeName}. Please configure servicePath or elasticsearchConfig.basePath`);
+    }
+
+    // Wait for node to start (up to 120 seconds)
+    console.log(`Waiting for node ${nodeName} to start...`);
+    
+    for (let i = 0; i < 120; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      if (i % 10 === 0) {
+        console.log(`Still waiting for node ${nodeName} to start... (${i} seconds elapsed)`);
+      }
+      
+      if (await isNodeRunning(nodeName)) {
+        console.log(`Node ${nodeName} started successfully! Refreshing cache...`);
+        await refreshAfterOperation(nodeName, "start");
+        return { success: true, message: `Node ${nodeName} started successfully` };
+      }
+    }
+
+    throw new Error(`Node ${nodeName} failed to start within 120 seconds`);
+  } catch (error) {
+    console.error(`Error starting node ${nodeName}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Stop a node
+ */
+async function stopNode(nodeName) {
+  const nodeMetadata = getConfig("nodeMetadata") || {};
+  const metadata = nodeMetadata[nodeName];
+  
+  if (!metadata) {
+    throw new Error(`Node ${nodeName} not found in configuration`);
+  }
+  
+  // Check if node is running
+  const isRunning = await isNodeRunning(nodeName);
+  if (!isRunning) {
+    return { success: true, message: `Node ${nodeName} is already stopped` };
+  }
+
+  try {
+    // Try to find and kill the process
+    if (metadata.port) {
+      // On Windows, use taskkill to kill process using the port
+      if (process.platform === 'win32') {
+        const findPid = spawn('netstat', ['-ano'], { shell: true });
+        let pidData = '';
+        
+        findPid.stdout.on('data', (data) => {
+          pidData += data.toString();
+        });
+        
+        await new Promise((resolve) => {
+          findPid.on('close', resolve);
+        });
+        
+        // Find the PID using the port
+        const portStr = `:${metadata.port} `;
+        const lines = pidData.split('\n');
+        let pid = null;
+        
+        for (const line of lines) {
+          if (line.includes(portStr) && line.includes('LISTENING')) {
+            const parts = line.trim().split(/\s+/);
+            pid = parts[parts.length - 1];
+            break;
+          }
+        }
+        
+        if (pid) {
+          console.log(`Stopping node ${nodeName} with PID ${pid}`);
+          spawn('taskkill', ['/F', '/PID', pid], { shell: true });
+          await refreshAfterOperation(nodeName, "stop");
+          return { success: true, message: `Node ${nodeName} stopped successfully` };
+        }
+      } 
+      // For non-Windows, try using the dataPath/pid file if available
+      else if (metadata.dataPath) {
+        const pidFile = path.join(metadata.dataPath, "pid");
+        if (fs.existsSync(pidFile)) {
+          const pid = parseInt(fs.readFileSync(pidFile, "utf8"));
+          process.kill(pid);
+          await refreshAfterOperation(nodeName, "stop");
+          return { success: true, message: `Node ${nodeName} stopped successfully` };
+        }
+      }
+    }
+    
+    throw new Error(`Could not find process for node ${nodeName}`);
+  } catch (error) {
+    console.error(`Error stopping node ${nodeName}:`, error);
+    throw error;
+  }
+}
+
+module.exports = {
+  findPidByPort,
+  startNode,
+  stopNode,
+  isNodeRunning,
+}; 

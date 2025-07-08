@@ -238,14 +238,14 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       // Call the start endpoint
       await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/start`);
       
-      // Poll for actual running status instead of using timeout
-      const pollForNodeStart = async (maxAttempts = 20, interval = 3000) => {
+      // Poll for actual started status instead of using timeout
+      const pollForNodeStart = async (maxAttempts = 15, interval = 2000) => {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           await new Promise(resolve => setTimeout(resolve, interval));
           
           try {
-            // Use cached data for polling to reduce load
-            const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=false');
+            // Force refresh for polling to get accurate status
+            const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=true');
             const freshNodes = response.data.nodes || [];
             const freshEnhancedData = response.data.indicesByNodes || {};
             
@@ -257,12 +257,6 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
             
             if (targetNode?.isRunning) {
               showNotificationRef.current('success', `Node "${nodeName}" started successfully!`, faCheckCircle);
-              
-              // Cache will be automatically refreshed on next data access
-              if (onCacheRefreshed) {
-                onCacheRefreshed();
-              }
-              
               return true;
             }
           } catch (error) {
@@ -271,8 +265,8 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
         }
         
         // If we get here, the node didn't start within the timeout
-        showNotificationRef.current('error', `Node "${nodeName}" failed to start within expected time. Check logs for details.`, faExclamationTriangle);
-        await fetchLocalNodes(); // Final refresh to get actual status
+        showNotificationRef.current('warning', `Node "${nodeName}" may still be starting. Please check its status.`, faExclamationTriangle);
+        await fetchLocalNodes(true); // Final refresh to get actual status
         return false;
       };
       
@@ -281,6 +275,8 @@ export const useClusterManagement = (showNotification, onCacheRefreshed = null) 
       
     } catch (error) {
       showNotificationRef.current('error', `Failed to start node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      // Refresh nodes data anyway to get current status
+      await fetchLocalNodes(true);
     } finally {
       setNodeActionLoading(prev => prev.filter(name => name !== nodeName));
     }

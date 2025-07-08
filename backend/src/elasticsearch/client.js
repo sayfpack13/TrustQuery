@@ -1,6 +1,10 @@
 // Elasticsearch client management
+const fs = require("fs").promises;
+const path = require("path");
 const { Client } = require("@elastic/elasticsearch");
 const { getConfig } = require("../config");
+const { getEnvAndConfig } = require("./node-config");
+const { buildNodeMetadata } = require("./node-metadata");
 
 let es;
 let esWrite;
@@ -11,7 +15,6 @@ const singleNodeClients = {}; // Cache for single-node clients
 function initializeElasticsearchClients() {
   // Always resolve node names to URLs for all client initializations
   const nodeNames = getConfig("elasticsearchNodes");
-  const { buildNodeMetadata } = require("./cluster-manager");
   const nodeMetadata = getConfig("nodeMetadata") || {};
   const nodeUrls = (nodeNames || [])
     .map((name) => buildNodeMetadata(nodeMetadata[name] || { name })?.nodeUrl)
@@ -82,7 +85,6 @@ function initializeElasticsearchClients() {
 function getSingleNodeClient(nodeUrl) {
   // If a node name is passed, resolve to URL
   const nodeMetadata = getConfig("nodeMetadata") || {};
-  const { buildNodeMetadata } = require("./cluster-manager");
   const url = buildNodeMetadata(nodeMetadata[nodeUrl] || { name: nodeUrl })?.nodeUrl || nodeUrl;
   if (singleNodeClients[url]) {
     return singleNodeClients[url];

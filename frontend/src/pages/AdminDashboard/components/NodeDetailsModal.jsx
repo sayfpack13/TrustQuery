@@ -759,9 +759,10 @@ export default function NodeDetailsModal({
                     buttonStyles.create +
                     " flex items-center px-4 py-2 rounded-lg text-sm"
                   }
+                  disabled={isCreatingIndex || !node.isRunning}
                 >
                   <FontAwesomeIcon
-                    icon={isCreatingIndex ? faCircleNotch : faPlus}
+                    icon={isCreatingIndex ? faRefresh : faPlus}
                     className={`mr-2 ${isCreatingIndex ? "fa-spin" : ""}`}
                   />
                   {isCreatingIndex ? "Creating..." : "Create Index"}
@@ -878,11 +879,7 @@ export default function NodeDetailsModal({
                           : ""
                       }
                     >
-                      {isCreatingIndex ? (
-                        <FontAwesomeIcon icon={faCircleNotch} spin />
-                      ) : (
-                        <FontAwesomeIcon icon={faPlus} />
-                      )}
+                        <FontAwesomeIcon icon={isCreatingIndex ? faRefresh : faPlus} className={"mr-2"+(isCreatingIndex ? " fa-spin":"")} />
                       {isCreatingIndex ? "Creating..." : "Create Index"}
                     </button>
                     <button

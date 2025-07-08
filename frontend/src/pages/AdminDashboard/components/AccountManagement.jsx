@@ -87,12 +87,28 @@ export default function AccountManagement({
   const [pageInput, setPageInput] = useState("1");
   const [deletingAccountIds, setDeletingAccountIds] = useState(new Set()); // Track which accounts are being deleted
 
+  // Check if any nodes are running
+  const anyNodesRunning = React.useMemo(() => {
+    return availableNodes.some(node => node.isRunning);
+  }, [availableNodes]);
+
   // Fetch accounts data
   const fetchAccounts = useCallback(async () => {
     try {
       setLoading(true);
 
-      // Fetch accounts normally (with node/index filter if selected)
+      // Check if any nodes are running before making the request
+      if (!anyNodesRunning) {
+        setAccounts([]);
+        setTotal(0);
+        showNotification(
+          "error",
+          "No Elasticsearch nodes are currently running. Please start at least one node to view accounts.",
+          faServer
+        );
+        return;
+      }
+
       // Parse node+index selection
       const params = { page, size: pageSize };
       let node = selectedNode;
@@ -102,6 +118,22 @@ export default function AccountManagement({
         node = n;
         index = i;
       }
+
+      // Check if selected node is running before making the request
+      if (node) {
+        const nodeData = availableNodes.find(n => n.name === node);
+        if (!nodeData?.isRunning) {
+          setAccounts([]);
+          setTotal(0);
+          showNotification(
+            "warning",
+            `Node '${node}' is not running. Please start the node or select a different one.`,
+            faServer
+          );
+          return;
+        }
+      }
+
       if (node) params.node = node;
       if (index) params.index = index;
 
@@ -113,10 +145,22 @@ export default function AccountManagement({
       setAccounts(fetchedAccounts);
       setTotal(accountsRes.data.total || 0);
 
+      // Show success message if data was filtered
+      if (node || index) {
+        const filterMsg = [];
+        if (node) filterMsg.push(`node '${node}'`);
+        if (index) filterMsg.push(`index '${index}'`);
+        showNotification(
+          "success",
+          `Showing accounts from ${filterMsg.join(" and ")}`,
+          faFilter
+        );
+      }
+
       // Initialize hiddenPasswords state to hide all passwords by default
       const initialHiddenState = {};
       fetchedAccounts.forEach((account) => {
-        initialHiddenState[account.id] = true; // Initially hide all passwords
+        initialHiddenState[account.id] = true;
       });
       setHiddenPasswords(initialHiddenState);
 
@@ -124,6 +168,8 @@ export default function AccountManagement({
       setShowEditModal(false);
       setCurrentEditingAccount(null);
     } catch (err) {
+      setAccounts([]);
+      setTotal(0);
       showNotification(
         "error",
         err.response?.data?.error || "Failed to fetch accounts",
@@ -139,7 +185,19 @@ export default function AccountManagement({
     selectedNode,
     selectedNodeIndex,
     availableNodes,
+    anyNodesRunning,
   ]);
+
+  // Add refresh function
+  const handleRefresh = async () => {
+    try {
+      showNotification('info', 'Refreshing accounts data...', faRefresh);
+      await fetchAccounts();
+      showNotification('success', 'Accounts data refreshed successfully', faCheckCircle);
+    } catch (error) {
+      showNotification('error', 'Failed to refresh accounts data', faTimes);
+    }
+  };
 
   useEffect(() => {
     if (availableNodes.length > 0) {
@@ -199,24 +257,61 @@ export default function AccountManagement({
     setEditFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  // Get node and index info from an account
+  const getAccountNodeIndex = useCallback((account) => {
+    // First try to get from current filters
+    if (selectedNode && selectedNodeIndex) {
+      const [node, index] = selectedNodeIndex.split("::");
+      return { node, index };
+    }
+    
+    // Then try to get from the account data
+    if (account._index || account.index) {
+      // Try to find which node this index belongs to
+      for (const node of availableNodes) {
+        if (node.indices?.some(idx => idx.index === (account._index || account.index))) {
+          return {
+            node: node.name,
+            index: account._index || account.index
+          };
+        }
+      }
+    }
+    
+    return null;
+  }, [selectedNode, selectedNodeIndex, availableNodes]);
+
   // Handle save edit
-  // Handle save edit (send node+index)
   const handleSaveEdit = async () => {
     if (!currentEditingAccount || editLoading) return;
 
+    const nodeInfo = getAccountNodeIndex(currentEditingAccount);
+    if (!nodeInfo) {
+      showNotification(
+        "error",
+        "Cannot update account: Node and index information is required",
+        faTimes
+      );
+      return;
+    }
+
+    // Check if node is running before proceeding
+    const nodeData = availableNodes.find(n => n.name === nodeInfo.node);
+    if (!nodeData?.isRunning) {
+      showNotification(
+        "error",
+        `Cannot update account: Node '${nodeInfo.node}' is not running`,
+        faTimes
+      );
+      return;
+    }
+
     setEditLoading(true);
     try {
-      let node = selectedNode;
-      let index = "";
-      if (selectedNodeIndex) {
-        const [n, i] = selectedNodeIndex.split("::");
-        node = n;
-        index = i;
-      }
       await axiosClient.put(
         `/api/admin/accounts/${currentEditingAccount.id}`,
         editFormData,
-        { params: { node, index } }
+        { params: nodeInfo }
       );
       showNotification(
         "success",
@@ -237,7 +332,6 @@ export default function AccountManagement({
         err.response?.data?.error || "Failed to update account",
         faTimes
       );
-      // Keep modal open on error so user can retry
     } finally {
       setEditLoading(false);
     }
@@ -251,32 +345,51 @@ export default function AccountManagement({
   };
 
   // Handle delete account
-  // Handle delete account (send node+index)
   const handleDeleteAccount = async (accountId) => {
-    if (!window.confirm("Are you sure you want to delete this account?")) {
+    if (deletingAccountIds.has(accountId)) return;
+
+    const account = accounts.find(a => a.id === accountId);
+    if (!account) {
+      showNotification(
+        "error",
+        "Account not found",
+        faTimes
+      );
       return;
     }
 
-    if (loading || deletingAccountIds.has(accountId)) return; // Prevent double operations
+    const nodeInfo = getAccountNodeIndex(account);
+    if (!nodeInfo) {
+      showNotification(
+        "error",
+        "Cannot delete account: Node and index information is required",
+        faTimes
+      );
+      return;
+    }
 
-    setDeletingAccountIds((prev) => new Set([...prev, accountId]));
+    // Check if node is running before proceeding
+    const nodeData = availableNodes.find(n => n.name === nodeInfo.node);
+    if (!nodeData?.isRunning) {
+      showNotification(
+        "error",
+        `Cannot delete account: Node '${nodeInfo.node}' is not running`,
+        faTimes
+      );
+      return;
+    }
+
+    setDeletingAccountIds(prev => new Set([...prev, accountId]));
     try {
-      let node = selectedNode;
-      let index = "";
-      if (selectedNodeIndex) {
-        const [n, i] = selectedNodeIndex.split("::");
-        node = n;
-        index = i;
-      }
       await axiosClient.delete(`/api/admin/accounts/${accountId}`, {
-        params: { node, index },
+        params: nodeInfo
       });
       showNotification(
         "success",
         "Account deleted successfully!",
         faCheckCircle
       );
-      await fetchAccounts(); // Refresh the data
+      await fetchAccounts();
     } catch (err) {
       showNotification(
         "error",
@@ -284,7 +397,7 @@ export default function AccountManagement({
         faTimes
       );
     } finally {
-      setDeletingAccountIds((prev) => {
+      setDeletingAccountIds(prev => {
         const newSet = new Set(prev);
         newSet.delete(accountId);
         return newSet;
@@ -292,43 +405,88 @@ export default function AccountManagement({
     }
   };
 
-  // Handle delete selected accounts
+  // Handle delete selected
   const handleDeleteSelected = async () => {
-    if (selected.length === 0 || loading) return;
+    if (selected.length === 0) return;
 
-    if (
-      !window.confirm(
-        `Are you sure you want to delete ${selected.length} selected account(s)?`
-      )
-    ) {
+    // Group selected accounts by node+index
+    const groups = {};
+    for (const account of selected) {
+      const nodeInfo = getAccountNodeIndex(account);
+      if (!nodeInfo) {
+        showNotification(
+          "error",
+          `Cannot delete account ${account.id}: Missing node/index information`,
+          faTimes
+        );
+        continue;
+      }
+
+      const key = `${nodeInfo.node}::${nodeInfo.index}`;
+      if (!groups[key]) {
+        groups[key] = {
+          node: nodeInfo.node,
+          index: nodeInfo.index,
+          items: []
+        };
+      }
+      groups[key].items.push(account.id);
+    }
+
+    // Check if any groups were created
+    if (Object.keys(groups).length === 0) {
+      showNotification(
+        "error",
+        "Cannot delete accounts: No valid node/index information found",
+        faTimes
+      );
       return;
     }
 
-    setLoading(true);
-    try {
-      // Use new bulk delete endpoint with node+index for each account
-      const items = selected.map((account) => ({
-        id: account.id,
-        node: account.node || account._source?.node,
-        index: account._index || account.index,
-      }));
-      await axiosClient.post("/api/admin/accounts/bulk-delete", { items });
-      showNotification(
-        "success",
-        `${selected.length} account(s) deleted successfully!`,
-        faCheckCircle
-      );
-      setSelected([]); // Clear selection
-      await fetchAccounts(); // Refresh the data
-    } catch (err) {
-      showNotification(
-        "error",
-        err.response?.data?.error || "Failed to delete selected accounts",
-        faTimes
-      );
-    } finally {
-      setLoading(false);
+    // Process each group
+    for (const group of Object.values(groups)) {
+      // Check if node is running
+      const nodeData = availableNodes.find(n => n.name === group.node);
+      if (!nodeData?.isRunning) {
+        showNotification(
+          "warning",
+          `Skipping accounts on node '${group.node}' - node is not running`,
+          faTimes
+        );
+        continue;
+      }
+
+      group.items.forEach(id => setDeletingAccountIds(prev => new Set([...prev, id])));
+
+      try {
+        await axiosClient.post("/api/admin/accounts/bulk-delete", {
+          items: group.items.map(id => ({
+            id,
+            node: group.node,
+            index: group.index
+          }))
+        });
+        showNotification(
+          "success",
+          `Deleted ${group.items.length} accounts from ${group.node}/${group.index}`,
+          faCheckCircle
+        );
+      } catch (err) {
+        showNotification(
+          "error",
+          `Failed to delete accounts from ${group.node}/${group.index}: ${err.response?.data?.error || err.message}`,
+          faTimes
+        );
+      } finally {
+        group.items.forEach(id => setDeletingAccountIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(id);
+          return newSet;
+        }));
+      }
     }
+
+    await fetchAccounts();
   };
 
   // Pagination helpers
@@ -446,14 +604,22 @@ export default function AccountManagement({
               <label className="text-neutral-300">Node:</label>
               <select
                 value={selectedNode}
-                onChange={(e) => setSelectedNode(e.target.value)}
+                onChange={(e) => {
+                  setSelectedNode(e.target.value);
+                  setSelectedNodeIndex(""); // Reset index selection when node changes
+                }}
                 className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                disabled={disabled || loading}
+                disabled={disabled || loading || !anyNodesRunning}
               >
                 <option value="">All Nodes</option>
                 {availableNodes.map((node) => (
-                  <option key={node.name} value={node.name}>
-                    {node.name} {node.isRunning ? "(Running)" : "(Stopped)"}
+                  <option
+                    key={node.name}
+                    value={node.name}
+                    disabled={!node.isRunning}
+                    className={!node.isRunning ? "text-gray-400" : ""}
+                  >
+                    {node.name} {!node.isRunning ? "(Not Running)" : ""}
                   </option>
                 ))}
               </select>
@@ -466,19 +632,21 @@ export default function AccountManagement({
                 value={selectedNodeIndex}
                 onChange={(e) => setSelectedNodeIndex(e.target.value)}
                 className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                disabled={disabled || loading}
+                disabled={disabled || loading || !selectedNode || !anyNodesRunning}
               >
                 <option value="">All Indices</option>
                 {availableNodeIndices
                   .filter(
-                    (item) => !selectedNode || item.nodeName === selectedNode
+                    (ni) =>
+                      !selectedNode || // Show all if no node selected
+                      ni.nodeName === selectedNode // Only show indices for selected node
                   )
-                  .map((item) => (
+                  .map((ni) => (
                     <option
-                      key={`${item.nodeName}::${item.indexName}`}
-                      value={`${item.nodeName}::${item.indexName}`}
+                      key={`${ni.nodeName}::${ni.indexName}`}
+                      value={`${ni.nodeName}::${ni.indexName}`}
                     >
-                      {item.label}
+                      {ni.label}
                     </option>
                   ))}
               </select>
@@ -486,11 +654,8 @@ export default function AccountManagement({
 
             <button
               className={buttonStyles.refresh}
-              onClick={() => {
-                setPage(1);
-                fetchAccounts();
-              }}
-              disabled={disabled || loading}
+              onClick={handleRefresh}
+              disabled={disabled || loading || !anyNodesRunning}
             >
               <FontAwesomeIcon
                 icon={loading ? faSpinner : faRefresh}

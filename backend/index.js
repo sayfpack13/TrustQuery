@@ -9,7 +9,8 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const { randomUUID } = require("crypto");
 const cors = require("cors");
-const { refreshCacheForRunningNodes, syncSearchIndices, getCacheFiltered } = require("./src/cache/indices-cache");
+const { syncSearchIndices, getCacheFiltered } = require("./src/cache/indices-cache");
+const { refreshCache } = require("./src/cache/cache-manager");
 
 // Configuration management
 const { loadConfig: loadCentralizedConfig, getConfig, setConfig, saveConfig } = require("./src/config");
@@ -83,37 +84,37 @@ async function initializeServer() {
   const clusterManager = require("./src/elasticsearch/cluster-manager");
   await clusterManager.verifyNodeMetadata();
 
-  // Perform initial smart cache refresh for indices
+  // Initial cache refresh
   try {
-    await refreshCacheForRunningNodes();
-    console.log("🔄 Initial smart cache refresh completed");
-
-    // Log the real structure of searchIndices
-    const searchIndices = getConfig("searchIndices");
-
-    // Validate searchIndices: keep only valid { node, index } objects
-    if (Array.isArray(searchIndices)) {
-      const validIndices = searchIndices.filter((e) => e && typeof e === "object" && "node" in e && "index" in e);
-      if (validIndices.length !== searchIndices.length) {
-        console.warn(
-          `🗑️ Removing invalid entries from searchIndices:`,
-          JSON.stringify(
-            searchIndices.filter((e) => !(e && typeof e === "object" && "node" in e && "index" in e)),
-            null,
-            2
-          )
-        );
-        await setConfig("searchIndices", validIndices);
-        console.log("💾 Saved cleaned searchIndices to config.");
-      }
-    }
-
-    // Sync search indices to remove any invalid entries from config
-    await syncSearchIndices();
-    console.log("🔄 Initial search indices sync completed");
+    await refreshCache();
   } catch (error) {
-    console.warn("⚠️ Initial cache refresh failed:", error.message);
+    console.error("Error during initial cache refresh:", error);
+    console.warn("Continuing server initialization despite cache refresh error");
   }
+
+  // Log the real structure of searchIndices
+  const searchIndices = getConfig("searchIndices");
+
+  // Validate searchIndices: keep only valid { node, index } objects
+  if (Array.isArray(searchIndices)) {
+    const validIndices = searchIndices.filter((e) => e && typeof e === "object" && "node" in e && "index" in e);
+    if (validIndices.length !== searchIndices.length) {
+      console.warn(
+        `🗑️ Removing invalid entries from searchIndices:`,
+        JSON.stringify(
+          searchIndices.filter((e) => !(e && typeof e === "object" && "node" in e && "index" in e)),
+          null,
+          2
+        )
+      );
+      await setConfig("searchIndices", validIndices);
+      console.log("💾 Saved cleaned searchIndices to config.");
+    }
+  }
+
+  // Sync search indices to remove any invalid entries from config
+  await syncSearchIndices();
+  console.log("🔄 Initial search indices sync completed");
 
   // Start the server
   app.listen(PORT, () => {
@@ -624,10 +625,21 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
   const from = (page - 1) * size;
   const requestedNode = req.query.node;
   const requestedIndex = req.query.index;
+  const { Client } = require("@elastic/elasticsearch");
 
   try {
     const cachedIndices = await getCacheFiltered();
     const config = getConfig();
+
+    // Check if any nodes are running
+    const runningNodes = Object.values(cachedIndices).filter(node => node.isRunning);
+    if (runningNodes.length === 0) {
+      return res.status(503).json({
+        error: "No Elasticsearch nodes are currently running",
+        results: [],
+        total: 0
+      });
+    }
 
     // Determine which index(es) to search and which ES client to use
     let searchIndex;
@@ -643,16 +655,10 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0,
         });
       }
-      // Only allow search if this node/index pair is in configured searchIndices
-      const searchIndices = config.searchIndices || [];
-      const isAllowed = searchIndices.some((entry) => entry.node === requestedNode && entry.index === requestedIndex);
-      if (!isAllowed) {
-        return res.status(403).json({
-          error: `Node/index pair (${requestedNode}/${requestedIndex}) is not allowed by current searchIndices configuration`,
-          results: [],
-          total: 0,
-        });
-      }
+      
+      // Skip searchIndices check when requesting through admin interface
+      // This allows viewing any index through the Account Management page
+      
       // Specific index on specific node requested
       // Try to find the node in the cache by name
       let nodeData = cachedIndices[requestedNode];
@@ -714,7 +720,6 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       targetNodeUrl = nodeUrl;
 
       // Create ES client for specific node
-      const { Client } = require("@elastic/elasticsearch");
       es = new Client({ node: targetNodeUrl });
     } else if (requestedNode && !requestedIndex) {
       if (!cachedIndices[requestedNode] || !cachedIndices[requestedNode].isRunning) {
@@ -742,11 +747,13 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
         });
       }
 
+      // Use all indices on the specified node, regardless of searchIndices configuration
+      // This allows viewing all indices through the Account Management page
+      
       // Use all indices on the specified node
       searchIndex = nodeData.indices.map((idx) => idx.index).join(","); // This is correct, as nodeData.indices is always an array of objects
       targetNodeUrl = nodeData.nodeUrl;
 
-      const { Client } = require("@elastic/elasticsearch");
       es = new Client({ node: targetNodeUrl });
     } else if (!requestedNode && requestedIndex) {
       // Specific index requested, but no specific node - use default ES client
@@ -775,74 +782,156 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       const searchIndices = config.searchIndices || [];
 
       if (searchIndices.length === 0) {
-        return res.json({
-          results: [],
-          total: 0,
-          message: "No search indices configured. Please configure search indices in the Configuration tab.",
-        });
-      }
-
-      // Group indices by node for multi-node search
-      // If all indices are on the same node, use that node's ES client
-      const nodeGroups = {};
-      for (const entry of searchIndices) {
-        if (!cachedIndices[entry.node] || !cachedIndices[entry.node].isRunning) continue;
-        if (!nodeGroups[entry.node]) nodeGroups[entry.node] = [];
-        nodeGroups[entry.node].push(entry.index);
-      }
-
-      const nodeNames = Object.keys(nodeGroups);
-      if (nodeNames.length === 1) {
-        // All indices are on a single node, use that node's ES client
-        const nodeName = nodeNames[0];
-        const cachedIndices = await getCacheFiltered();
-        const nodeData = cachedIndices[nodeName];
-        if (!nodeData || !nodeData.nodeUrl) {
-          return res.status(400).json({
-            error: `Node '${nodeName}' not found or not configured`,
+        // If no search indices are configured, try to use all available indices from all running nodes
+        const allIndices = [];
+        let anyRunningNode = false;
+        
+        for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
+          if (nodeData.isRunning && nodeData.indices && nodeData.indices.length > 0) {
+            anyRunningNode = true;
+            const nodeClient = new Client({ node: nodeData.nodeUrl });
+            
+            // Add all indices from this running node
+            for (const indexInfo of nodeData.indices) {
+              allIndices.push({
+                node: nodeName,
+                index: indexInfo.index,
+                client: nodeClient
+              });
+            }
+          }
+        }
+        
+        if (allIndices.length > 0) {
+          // Use the first node's client for simplicity
+          es = allIndices[0].client;
+          searchIndex = allIndices.map(i => i.index).join(',');
+          console.log(`No search indices configured, using all available indices: ${searchIndex}`);
+        } else {
+          return res.json({
             results: [],
             total: 0,
+            message: anyRunningNode 
+              ? "No indices found on running nodes. Please create indices first."
+              : "No search indices configured. Please configure search indices in the Configuration tab.",
           });
         }
-        searchIndex = nodeGroups[nodeName].join(",");
-        const { Client } = require("@elastic/elasticsearch");
-        es = new Client({ node: nodeData.nodeUrl });
-        targetNodeUrl = nodeData.nodeUrl;
       } else {
-        // Indices are on multiple nodes, use the default ES client (must be configured to access all nodes)
-        searchIndex = searchIndices.map((e) => e.index).join(",");
-        es = getCurrentES();
+        // Group indices by node for multi-node search
+        // If all indices are on the same node, use that node's ES client
+        const nodeGroups = {};
+        for (const entry of searchIndices) {
+          if (!cachedIndices[entry.node] || !cachedIndices[entry.node].isRunning) continue;
+          if (!nodeGroups[entry.node]) nodeGroups[entry.node] = [];
+          nodeGroups[entry.node].push(entry.index);
+        }
+
+        const nodeNames = Object.keys(nodeGroups);
+        if (nodeNames.length === 1) {
+          // All indices are on a single node, use that node's ES client
+          const nodeName = nodeNames[0];
+          const cachedIndices = await getCacheFiltered();
+          const nodeData = cachedIndices[nodeName];
+          if (!nodeData || !nodeData.nodeUrl) {
+            return res.status(400).json({
+              error: `Node '${nodeName}' not found or not configured`,
+              results: [],
+              total: 0,
+            });
+          }
+          searchIndex = nodeGroups[nodeName].join(",");
+          targetNodeUrl = nodeData.nodeUrl;
+          es = new Client({ node: targetNodeUrl });
+        } else if (nodeNames.length > 1) {
+          // Indices are on multiple nodes, use default client
+          // This is not ideal but will work for simple cases
+          searchIndex = searchIndices.map((entry) => entry.index).join(",");
+          es = getCurrentES();
+        } else {
+          return res.json({
+            results: [],
+            total: 0,
+            message: "No running nodes with configured search indices found.",
+          });
+        }
       }
     }
 
-    //console.log(`Searching index(es): ${searchIndex} on ${targetNodeUrl || "default ES client"}`);
+    // Execute search query
+    try {
+      // If we don't have a client or index to search, return empty results
+      if (!es || !searchIndex) {
+        return res.json({
+          results: [],
+          total: 0,
+          message: "No searchable indices available",
+        });
+      }
 
-    const response = await es.search({
-      index: searchIndex,
-      from: from,
-      size: size,
-      body: {
-        query: { match_all: {} },
-      },
-    });
+      const response = await es.search({
+        index: searchIndex,
+        from,
+        size,
+        body: {
+          query: {
+            match_all: {},
+          },
+          // Remove the problematic sort by _id
+          // Use doc_id for consistent pagination if needed
+        },
+      });
 
-    const total = response.hits.total.value;
-    const results = response.hits.hits.map((hit) => {
-      // Parse the raw line for display in admin panel
-      const parsedAccount = parseLineForDisplay(hit._source.raw_line);
-      return {
-        id: hit._id,
-        raw_line: hit._source.raw_line,
-        _index: hit._index,
-        node: requestedNode || "default",
-        ...parsedAccount,
-      };
-    });
+      // Process results
+      const hits = response.hits.hits;
+      const results = hits.map((hit) => {
+        const source = hit._source;
+        const rawLine = source.raw_line;
 
-    res.json({ results, total });
+        if (!rawLine) {
+          return {
+            id: hit._id,
+            url: "Unknown",
+            username: "Unknown",
+            password: "Unknown",
+            _index: hit._index,
+            _node: requestedNode || null,
+          };
+        }
+
+        const { url, username, password } = parseLineForDisplay(rawLine);
+
+        return {
+          id: hit._id,
+          url,
+          username,
+          password,
+          _index: hit._index,
+          _node: requestedNode || null,
+        };
+      });
+
+      res.json({
+        results,
+        total: response.hits.total.value,
+        message: requestedNode
+          ? `Showing accounts from node ${requestedNode}`
+          : undefined,
+      });
+    } catch (error) {
+      console.error("Error searching accounts:", error);
+      res.status(500).json({
+        error: "Failed to search accounts: " + error.message,
+        results: [],
+        total: 0,
+      });
+    }
   } catch (error) {
-    console.error("Error searching accounts:", error);
-    res.status(500).json({ message: "Error searching accounts: " + error.message });
+    console.error("Error in accounts API:", error);
+    res.status(500).json({
+      error: "Failed to process request: " + error.message,
+      results: [],
+      total: 0,
+    });
   }
 });
 
@@ -853,45 +942,60 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const requestedIndex = req.query.index;
 
   try {
-    const esAvailable = await isElasticsearchAvailable();
-    if (!esAvailable) {
-      return res.status(503).json({
-        error: "Elasticsearch not available - cannot delete account",
-      });
-    }
-
-    // Determine which index and ES client to use
-    let es;
-    let targetIndex;
-
-    if (requestedNode && requestedIndex) {
-      const cachedIndices = await getCacheFiltered();
-      const nodeData = cachedIndices[requestedNode];
-
-      if (!nodeData || !nodeData.nodeUrl) {
-        return res.status(400).json({
-          error: `Node '${requestedNode}' not found or not configured`,
-        });
-      }
-
-      const { Client } = require("@elastic/elasticsearch");
-      es = new Client({ node: nodeData.nodeUrl });
-      targetIndex = requestedIndex;
-    } else {
+    if (!requestedNode || !requestedIndex) {
       return res.status(400).json({
         error: "Both node and index are required for account deletion.",
       });
     }
 
+    // Check if the specific node is running
+    const cachedIndices = await getCacheFiltered();
+    const nodeData = cachedIndices[requestedNode];
+
+    if (!nodeData || !nodeData.nodeUrl) {
+      return res.status(400).json({
+        error: `Node '${requestedNode}' not found or not configured`,
+      });
+    }
+
+    if (!nodeData.isRunning) {
+      return res.status(503).json({
+        error: `Node '${requestedNode}' is not running. Please start the node and try again.`,
+      });
+    }
+
+    // Create ES client for the specific node
+    const { Client } = require("@elastic/elasticsearch");
+    const es = new Client({ 
+      node: nodeData.nodeUrl,
+      requestTimeout: 30000,
+      sniffOnStart: false,
+      sniffOnConnectionFault: false,
+    });
+
+    // Test connection to the specific node
+    try {
+      await es.ping();
+    } catch (pingError) {
+      console.error(`Failed to connect to node ${requestedNode}:`, pingError);
+      return res.status(503).json({
+        error: `Cannot connect to node '${requestedNode}'. Please check if it's running properly.`,
+      });
+    }
+
     await es.delete({
-      index: targetIndex,
+      index: requestedIndex,
       id: id,
       refresh: true,
     });
+
     res.json({ message: "Account deleted successfully" });
   } catch (error) {
     console.error("Error deleting account:", error);
-    res.status(500).json({ error: "Failed to delete account" });
+    if (error.meta?.statusCode === 404) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+    res.status(500).json({ error: error.message || "Failed to delete account" });
   }
 });
 
@@ -903,54 +1007,66 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const requestedIndex = req.query.index;
 
   try {
-    const esAvailable = await isElasticsearchAvailable();
-    if (!esAvailable) {
+    if (!requestedNode || !requestedIndex) {
+      return res.status(400).json({
+        error: "Both node and index are required for account update.",
+      });
+    }
+
+    // Check if the specific node is running
+    const cachedIndices = await getCacheFiltered();
+    const nodeData = cachedIndices[requestedNode];
+
+    if (!nodeData || !nodeData.nodeUrl) {
+      return res.status(400).json({
+        error: `Node '${requestedNode}' not found or not configured`,
+      });
+    }
+
+    if (!nodeData.isRunning) {
       return res.status(503).json({
-        error: "Elasticsearch not available - cannot update account",
+        error: `Node '${requestedNode}' is not running. Please start the node and try again.`,
+      });
+    }
+
+    // Create ES client for the specific node
+    const { Client } = require("@elastic/elasticsearch");
+    const es = new Client({ 
+      node: nodeData.nodeUrl,
+      requestTimeout: 30000,
+      sniffOnStart: false,
+      sniffOnConnectionFault: false,
+    });
+
+    // Test connection to the specific node
+    try {
+      await es.ping();
+    } catch (pingError) {
+      console.error(`Failed to connect to node ${requestedNode}:`, pingError);
+      return res.status(503).json({
+        error: `Cannot connect to node '${requestedNode}'. Please check if it's running properly.`,
       });
     }
 
     // Construct the raw_line from the provided fields
     const raw_line = `${url}:${username}:${password}`;
 
-    // Determine which index and ES client to use
-    let es;
-    let targetIndex;
-
-    if (requestedNode && requestedIndex) {
-      const cachedIndices = await getCacheFiltered();
-      const nodeData = cachedIndices[requestedNode];
-
-      if (!nodeData || !nodeData.nodeUrl) {
-        return res.status(400).json({
-          error: `Node '${requestedNode}' not found or not configured`,
-        });
-      }
-
-      const { Client } = require("@elastic/elasticsearch");
-      es = new Client({ node: nodeData.nodeUrl });
-      targetIndex = requestedIndex;
-    } else {
-      return res.status(400).json({
-        error: "Both node and index are required for account update.",
-      });
-    }
-
     await es.update({
-      index: targetIndex,
+      index: requestedIndex,
       id: id,
       body: {
-        doc: { raw_line }, // Update raw_line field
+        doc: { raw_line },
       },
       refresh: true,
     });
+
     res.json({ message: "Account updated successfully" });
   } catch (error) {
-    console.error("Error updating account in Elasticsearch:", error);
-    if (error.meta && error.meta.statusCode === 404) {
-      return res.status(404).json({ message: "Account not found." });
+    console.error("Error updating account:", error);
+    if (error.meta?.statusCode === 404) {
+      return res.status(404).json({ error: "Account not found" });
     }
-    res.status(500).json({ message: "Failed to update account due to a server error." });
+    res.status(500).json({ error: error.message || "Failed to update account" });
   }
 });
 

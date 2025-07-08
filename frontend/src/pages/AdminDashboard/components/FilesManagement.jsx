@@ -461,6 +461,7 @@ export default function FilesManagement({
             <button
               onClick={handleUpload}
               className={buttonStyles.primary}
+              disabled={loading || uploadFiles.length === 0}
             >
               <FontAwesomeIcon
                 icon={!loading ? faUpload : faSpinner}
@@ -546,6 +547,7 @@ export default function FilesManagement({
             <button
               onClick={handleParseAll}
               className={buttonStyles.neutral}
+              disabled={unparsedFiles.length === 0}
             >
               <FontAwesomeIcon icon={faCog} className="mr-2" />
               Parse All Files
