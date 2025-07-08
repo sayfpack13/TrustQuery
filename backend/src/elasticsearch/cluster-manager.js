@@ -4,7 +4,6 @@ const path = require("path");
 const { execSync, spawn } = require("child_process");
 const { getConfig, setConfig } = require("../config");
 const yaml = require("yaml");
-const { refreshCache, syncSearchIndices } = require("../cache/indices-cache");
 
 // Helper to get environment and config info
 function getEnvAndConfig() {
