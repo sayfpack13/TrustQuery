@@ -72,18 +72,18 @@ export default function NodeDetailsModal({
         const indicesArray = Array.isArray(nodeData.indices)
           ? nodeData.indices
           : Object.entries(nodeData.indices).map(([indexName, indexData]) => ({
-              index: indexName,
-              "doc.count": indexData["doc.count"] || 0,
-              "store.size": formatBytes(indexData["store.size"]),
-              health: "green", // Default value since cache doesn't store health
-              status: "open", // Default value since cache doesn't store status
-              uuid: indexName, // Use index name as fallback UUID for cache
-              creation: {
-                date: {
-                  string: new Date().toISOString(), // Fallback date
-                },
+            index: indexName,
+            "doc.count": indexData["doc.count"] || 0,
+            "store.size": formatBytes(indexData["store.size"]),
+            health: "green", // Default value since cache doesn't store health
+            status: "open", // Default value since cache doesn't store status
+            uuid: indexName, // Use index name as fallback UUID for cache
+            creation: {
+              date: {
+                string: new Date().toISOString(), // Fallback date
               },
-            }));
+            },
+          }));
 
         setNodeIndices(indicesArray);
         setUsingCachedData(!nodeData.isRunning); // Use cached data if node is not running
@@ -385,9 +385,8 @@ export default function NodeDetailsModal({
                   <span className="text-neutral-300">Status:</span>
                   <div className="flex items-center space-x-2">
                     <div
-                      className={`w-3 h-3 rounded-full ${
-                        node.isRunning ? "bg-green-500" : "bg-red-500"
-                      }`}
+                      className={`w-3 h-3 rounded-full ${node.isRunning ? "bg-green-500" : "bg-red-500"
+                        }`}
                     ></div>
                     <span className="text-white font-medium">
                       {node.isRunning ? "Running" : "Stopped"}
@@ -477,7 +476,7 @@ export default function NodeDetailsModal({
                           {Math.round(
                             (enhancedNodesData[node.name].memory.heapUsed /
                               enhancedNodesData[node.name].memory.heapMax) *
-                              100
+                            100
                           )}
                           % used
                         </div>
@@ -490,7 +489,7 @@ export default function NodeDetailsModal({
                           width: `${Math.round(
                             (enhancedNodesData[node.name].memory.heapUsed /
                               enhancedNodesData[node.name].memory.heapMax) *
-                              100
+                            100
                           )}%`,
                         }}
                       ></div>
@@ -597,13 +596,12 @@ export default function NodeDetailsModal({
                       </div>
                       <div className="w-full bg-neutral-800 rounded-full h-2">
                         <div
-                          className={`h-2 rounded-full ${
-                            disk.usedPercent > 90
+                          className={`h-2 rounded-full ${disk.usedPercent > 90
                               ? "bg-red-500"
                               : disk.usedPercent > 75
-                              ? "bg-yellow-500"
-                              : "bg-green-500"
-                          }`}
+                                ? "bg-yellow-500"
+                                : "bg-green-500"
+                            }`}
                           style={{ width: `${disk.usedPercent}%` }}
                         ></div>
                       </div>
@@ -684,9 +682,8 @@ export default function NodeDetailsModal({
                       >
                         <FontAwesomeIcon
                           icon={faCircleNotch}
-                          className={`mr-1 ${
-                            isRefreshingIndices ? "fa-spin" : ""
-                          }`}
+                          className={`mr-1 ${isRefreshingIndices ? "fa-spin" : ""
+                            }`}
                         />
                         {isRefreshingIndices ? "Retrying..." : "Retry"}
                       </button>
@@ -718,13 +715,12 @@ export default function NodeDetailsModal({
                 {/* Cache status indicator */}
                 <div className="flex items-center space-x-1">
                   <span
-                    className={`inline-block w-2 h-2 rounded-full ${
-                      node.isRunning
+                    className={`inline-block w-2 h-2 rounded-full ${node.isRunning
                         ? usingCachedData
                           ? "bg-yellow-400"
                           : "bg-green-400"
                         : "bg-blue-400"
-                    }`}
+                      }`}
                   ></span>
                   <span className="text-xs text-neutral-400">
                     {node.isRunning
@@ -738,11 +734,9 @@ export default function NodeDetailsModal({
                 {/* Refresh button */}
                 <button
                   onClick={handleManualRefresh}
-                  className={
-                    buttonStyles.refresh +
-                    " flex items-center px-4 py-2 rounded text-sm"
-                  }
+                  className={buttonStyles.refresh}
                   title="Refresh indices data"
+                  disabled={!node.isRunning}
                 >
                   <FontAwesomeIcon
                     icon={faRefresh}
@@ -752,13 +746,9 @@ export default function NodeDetailsModal({
                 </button>
 
                 {/* Create index button */}
-
                 <button
                   onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
-                  className={
-                    buttonStyles.create +
-                    " flex items-center px-4 py-2 rounded-lg text-sm"
-                  }
+                  className={buttonStyles.create}
                   disabled={isCreatingIndex || !node.isRunning}
                 >
                   <FontAwesomeIcon
@@ -796,11 +786,10 @@ export default function NodeDetailsModal({
                       onChange={(e) => setNewIndexName(e.target.value)}
                       placeholder="e.g. logs-2025"
                       autoFocus
-                      className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
-                        newIndexName && !isValidIndexName
+                      className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${newIndexName && !isValidIndexName
                           ? "border-red-500 focus:ring-red-500"
                           : "border-neutral-600 focus:ring-blue-500"
-                      }`}
+                        }`}
                     />
                     {newIndexName && !isValidIndexName && (
                       <p className="text-red-400 text-xs mt-1">
@@ -823,11 +812,10 @@ export default function NodeDetailsModal({
                         value={newIndexShards}
                         onChange={(e) => setNewIndexShards(e.target.value)}
                         min="1"
-                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
-                          !isValidShards
+                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${!isValidShards
                             ? "border-red-500 focus:ring-red-500"
                             : "border-neutral-600 focus:ring-blue-500"
-                        }`}
+                          }`}
                       />
                       {!isValidShards && (
                         <p className="text-red-400 text-xs mt-1">
@@ -848,11 +836,10 @@ export default function NodeDetailsModal({
                         value={newIndexReplicas}
                         onChange={(e) => setNewIndexReplicas(e.target.value)}
                         min="0"
-                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${
-                          !isValidReplicas
+                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${!isValidReplicas
                             ? "border-red-500 focus:ring-red-500"
                             : "border-neutral-600 focus:ring-blue-500"
-                        }`}
+                          }`}
                       />
                       {!isValidReplicas && (
                         <p className="text-red-400 text-xs mt-1">
@@ -875,11 +862,11 @@ export default function NodeDetailsModal({
                         !node.isRunning
                           ? "Node must be running to create indices"
                           : !isFormValid
-                          ? "Please fix validation errors"
-                          : ""
+                            ? "Please fix validation errors"
+                            : ""
                       }
                     >
-                        <FontAwesomeIcon icon={isCreatingIndex ? faRefresh : faPlus} className={"mr-2"+(isCreatingIndex ? " fa-spin":"")} />
+                      <FontAwesomeIcon icon={isCreatingIndex ? faRefresh : faPlus} className={"mr-2" + (isCreatingIndex ? " fa-spin" : "")} />
                       {isCreatingIndex ? "Creating..." : "Create Index"}
                     </button>
                     <button
@@ -945,13 +932,12 @@ export default function NodeDetailsModal({
                       >
                         <td className="py-3 px-4">
                           <span
-                            className={`inline-block w-3 h-3 rounded-full ${
-                              index.health === "green"
+                            className={`inline-block w-3 h-3 rounded-full ${index.health === "green"
                                 ? "bg-green-500"
                                 : index.health === "yellow"
-                                ? "bg-yellow-500"
-                                : "bg-red-500"
-                            }`}
+                                  ? "bg-yellow-500"
+                                  : "bg-red-500"
+                              }`}
                           ></span>
                         </td>
                         <td className="py-3 px-4 font-medium">{index.index}</td>
@@ -978,12 +964,12 @@ export default function NodeDetailsModal({
                               !node.isRunning
                                 ? "Start the node to delete indices"
                                 : isDeletingIndex === index.index
-                                ? "Deleting..."
-                                : isCreatingIndex
-                                ? "Wait for index creation to complete"
-                                : refreshInProgress.current
-                                ? "Wait for refresh to complete"
-                                : "Delete index"
+                                  ? "Deleting..."
+                                  : isCreatingIndex
+                                    ? "Wait for index creation to complete"
+                                    : refreshInProgress.current
+                                      ? "Wait for refresh to complete"
+                                      : "Delete index"
                             }
                           >
                             {isDeletingIndex === index.index ? (
@@ -1071,33 +1057,30 @@ export default function NodeDetailsModal({
           <div className="flex border-b border-neutral-700">
             <button
               onClick={() => setActiveTab("overview")}
-              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${
-                activeTab === "overview"
+              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${activeTab === "overview"
                   ? "border-b-2 border-primary text-primary"
                   : "text-neutral-400 hover:text-white"
-              }`}
+                }`}
             >
               <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
               Overview
             </button>
             <button
               onClick={() => setActiveTab("indices")}
-              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${
-                activeTab === "indices"
+              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${activeTab === "indices"
                   ? "border-b-2 border-primary text-primary"
                   : "text-neutral-400 hover:text-white"
-              }`}
+                }`}
             >
               <FontAwesomeIcon icon={faDatabase} className="mr-2" />
               Indices
             </button>
             <button
               onClick={() => setActiveTab("configuration")}
-              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${
-                activeTab === "configuration"
+              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${activeTab === "configuration"
                   ? "border-b-2 border-primary text-primary"
                   : "text-neutral-400 hover:text-white"
-              }`}
+                }`}
             >
               <FontAwesomeIcon icon={faFileAlt} className="mr-2" />
               Configuration
