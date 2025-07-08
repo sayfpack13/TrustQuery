@@ -115,20 +115,40 @@ async function startNode(nodeName) {
     
     // First try to use servicePath if available
     if (metadata.servicePath && fs.existsSync(metadata.servicePath)) {
+      // Check if script is executable (non-Windows)
+      if (process.platform !== 'win32') {
+        try {
+          fs.accessSync(metadata.servicePath, fs.constants.X_OK);
+        } catch (e) {
+          throw new Error(`Service script ${metadata.servicePath} is not executable. Please run 'chmod +x ${metadata.servicePath}'`);
+        }
+      }
       console.log(`Starting node ${nodeName} using service script: ${metadata.servicePath}`);
-      const nodeProcess = spawn(metadata.servicePath, [], {
+      let spawnCmd, spawnArgs;
+      if (process.platform === 'win32') {
+        spawnCmd = metadata.servicePath;
+        spawnArgs = [];
+      } else {
+        // Run as 'elasticsearch' user
+        spawnCmd = 'sudo';
+        spawnArgs = ['-u', 'elasticsearch', metadata.servicePath];
+      }
+      const nodeProcess = spawn(spawnCmd, spawnArgs, {
         detached: true,
         stdio: "ignore",
         shell: true,
       });
-      
       nodeProcess.unref();
     } 
-    // Fall back to using elasticsearchConfig.basePath + bin/elasticsearch
+    // Fall back to using elasticsearchConfig.basePath + bin/elasticsearch(.bat)
     else if (elasticsearchConfig && elasticsearchConfig.basePath) {
-      const nodeBin = elasticsearchConfig.executable || path.join(elasticsearchConfig.basePath, "bin", "elasticsearch.bat");
+      let nodeBin;
+      if (process.platform === 'win32') {
+        nodeBin = elasticsearchConfig.executable || path.join(elasticsearchConfig.basePath, "bin", "elasticsearch.bat");
+      } else {
+        nodeBin = elasticsearchConfig.executable || path.join(elasticsearchConfig.basePath, "bin", "elasticsearch");
+      }
       console.log(`Starting node ${nodeName} using executable: ${nodeBin}`);
-      
       // Pass node-specific configuration
       const args = [
         `-Ecluster.name=${metadata.cluster || "trustquery-cluster"}`,
@@ -138,13 +158,20 @@ async function startNode(nodeName) {
         `-Ehttp.port=${metadata.port}`,
         `-Etransport.port=${metadata.transportPort}`
       ];
-      
-      const nodeProcess = spawn(nodeBin, args, {
+      let spawnCmd, spawnArgs;
+      if (process.platform === 'win32') {
+        spawnCmd = nodeBin;
+        spawnArgs = args;
+      } else {
+        // Run as 'elasticsearch' user
+        spawnCmd = 'sudo';
+        spawnArgs = ['-u', 'elasticsearch', nodeBin, ...args];
+      }
+      const nodeProcess = spawn(spawnCmd, spawnArgs, {
         detached: true,
         stdio: "ignore",
         shell: true,
       });
-      
       nodeProcess.unref();
     } else {
       throw new Error(`No valid start method found for node ${nodeName}. Please configure servicePath or elasticsearchConfig.basePath`);
