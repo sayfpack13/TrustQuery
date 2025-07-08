@@ -1869,7 +1869,8 @@ app.get("/api/search", async (req, res) => {
     const searchIndices = config.searchIndices || [];
     const nodeMetadata = config.nodeMetadata || {};
     const isAdmin = isAdminRequest(req);
-
+    const startTime = Date.now();
+    
     // If no search indices are configured, return empty results
     if (searchIndices.length === 0) {
       return res.json({
@@ -1884,57 +1885,78 @@ app.get("/api/search", async (req, res) => {
       return res.status(400).json({ error: "Search query is required" });
     }
 
-    const from = (parseInt(page) - 1) * parseInt(size);
-    const searchResults = [];
-    let totalResults = 0;
-    const searchedIndices = [];
-    let esAvailable = false;
-
+    // Calculate pagination parameters
+    const pageSize = parseInt(size);
+    const from = (parseInt(page) - 1) * pageSize;
+    
     // Support both old (string) and new ({node,index}) formats
     const indicesToSearch =
       Array.isArray(searchIndices) && typeof searchIndices[0] === "object"
         ? searchIndices
         : searchIndices.map((idx) => ({ node: "default", index: idx }));
 
-    for (const entry of indicesToSearch) {
-      if (!entry.node || !entry.index) continue;
+    // Prepare client instances (reuse clients for the same node)
+    const clientsCache = {};
+    let esAvailable = false;
+    const { Client } = require("@elastic/elasticsearch");
+    
+    // Prepare search requests for each index
+    const searchPromises = indicesToSearch.map(async (entry) => {
+      if (!entry.node || !entry.index) return null;
+      
+      // Get or create client for this node
       let nodeUrl = nodeMetadata[entry.node]?.nodeUrl;
       if (!nodeUrl && entry.node.startsWith("http")) nodeUrl = entry.node;
       if (!nodeUrl) nodeUrl = `http://localhost:9200`;
+      
+      // Reuse client if we already created one for this node
+      if (!clientsCache[nodeUrl]) {
+        clientsCache[nodeUrl] = new Client({ 
+          node: nodeUrl,
+          // Add performance optimizations
+          compression: true,
+          sniffOnStart: false,
+          sniffOnConnectionFault: false,
+          maxRetries: 1,
+          requestTimeout: 10000 // 10 second timeout
+        });
+      }
+      
+      const es = clientsCache[nodeUrl];
+      
       try {
-        const { Client } = require("@elastic/elasticsearch");
-        const es = new Client({ node: nodeUrl });
-        // Check if ES is available for this node
-        try {
-          await es.ping();
-          esAvailable = true;
-        } catch (err) {
-          continue;
-        }
+        // Use wildcard for substring search (slow for large datasets)
+        // Also include match (full word) and term (exact match)
         const response = await es.search({
           index: entry.index,
-          from: from,
-          size: parseInt(size),
+          track_total_hits: true,
+          size: 10000, // fetch up to 10k per index, will paginate after combining
           body: {
+            _source: ["raw_line"],
             query: {
               bool: {
                 should: [
-                  { match: { raw_line: { query: q, fuzziness: "AUTO" } } },
-                  { wildcard: { raw_line: `*${q.toLowerCase()}*` } },
+                  { term: { "raw_line.keyword": q } },
+                  { match: { "raw_line": { query: q, operator: "and" } } },
+                  { wildcard: { "raw_line": `*${q.toLowerCase()}*` } }
                 ],
                 minimum_should_match: 1,
               },
             },
-            highlight: {
-              fields: {
-                raw_line: {
-                  pre_tags: ["<mark>"],
-                  post_tags: ["</mark>"],
-                },
-              },
-            },
           },
+          timeout: "5s"
         });
+        esAvailable = true;
+        // Handle both object and number formats for hits.total
+        let totalHits = 0;
+        if (typeof response.hits.total === 'object' && response.hits.total !== null) {
+          totalHits = response.hits.total.value;
+        } else if (typeof response.hits.total === 'number') {
+          totalHits = response.hits.total;
+        } else {
+          totalHits = response.hits.hits.length;
+        }
+        // Process results
         const indexResults = response.hits.hits.map((hit) => {
           const parsedAccount = parseLineForDisplay(hit._source.raw_line);
           if (isAdmin) {
@@ -1942,47 +1964,78 @@ app.get("/api/search", async (req, res) => {
               id: hit._id,
               ...parsedAccount,
               raw_line: hit._source.raw_line,
+              _index: hit._index,
+              _node: entry.node
             };
           } else {
             const maskedAccount = applyMaskingForPublicSearch(parsedAccount, config);
             return {
               id: hit._id,
               ...maskedAccount,
+              _index: hit._index,
+              _node: entry.node
             };
           }
         });
-        searchResults.push(...indexResults);
-        totalResults += response.hits.total.value;
-        searchedIndices.push(entry);
+        // Return results for this index
+        return {
+          results: indexResults,
+          total: totalHits,
+          index: entry.index,
+          node: entry.node
+        };
       } catch (indexError) {
-        // Continue with other indices even if one fails
-        continue;
+        console.error(`Error searching ${entry.node}/${entry.index}:`, indexError.message);
+        return null;
       }
-    }
-
+    });
+    
+    // Execute all search requests in parallel
+    const searchResponses = await Promise.all(searchPromises);
+    
+    // Process results from all indices
+    const combinedResults = [];
+    let totalCount = 0;
+    const searchedIndices = [];
+    
+    // Filter out null results and combine
+    searchResponses.filter(Boolean).forEach(result => {
+      if (result && result.results) {
+        combinedResults.push(...result.results);
+        totalCount += result.total || 0;
+        searchedIndices.push({ node: result.node, index: result.index });
+      }
+    });
+    
     if (!esAvailable) {
       return res.json({
         results: [],
         total: 0,
         searchIndices: searchIndices,
         message: "Elasticsearch not available",
+        time_ms: Date.now() - startTime
       });
     }
-
+    
     // Sort results by relevance (for public search, sort by id for consistency)
-    searchResults.sort((a, b) => {
+    combinedResults.sort((a, b) => {
       return a.id.localeCompare(b.id);
     });
-
+    
     // Apply pagination to combined results
-    const paginatedResults = searchResults.slice(0, parseInt(size));
-
+    const paginatedResults = combinedResults.slice(from, from + pageSize);
+    
+    // Calculate execution time
+    const executionTime = Date.now() - startTime;
+    console.log(`Search for "${q}" completed in ${executionTime}ms, found ${totalCount} results`);
+    
     res.json({
       results: paginatedResults,
-      total: totalResults,
-      searchIndices: searchIndices,
+      total: totalCount,
+      searchIndices: searchedIndices,
       page: parseInt(page),
-      size: parseInt(size),
+      size: pageSize,
+      time_ms: executionTime
     });
   } catch (error) {
     console.error("Error performing search:", error);

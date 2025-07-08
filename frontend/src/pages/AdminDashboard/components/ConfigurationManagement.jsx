@@ -12,6 +12,7 @@ import {
   faCheckCircle,
   faServer,
   faExclamationTriangle,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
 import { formatBytes } from "../../../utils/format";
 import buttonStyles from "../../../components/ButtonStyles";
@@ -21,8 +22,8 @@ export default function ConfigurationManagement({
   enhancedNodesData = {},
   setShowSetupWizard,
 }) {
-  const [config, setConfig] = useState(null);
-  const [configLoading, setConfigLoading] = useState(false);
+  const [config, setConfig] = useState({});
+  const [isLoading, setIsLoading] = useState(true);
   const [selectedSearchIndices, setSelectedSearchIndices] = useState([]);
   // Use enhancedNodesData prop instead of local state
   const indicesByNodes = enhancedNodesData;
@@ -38,10 +39,13 @@ export default function ConfigurationManagement({
   const [hasUnsavedSystemChanges, setHasUnsavedSystemChanges] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isUpdatingIndices, setIsUpdatingIndices] = useState(false);
+  const [searchIndices, setSearchIndices] = useState([]);
+  const [isLoadingIndices, setIsLoadingIndices] = useState(false);
+  const [indicesError, setIndicesError] = useState(null);
 
   const fetchConfig = useCallback(async () => {
     try {
-      setConfigLoading(true);
+      setIsLoading(true);
       const response = await axiosClient.get("/api/admin/config");
 
       setConfig(response.data);
@@ -65,7 +69,7 @@ export default function ConfigurationManagement({
         faTimes
       );
     } finally {
-      setConfigLoading(false);
+      setIsLoading(false);
     }
   }, []); // Empty dependency array to prevent re-creation
 
@@ -184,7 +188,7 @@ export default function ConfigurationManagement({
         </div>
       </div>
 
-      {configLoading ? (
+      {isLoading ? (
         <div className="text-center py-8">
           <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
           Loading configuration...
@@ -259,7 +263,7 @@ export default function ConfigurationManagement({
               </div>
             )}
 
-            {configLoading ? (
+            {isLoading ? (
               <div className="text-center py-6 text-neutral-400">
                 <FontAwesomeIcon
                   icon={faCircleNotch}
@@ -515,14 +519,14 @@ export default function ConfigurationManagement({
                           setSelectedSearchIndices(allPairs);
                         }}
                         className={buttonStyles.primary}
-                        disabled={configLoading}
+                        disabled={isLoading}
                       >
                         Select All Indices
                       </button>
                       <button
                         onClick={() => setSelectedSearchIndices([])}
                         className={buttonStyles.cancel}
-                        disabled={configLoading}
+                        disabled={isLoading}
                       >
                         Clear All
                       </button>
@@ -532,19 +536,13 @@ export default function ConfigurationManagement({
                     onClick={updateSearchIndices}
                     disabled={isUpdatingIndices}
                     className={buttonStyles.create}
-                  >
-                    <FontAwesomeIcon icon={faCheckCircle} className="mr-2" />
-                    {isUpdatingIndices
-                      ? "Updating..."
-                      : selectedSearchIndices.length === 0
-                      ? "Disable Search (Clear All)"
-                      : "Update Search Configuration"}
-                    {isUpdatingIndices && (
-                      <FontAwesomeIcon
-                        icon={faCircleNotch}
-                        spin
-                        className="ml-2 text-white"
-                      />
+                  >                    {isUpdatingIndices ? (
+                      <>
+                        <FontAwesomeIcon icon={faSpinner} spin className="mr-2" />
+                        Updating...
+                      </>
+                    ) : (
+                      "Update Search Indices"
                     )}
                   </button>
                 </div>
