@@ -1864,7 +1864,7 @@ function isAdminRequest(req) {
 // GET search endpoint (public endpoint)
 app.get("/api/search", async (req, res) => {
   try {
-    const { q, page = 1, size = 10 } = req.query;
+    const { q, page = 1, size } = req.query;
     const config = getConfig();
     const searchIndices = config.searchIndices || [];
     const nodeMetadata = config.nodeMetadata || {};
@@ -1886,7 +1886,7 @@ app.get("/api/search", async (req, res) => {
     }
 
     // Calculate pagination parameters
-    const pageSize = parseInt(size);
+    const pageSize = parseInt(size || 10000); // Default to 10,000 if not specified
     const from = (parseInt(page) - 1) * pageSize;
     
     // Support both old (string) and new ({node,index}) formats
@@ -1938,7 +1938,7 @@ app.get("/api/search", async (req, res) => {
                 should: [
                   { term: { "raw_line.keyword": q } },
                   { match: { "raw_line": { query: q, operator: "and" } } },
-                  { wildcard: { "raw_line": `*${q.toLowerCase()}*` } }
+                  { wildcard: { "raw_line.keyword": `*${q.toLowerCase()}*` } }
                 ],
                 minimum_should_match: 1,
               },
@@ -2021,14 +2021,14 @@ app.get("/api/search", async (req, res) => {
     combinedResults.sort((a, b) => {
       return a.id.localeCompare(b.id);
     });
-    
-    // Apply pagination to combined results
+
+    // Remove the MAX_RESULTS enforcement, just use the paginated results as before
     const paginatedResults = combinedResults.slice(from, from + pageSize);
-    
+
     // Calculate execution time
     const executionTime = Date.now() - startTime;
     console.log(`Search for "${q}" completed in ${executionTime}ms, found ${totalCount} results`);
-    
+
     res.json({
       results: paginatedResults,
       total: totalCount,
