@@ -9,21 +9,19 @@ const { getNodeMetadata, listNodes } = require("./node-metadata");
 async function getClusterStatus() {
   try {
     const nodes = await listNodes();
-    const enhancedNodes = [];
+    // Use cached isRunning from listNodes
+    const enhancedNodes = nodes.map(node => ({
+      ...node,
+      status: node.isRunning ? "running" : "stopped"
+    }));
 
-    // Check each node's status
-    for (const node of nodes) {
-      const isRunning = await isNodeRunning(node.name);
-      enhancedNodes.push({
-        ...node,
-        isRunning,
-        status: isRunning ? "running" : "stopped"
-      });
-    }
-
-    // Get write node status
+    // Get write node status from cache if available
     const writeNode = getConfig("writeNode");
-    const writeNodeRunning = writeNode ? await isNodeRunning(writeNode) : false;
+    let writeNodeRunning = false;
+    if (writeNode) {
+      const writeNodeInfo = nodes.find(n => n.name === writeNode);
+      writeNodeRunning = writeNodeInfo ? writeNodeInfo.isRunning : false;
+    }
 
     return {
       totalNodes: nodes.length,

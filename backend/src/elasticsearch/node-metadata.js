@@ -2,7 +2,7 @@ const fs = require("fs").promises;
 const path = require("path");
 const { getConfig, setConfig } = require("../config");
 const { getEnvAndConfig, getNodeConfig } = require("./node-config");
-const { isNodeRunning } = require("./node-process");
+const { isNodeRunning } = require("./node-utils");
 
 /**
  * Build canonical node metadata object from any node config or detection source.

@@ -3,7 +3,8 @@ const path = require("path");
 const fs = require("fs");
 const { getConfig, setConfig } = require("../config");
 const { getEnvAndConfig } = require("./node-config");
-const { refreshAfterOperation } = require("../cache/cache-manager");
+const { isNodeRunning } = require("./node-utils");
+const net = require("net");
 
 /**
  * Find process ID by port
@@ -26,61 +27,6 @@ async function findPidByPort(port) {
     }
   } catch (error) {
     return null;
-  }
-}
-
-/**
- * Check if a node is running and ready
- */
-async function isNodeRunning(nodeName) {
-  const nodeMetadata = getConfig("nodeMetadata") || {};
-  const metadata = nodeMetadata[nodeName];
-  if (!metadata) return false;
-
-  // Construct nodeUrl if not available
-  const nodeUrl = metadata.nodeUrl || 
-    (metadata.host && metadata.port ? `http://${metadata.host}:${metadata.port}` : undefined);
-  
-  if (!nodeUrl) {
-    // Try port-based detection as fallback
-    if (metadata.port) {
-      try {
-        const pid = await findPidByPort(metadata.port);
-        if (pid) return true;
-      } catch (error) {
-        // Silently fail and return false
-      }
-    }
-    return false;
-  }
-
-  try {
-    // Add a timeout to the fetch request
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
-    
-    // First check if the node is responding at all
-    const response = await fetch(nodeUrl, { 
-      signal: controller.signal,
-      method: 'HEAD' // Use HEAD request for faster checking
-    });
-    
-    clearTimeout(timeoutId);
-    
-    // If we get any response, consider the node running
-    return response.status < 500; // Accept any non-server error response
-  } catch (error) {
-    // Try port-based detection as fallback
-    if (metadata.port) {
-      try {
-        const pid = await findPidByPort(metadata.port);
-        if (pid) return true;
-      } catch (portError) {
-        // Silently fail
-      }
-    }
-    
-    return false;
   }
 }
 
@@ -189,7 +135,6 @@ async function startNode(nodeName) {
       
       if (await isNodeRunning(nodeName)) {
         console.log(`Node ${nodeName} started successfully! Refreshing cache...`);
-        await refreshAfterOperation(nodeName, "start");
         return { success: true, message: `Node ${nodeName} started successfully` };
       }
     }
@@ -250,7 +195,6 @@ async function stopNode(nodeName) {
         if (pid) {
           console.log(`Stopping node ${nodeName} with PID ${pid}`);
           spawn('taskkill', ['/F', '/PID', pid], { shell: true });
-          await refreshAfterOperation(nodeName, "stop");
           return { success: true, message: `Node ${nodeName} stopped successfully` };
         }
       } 
@@ -261,7 +205,6 @@ async function stopNode(nodeName) {
           const pid = parseInt(fs.readFileSync(pidFile, "utf8"));
           try {
             process.kill(pid);
-            await refreshAfterOperation(nodeName, "stop");
             return { success: true, message: `Node ${nodeName} stopped successfully` };
           } catch (err) {
             console.error(`Failed to kill process with PID from pid file: ${pid}`, err);
@@ -288,7 +231,6 @@ async function stopNode(nodeName) {
           if (pid && !isNaN(pid)) {
             try {
               process.kill(pid);
-              await refreshAfterOperation(nodeName, "stop");
               return { success: true, message: `Node ${nodeName} stopped successfully (by port fallback)` };
             } catch (killErr) {
               console.error(`Failed to kill process found by port: ${pid}`, killErr);

@@ -4,7 +4,7 @@ const { verifyJwt } = require("../middleware/auth");
 const { getConfig, setConfig } = require("../config");
 const {
   getCache,
-  refreshCacheForRunningNodes,
+  refreshClusterCache,
   syncSearchIndices,
 } = require("../cache/indices-cache");
 const { getES } = require("../elasticsearch/client");
@@ -16,7 +16,7 @@ const router = express.Router();
 // Helper function to refresh cache and sync search indices using smart refresh
 async function refreshCacheAndSync(operation = "operation") {
   try {
-    await refreshCacheForRunningNodes();
+    await refreshClusterCache();
     await syncSearchIndices();
     // Only log on specific operations, not regular refreshes
     if (operation !== "regular-refresh") {
@@ -348,10 +348,7 @@ router.post("/create", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after cluster creation
     try {
-      await refreshCacheAndSync(
-       
-        `creating cluster ${clusterName} with ${createdNodes.length} nodes`
-      );
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after creating cluster:`,
@@ -433,7 +430,7 @@ router.post("/nodes", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node creation
     try {
-      await refreshCacheAndSync( `creating node ${createdNode.name}`);
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after creating node:`,
@@ -534,7 +531,7 @@ router.put("/nodes/:nodeName", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node update
     try {
-      await refreshCacheAndSync( `updating node ${nodeName}`);
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after updating node:`,
@@ -857,7 +854,7 @@ router.post("/nodes/:nodeName/stop", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node stop
     try {
-      await refreshCacheAndSync( `stopping node ${nodeName}`);
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after stopping node:`,
@@ -928,7 +925,7 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
 
     // Refresh persistent cache after node removal to clean up removed nodes
     try {
-      await refreshCacheAndSync( `removing node ${nodeName}`);
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after removing node:`,
@@ -973,9 +970,7 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
       if (cleaned) {
         // Refresh cache after emergency cleanup
         try {
-          await refreshCacheAndSync(
-            `emergency cleanup of node ${nodeName}`
-          );
+          await refreshClusterCache();
         } catch (cacheError) {
           console.warn(
             `⚠️ Failed to refresh cache after emergency cleanup:`,
@@ -1017,7 +1012,7 @@ router.get("/local-nodes", verifyJwt, async (req, res) => {
     } else {
       // Default behavior or forceRefresh === 'true' - always refresh running nodes
       // This ensures document counts and store sizes are always current
-      refreshedCache = await refreshCacheForRunningNodes();
+      refreshedCache = await refreshClusterCache();
     }
 
     // Enhance nodes with indices information from cache (no additional live fetching)
@@ -1027,7 +1022,7 @@ router.get("/local-nodes", verifyJwt, async (req, res) => {
 
       let indicesArray = [];
 
-      // Always use cached data since refreshCacheForRunningNodes already fetched fresh data for running nodes
+      // Always use cached data since refreshClusterCache already fetched fresh data for running nodes
       if (cachedNodeData.indices) {
         indicesArray = Array.isArray(cachedNodeData.indices)
           ? cachedNodeData.indices
@@ -1090,7 +1085,7 @@ router.post("/local-nodes/refresh", verifyJwt, async (req, res) => {
     );
 
     // Use smart refresh that only updates running nodes
-    const refreshedCache = await refreshCacheForRunningNodes();
+    const refreshedCache = await refreshClusterCache();
 
     // Get fresh cluster status
     const clusterStatus = await clusterManager.getClusterStatus();
@@ -1231,9 +1226,7 @@ router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
 
     // After successful index creation, refresh persistent cache
     try {
-      await refreshCacheAndSync(
-        `creating index ${indexName} on node ${nodeName}`
-      );
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after creating index:`,
@@ -1281,9 +1274,7 @@ router.delete("/:nodeName/indices/:indexName", verifyJwt, async (req, res) => {
 
     // After successful deletion, refresh persistent cache
     try {
-      await refreshCacheAndSync(
-        `deleting index ${indexName} on node ${nodeName}`
-      );
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after deleting index:`,
@@ -1413,7 +1404,7 @@ router.post("/nodes/:nodeName/move", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node move
     try {
-      await refreshCacheAndSync(`moving node ${nodeName}`);
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after moving node:`,
@@ -1505,9 +1496,7 @@ router.post("/nodes/:nodeName/copy", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node copy
     try {
-      await refreshCacheAndSync(
-        `copying node ${nodeName} to ${newNodeName}`
-      );
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after copying node:`,

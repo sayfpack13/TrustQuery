@@ -5,7 +5,7 @@ const { getConfig, setConfig } = require("../config");
 const clusterManager = require("../elasticsearch/cluster-manager");
 const { getClient } = require("../elasticsearch/client");
 const { buildNodeMetadata } = require("../elasticsearch/node-metadata");
-const { refreshCache } = require("./cache-manager");
+const { isPortOpen } = require("../elasticsearch/node-utils");
 
 const CACHE_FILE = path.join(
   __dirname,
@@ -48,63 +48,57 @@ async function setCache(data) {
  * Refresh cache for running nodes. Accepts an optional node list to avoid redundant listNodes() calls.
  * @param {Array} nodes Optional array of node objects (with isRunning, host, port, etc)
  */
-async function refreshCacheForRunningNodes() {
+async function refreshClusterCache() {
   // Reduced logging for regular refresh operations
   const currentCache = await getCache();
 
-
-    try {
-      const allNodes = await clusterManager.listNodes();
-      runningNodes = allNodes || [];
-      // Only log if there are running nodes to avoid spam
-      if (runningNodes.filter((n) => n.isRunning).length > 0) {
-        console.log(
-          `Found ${runningNodes.length} configured nodes, ${
-            runningNodes.filter((n) => n.isRunning).length
-          } running`
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Could not get running nodes from Elasticsearch. Assuming all are offline.",
-        error
+  let runningNodes = [];
+  try {
+    const allNodes = await clusterManager.listNodes();
+    runningNodes = allNodes || [];
+    if (runningNodes.filter((n) => n.isRunning).length > 0) {
+      console.log(
+        `Found ${runningNodes.length} configured nodes, ${
+          runningNodes.filter((n) => n.isRunning).length
+        } running`
       );
-      runningNodes = [];
     }
-
+  } catch (error) {
+    console.error(
+      "Could not get running nodes from Elasticsearch. Assuming all are offline.",
+      error
+    );
+    runningNodes = [];
+  }
 
   const newCache = {};
 
-  // Process all nodes (both running and offline)
   for (const node of runningNodes) {
     const nodeName = node.name;
-    const nodeUrl = `http://${node.host}:${node.port}`;
+    const host = node.host || "localhost";
+    const port = node.port || 9200;
+    const nodeUrl = `http://${host}:${port}`;
 
-    if (node.isRunning) {
+    // Use port-based check for node status
+    const portOpen = await isPortOpen(host, port, 1000);
+    if (portOpen) {
       // Node is online, fetch fresh data
       try {
-        // Reduced logging - only log on first fetch or errors
         const client = getSingleNodeClient(nodeUrl);
-
         if (!client) {
           throw new Error(`Failed to get client for ${nodeUrl}`);
         }
-
         const response = await client.indices.stats({
           index: "_all",
           metric: ["docs", "store"],
         });
-
         if (!response) {
           throw new Error(
             `No response received from Elasticsearch for node ${nodeName}`
           );
         }
-
         const indices = {};
-        // Handle both response.body.indices and response.indices (newer clients return data directly)
         const statsData = response.body || response;
-
         if (statsData && statsData.indices) {
           for (const [indexName, indexStats] of Object.entries(
             statsData.indices
@@ -124,15 +118,12 @@ async function refreshCacheForRunningNodes() {
         } else {
           console.log(`No indices found in response for node ${nodeName}`);
         }
-
         newCache[nodeName] = {
           status: "online",
           last_updated: new Date().toISOString(),
           indices,
           isRunning: true,
         };
-
-        // Only log if there are indices, to reduce spam
         if (Object.keys(indices).length > 0) {
           console.log(
             `Cached ${Object.keys(indices).length} indices for node ${nodeName}`
@@ -143,7 +134,6 @@ async function refreshCacheForRunningNodes() {
           `Error fetching stats for online node ${nodeName}:`,
           error
         );
-        // If we fail to fetch stats, treat it as offline but keep existing cache if available
         if (currentCache[nodeName]) {
           newCache[nodeName] = {
             ...currentCache[nodeName],
@@ -160,7 +150,8 @@ async function refreshCacheForRunningNodes() {
         }
       }
     } else {
-      // Node is offline, use cached data if it exists
+      // Port is closed, node is offline
+      console.log(`Node ${nodeName} port ${port} is closed (offline).`);
       if (currentCache[nodeName]) {
         newCache[nodeName] = {
           ...currentCache[nodeName],
@@ -168,7 +159,6 @@ async function refreshCacheForRunningNodes() {
           isRunning: false,
         };
       } else {
-        // First time seeing this node and it's offline
         newCache[nodeName] = {
           status: "offline",
           last_updated: null,
@@ -180,7 +170,6 @@ async function refreshCacheForRunningNodes() {
   }
 
   await setCache(newCache);
-  // Reduced logging - only log when there are changes
   return newCache;
 }
 
@@ -202,22 +191,15 @@ async function removeNodeFromCache(nodeName) {
 }
 
 async function syncSearchIndices() {
-  // This function syncs the searchIndices configuration by removing any indices
-  // that no longer exist across all nodes
-  console.log("🔄 Syncing searchIndices configuration...");
-
+  // Only log when there are changes or errors
   try {
     const { getConfig, setConfig } = require("../config");
     const currentSearchIndices = getConfig("searchIndices") || [];
-
     if (currentSearchIndices.length === 0) {
-      console.log("ℹ️ No search indices configured, nothing to sync");
+      // No log needed for no indices
       return true;
     }
-
-    // Get current cache to see what indices actually exist
     const cache = await getCache();
-    // Build a set of valid node+index pairs
     const existingNodeIndices = new Set();
     for (const [nodeName, nodeData] of Object.entries(cache)) {
       if (nodeData && nodeData.indices) {
@@ -234,13 +216,7 @@ async function syncSearchIndices() {
         }
       }
     }
-
-    console.log(
-      `📊 Found ${existingNodeIndices.size} existing node+index pairs across all nodes`
-    );
-
-
-    // Filter out indices that no longer exist (expecting { node, index } objects)
+    // Only log if there are changes
     const validSearchIndices = currentSearchIndices.filter((entry) => {
       if (
         entry &&
@@ -249,20 +225,11 @@ async function syncSearchIndices() {
         "index" in entry
       ) {
         const key = `${entry.node}::${entry.index}`;
-        const exists = existingNodeIndices.has(key);
-        if (!exists) {
-          console.log(
-            `🗑️ Removing non-existent index '${entry.index}' on node '${entry.node}' from searchIndices`
-          );
-        }
-        return exists;
+        return existingNodeIndices.has(key);
       } else {
-        console.log(`🗑️ Removing invalid searchIndices entry:`, entry);
         return false;
       }
     });
-
-    // Only update if there's a change
     if (validSearchIndices.length !== currentSearchIndices.length) {
       await setConfig("searchIndices", validSearchIndices);
       console.log(
@@ -274,10 +241,7 @@ async function syncSearchIndices() {
           currentSearchIndices.length - validSearchIndices.length
         } invalid indices from search configuration`
       );
-    } else {
-      console.log("✅ All searchIndices are valid, no sync needed");
     }
-
     return true;
   } catch (error) {
     console.error("❌ Error syncing searchIndices:", error);
@@ -364,8 +328,7 @@ async function getCachedNodeIndices(nodeName) {
 
 module.exports = {
   getOrSetCache,
-  refreshCache,
-  refreshCacheForRunningNodes,
+  refreshClusterCache,
   syncSearchIndices,
   removeNodeFromCache,
   getCache,

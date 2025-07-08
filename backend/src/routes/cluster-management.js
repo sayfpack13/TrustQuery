@@ -2,7 +2,7 @@ const express = require("express");
 const { verifyJwt } = require("../middleware/auth");
 const { getConfig, setConfig } = require("../config");
 const clusterManager = require("../elasticsearch/cluster-manager");
-const { refreshCacheAndSync } = require("../cache/indices-cache");
+const { refreshClusterCache } = require("../cache/indices-cache");
 
 const router = express.Router();
 
@@ -56,7 +56,7 @@ router.post("/create", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after cluster creation
     try {
-      await refreshCacheAndSync(
+      await refreshClusterCache(
         `creating cluster ${clusterName} with ${createdNodes.length} nodes`
       );
     } catch (cacheError) {

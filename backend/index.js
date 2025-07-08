@@ -9,8 +9,7 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const { randomUUID } = require("crypto");
 const cors = require("cors");
-const { syncSearchIndices, getCacheFiltered } = require("./src/cache/indices-cache");
-const { refreshCache } = require("./src/cache/cache-manager");
+const { syncSearchIndices, getCacheFiltered, refreshClusterCache } = require("./src/cache/indices-cache");
 
 // Configuration management
 const { loadConfig: loadCentralizedConfig, getConfig, setConfig, saveConfig } = require("./src/config");
@@ -86,7 +85,7 @@ async function initializeServer() {
 
   // Initial cache refresh
   try {
-    await refreshCache();
+    await refreshClusterCache();
   } catch (error) {
     console.error("Error during initial cache refresh:", error);
     console.warn("Continuing server initialization despite cache refresh error");
@@ -1886,7 +1885,8 @@ app.get("/api/search", async (req, res) => {
     }
 
     // Calculate pagination parameters
-    const pageSize = parseInt(size || 10000); // Default to 10,000 if not specified
+    const MAX_RESULTS = 10000;
+    const pageSize = Math.min(parseInt(size || 10000), MAX_RESULTS);
     const from = (parseInt(page) - 1) * pageSize;
     
     // Support both old (string) and new ({node,index}) formats
@@ -1930,7 +1930,7 @@ app.get("/api/search", async (req, res) => {
         const response = await es.search({
           index: entry.index,
           track_total_hits: true,
-          size: 10000, // fetch up to 10k per index, will paginate after combining
+          size: pageSize, // cap per index
           body: {
             _source: ["raw_line"],
             query: {
@@ -2023,7 +2023,7 @@ app.get("/api/search", async (req, res) => {
     });
 
     // Remove the MAX_RESULTS enforcement, just use the paginated results as before
-    const paginatedResults = combinedResults.slice(from, from + pageSize);
+    const paginatedResults = combinedResults.slice(from, Math.min(from + pageSize, MAX_RESULTS));
 
     // Calculate execution time
     const executionTime = Date.now() - startTime;
@@ -2031,11 +2031,12 @@ app.get("/api/search", async (req, res) => {
 
     res.json({
       results: paginatedResults,
-      total: totalCount,
+      total: Math.min(totalCount, MAX_RESULTS),
       searchIndices: searchedIndices,
       page: parseInt(page),
       size: pageSize,
-      time_ms: executionTime
+      time_ms: executionTime,
+      warning: totalCount > MAX_RESULTS ? `Result set truncated to ${MAX_RESULTS} for performance.` : undefined
     });
   } catch (error) {
     console.error("Error performing search:", error);

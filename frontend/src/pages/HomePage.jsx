@@ -21,6 +21,7 @@ export default function HomePage() {
   const [hasAlertPlayedForCurrentSearch, setHasAlertPlayedForCurrentSearch] =
     useState(false);
   const [loading, setLoading] = useState(false); // Pagination states
+  const [searchWarning, setSearchWarning] = useState("");
 
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
@@ -135,6 +136,7 @@ export default function HomePage() {
     setShowAlertAnimation(false);
     setLoading(true);
     setSearchMessage("");
+    setSearchWarning("");
     try {
       const token = localStorage.getItem("adminToken");
       const headers = {
@@ -156,6 +158,7 @@ export default function HomePage() {
 
       setResults(data.results || []);
       setTotalResults(data.total || 0);
+      setSearchWarning(data.warning || "");
 
       // Set search message based on results
       if (data.searchedIndices && data.searchedIndices.length > 0) {
@@ -192,6 +195,7 @@ export default function HomePage() {
       setResults([]);
       setTotalResults(0);
       setSearchMessage("");
+      setSearchWarning("");
     } finally {
       setLoading(false);
     }
@@ -219,7 +223,7 @@ export default function HomePage() {
     }
   };
 
-  const totalPages = Math.ceil(totalResults / itemsPerPage);
+  const totalPages = Math.min(Math.ceil(totalResults / itemsPerPage), Math.ceil(10000 / itemsPerPage));
 
   const goToPage = (pageNumber) => {
     if (
@@ -425,6 +429,9 @@ export default function HomePage() {
               <span>{status}</span>
             )}
           </p>
+        )}
+        {searchWarning && (
+          <div className="text-yellow-600 text-sm text-center mt-2">{searchWarning}</div>
         )}
         {totalResults > 0 && searchTerm.trim() && (
           <div className="text-center mt-12 mb-4 animate-fade-in-up">

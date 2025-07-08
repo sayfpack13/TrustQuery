@@ -2,7 +2,7 @@ const express = require("express");
 const { verifyJwt } = require("../middleware/auth");
 const { getConfig, setConfig } = require("../config");
 const clusterManager = require("../elasticsearch/cluster-manager");
-const { refreshCacheAndSync } = require("../cache/indices-cache");
+const { refreshClusterCache } = require("../cache/indices-cache");
 
 const router = express.Router();
 
@@ -54,7 +54,7 @@ router.post("/nodes", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node creation
     try {
-      await refreshCacheAndSync(`creating node ${createdNode.name}`);
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after creating node:`,
@@ -142,7 +142,7 @@ router.put("/nodes/:nodeName", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node update
     try {
-      await refreshCacheAndSync(`updating node ${nodeName}`);
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after updating node:`,
@@ -226,7 +226,7 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
 
     // Refresh persistent cache after node removal
     try {
-      await refreshCacheAndSync(`removing node ${nodeName}`);
+      await refreshClusterCache();
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after removing node:`,
