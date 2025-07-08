@@ -259,9 +259,43 @@ async function stopNode(nodeName) {
         const pidFile = path.join(metadata.dataPath, "pid");
         if (fs.existsSync(pidFile)) {
           const pid = parseInt(fs.readFileSync(pidFile, "utf8"));
-          process.kill(pid);
-          await refreshAfterOperation(nodeName, "stop");
-          return { success: true, message: `Node ${nodeName} stopped successfully` };
+          try {
+            process.kill(pid);
+            await refreshAfterOperation(nodeName, "stop");
+            return { success: true, message: `Node ${nodeName} stopped successfully` };
+          } catch (err) {
+            console.error(`Failed to kill process with PID from pid file: ${pid}`, err);
+          }
+        }
+        // Fallback: Try to find PID by port if pid file is missing or failed
+        try {
+          const { execSync } = require("child_process");
+          let pid = null;
+          try {
+            // Try lsof first
+            const lsofResult = execSync(`lsof -i:${metadata.port} -t`, { encoding: "utf8" });
+            pid = parseInt(lsofResult.trim());
+          } catch (lsofErr) {
+            // If lsof fails, try netstat/awk
+            try {
+              const netstatResult = execSync(`netstat -nlp | grep :${metadata.port} | awk '{print $7}' | cut -d'/' -f1`, { encoding: "utf8" });
+              pid = parseInt(netstatResult.trim());
+            } catch (netstatErr) {
+              // Both methods failed
+              console.error(`Could not find PID by port using lsof or netstat for node ${nodeName}`);
+            }
+          }
+          if (pid && !isNaN(pid)) {
+            try {
+              process.kill(pid);
+              await refreshAfterOperation(nodeName, "stop");
+              return { success: true, message: `Node ${nodeName} stopped successfully (by port fallback)` };
+            } catch (killErr) {
+              console.error(`Failed to kill process found by port: ${pid}`, killErr);
+            }
+          }
+        } catch (fallbackErr) {
+          console.error(`Error during fallback process lookup for node ${nodeName}:`, fallbackErr);
         }
       }
     }
