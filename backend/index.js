@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const { randomUUID } = require("crypto");
 const cors = require("cors");
+const { refreshCacheForRunningNodes, syncSearchIndices, getCacheFiltered } = require("./src/cache/indices-cache");
 
 // Configuration management
 const { loadConfig: loadCentralizedConfig, getConfig, setConfig, saveConfig } = require("./src/config");
@@ -83,10 +84,8 @@ async function initializeServer() {
   await clusterManager.verifyNodeMetadata();
 
   // Perform initial smart cache refresh for indices
-  const { refreshCacheForRunningNodes, syncSearchIndices } = require("./src/cache/indices-cache");
-  const config = getConfig();
   try {
-    await refreshCacheForRunningNodes(config);
+    await refreshCacheForRunningNodes();
     console.log("🔄 Initial smart cache refresh completed");
 
     // Log the real structure of searchIndices
@@ -627,9 +626,8 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
   const requestedIndex = req.query.index;
 
   try {
+    const cachedIndices = await getCacheFiltered();
     const config = getConfig();
-    const { getCacheFiltered } = require("./src/cache/indices-cache");
-    const cachedIndices = await getCacheFiltered(config);
 
     // Determine which index(es) to search and which ES client to use
     let searchIndex;
@@ -674,9 +672,9 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
         !Object.keys(
           Array.isArray(nodeData.indices)
             ? nodeData.indices.reduce((acc, idx) => {
-                acc[idx.index] = true;
-                return acc;
-              }, {})
+              acc[idx.index] = true;
+              return acc;
+            }, {})
             : nodeData.indices
         ).includes(requestedIndex)
       ) {
@@ -780,8 +778,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       if (nodeNames.length === 1) {
         // All indices are on a single node, use that node's ES client
         const nodeName = nodeNames[0];
-        const { getCacheFiltered } = require("./src/cache/indices-cache");
-        const cachedIndices = await getCacheFiltered(config);
+        const cachedIndices = await getCacheFiltered();
         const nodeData = cachedIndices[nodeName];
         if (!nodeData || !nodeData.nodeUrl) {
           return res.status(400).json({
@@ -851,9 +848,7 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
     let targetIndex;
 
     if (requestedNode && requestedIndex) {
-      const config = getConfig();
-      const { getCacheFiltered } = require("./src/cache/indices-cache");
-      const cachedIndices = await getCacheFiltered(config);
+      const cachedIndices = await getCacheFiltered();
       const nodeData = cachedIndices[requestedNode];
 
       if (!nodeData || !nodeData.nodeUrl) {
@@ -906,9 +901,7 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
     let targetIndex;
 
     if (requestedNode && requestedIndex) {
-      const config = getConfig();
-      const { getCacheFiltered } = require("./src/cache/indices-cache");
-      const cachedIndices = await getCacheFiltered(config);
+      const cachedIndices = await getCacheFiltered();
       const nodeData = cachedIndices[requestedNode];
 
       if (!nodeData || !nodeData.nodeUrl) {
@@ -976,9 +969,7 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
         for (const group of Object.values(groupMap)) {
           const { node, index, ids } = group;
           // Get ES client for node
-          const config = getConfig();
-          const { getCacheFiltered } = require("./src/cache/indices-cache");
-          const cachedIndices = await getCacheFiltered(config);
+          const cachedIndices = await getCacheFiltered();
           const nodeData = cachedIndices[node];
           if (!nodeData || !nodeData.nodeUrl) continue;
           const { Client } = require("@elastic/elasticsearch");
@@ -1270,11 +1261,9 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
     }
 
     // Validate that each entry is { node, index } and exists in cache
-    const { getCacheFiltered } = require("./src/cache/indices-cache");
-    const config = getConfig();
     let cachedIndices;
     try {
-      cachedIndices = await getCacheFiltered(config);
+      cachedIndices = await getCacheFiltered();
     } catch (cacheError) {
       throw new Error(`Cache access failed: ${cacheError.message}`);
     }

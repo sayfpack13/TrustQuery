@@ -13,9 +13,9 @@ const clusterManager = require("../elasticsearch/cluster-manager");
 const router = express.Router();
 
 // Helper function to refresh cache and sync search indices using smart refresh
-async function refreshCacheAndSync(config, operation = "operation") {
+async function refreshCacheAndSync(operation = "operation") {
   try {
-    await refreshCacheForRunningNodes(config);
+    await refreshCacheForRunningNodes();
     await syncSearchIndices();
     // Only log on specific operations, not regular refreshes
     if (operation !== "regular-refresh") {
@@ -359,9 +359,8 @@ router.post("/create", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after cluster creation
     try {
-      const config = getConfig();
       await refreshCacheAndSync(
-        config,
+       
         `creating cluster ${clusterName} with ${createdNodes.length} nodes`
       );
     } catch (cacheError) {
@@ -445,8 +444,7 @@ router.post("/nodes", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node creation
     try {
-      const config = getConfig();
-      await refreshCacheAndSync(config, `creating node ${createdNode.name}`);
+      await refreshCacheAndSync( `creating node ${createdNode.name}`);
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after creating node:`,
@@ -547,8 +545,7 @@ router.put("/nodes/:nodeName", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node update
     try {
-      const config = getConfig();
-      await refreshCacheAndSync(config, `updating node ${nodeName}`);
+      await refreshCacheAndSync( `updating node ${nodeName}`);
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after updating node:`,
@@ -871,8 +868,7 @@ router.post("/nodes/:nodeName/stop", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node stop
     try {
-      const config = getConfig();
-      await refreshCacheAndSync(config, `stopping node ${nodeName}`);
+      await refreshCacheAndSync( `stopping node ${nodeName}`);
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after stopping node:`,
@@ -943,8 +939,7 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
 
     // Refresh persistent cache after node removal to clean up removed nodes
     try {
-      const config = getConfig();
-      await refreshCacheAndSync(config, `removing node ${nodeName}`);
+      await refreshCacheAndSync( `removing node ${nodeName}`);
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after removing node:`,
@@ -989,9 +984,7 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
       if (cleaned) {
         // Refresh cache after emergency cleanup
         try {
-          const config = getConfig();
           await refreshCacheAndSync(
-            config,
             `emergency cleanup of node ${nodeName}`
           );
         } catch (cacheError) {
@@ -1022,7 +1015,6 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
 // GET local nodes status with indices information
 router.get("/local-nodes", verifyJwt, async (req, res) => {
   try {
-    const config = getConfig();
     const { forceRefresh } = req.query;
 
     // First get cluster status to see which nodes are running
@@ -1036,7 +1028,7 @@ router.get("/local-nodes", verifyJwt, async (req, res) => {
     } else {
       // Default behavior or forceRefresh === 'true' - always refresh running nodes
       // This ensures document counts and store sizes are always current
-      refreshedCache = await refreshCacheForRunningNodes(config);
+      refreshedCache = await refreshCacheForRunningNodes();
     }
 
     // Enhance nodes with indices information from cache (no additional live fetching)
@@ -1109,8 +1101,7 @@ router.post("/local-nodes/refresh", verifyJwt, async (req, res) => {
     );
 
     // Use smart refresh that only updates running nodes
-    const config = getConfig();
-    const refreshedCache = await refreshCacheForRunningNodes(config);
+    const refreshedCache = await refreshCacheForRunningNodes();
 
     // Get fresh cluster status
     const clusterStatus = await clusterManager.getClusterStatus();
@@ -1251,9 +1242,7 @@ router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
 
     // After successful index creation, refresh persistent cache
     try {
-      const config = getConfig();
       await refreshCacheAndSync(
-        config,
         `creating index ${indexName} on node ${nodeName}`
       );
     } catch (cacheError) {
@@ -1303,9 +1292,7 @@ router.delete("/:nodeName/indices/:indexName", verifyJwt, async (req, res) => {
 
     // After successful deletion, refresh persistent cache
     try {
-      const config = getConfig();
       await refreshCacheAndSync(
-        config,
         `deleting index ${indexName} on node ${nodeName}`
       );
     } catch (cacheError) {
@@ -1437,8 +1424,7 @@ router.post("/nodes/:nodeName/move", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node move
     try {
-      const config = getConfig();
-      await refreshCacheAndSync(config, `moving node ${nodeName}`);
+      await refreshCacheAndSync(`moving node ${nodeName}`);
     } catch (cacheError) {
       console.warn(
         `⚠️ Failed to refresh persistent indices cache after moving node:`,
@@ -1530,9 +1516,7 @@ router.post("/nodes/:nodeName/copy", verifyJwt, async (req, res) => {
 
     // Refresh persistent indices cache after node copy
     try {
-      const config = getConfig();
       await refreshCacheAndSync(
-        config,
         `copying node ${nodeName} to ${newNodeName}`
       );
     } catch (cacheError) {
@@ -1575,19 +1559,27 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
     console.log(`🔍 Retrieving stats for node: ${req.params.nodeName}`);
     const { nodeName } = req.params;
 
-    // Get the Elasticsearch client
-    const es = getES();
+    // Get node metadata to resolve nodeUrl
+    const config = getConfig();
+    const nodeMetadata = config.nodeMetadata || {};
+    const nodeMeta = nodeMetadata[nodeName];
+    if (!nodeMeta || !nodeMeta.nodeUrl) {
+      return res.status(404).json({ error: `No nodeUrl found for node "${nodeName}"` });
+    }
+
+    // Use direct client for this node
+    const { getSingleNodeClient } = require("../elasticsearch/client");
+    const es = getSingleNodeClient(nodeMeta.nodeUrl);
 
     // Defensive: Await node stats, handle undefined/null response
     let nodeStats;
     try {
       nodeStats = await es.nodes.stats({
-        metric: ["fs", "os", "jvm"],
-        node_id: nodeName,
+        metric: ["fs", "os", "jvm"]
       });
     } catch (err) {
       console.warn(
-        `Failed to get node stats for ${nodeName} by node_id:`,
+        `Failed to get node stats for ${nodeName} at ${nodeMeta.nodeUrl}:`,
         err.message
       );
       nodeStats = null;
@@ -1598,52 +1590,7 @@ router.get("/nodes/:nodeName/stats", verifyJwt, async (req, res) => {
     if (nodeStats && nodeStats.nodes && typeof nodeStats.nodes === "object") {
       nodeIds = Object.keys(nodeStats.nodes);
     }
-
     if (
-      !nodeStats ||
-      !nodeStats.nodes ||
-      !Array.isArray(nodeIds) ||
-      nodeIds.length === 0
-    ) {
-      // Try to find the node by name in the cluster
-      let nodesInfo;
-      try {
-        nodesInfo = await es.nodes.info();
-      } catch (err) {
-        console.warn(`Failed to get nodes.info for fallback:`, err.message);
-        nodesInfo = null;
-      }
-      let nodeEntry = null;
-      if (nodesInfo && nodesInfo.nodes && typeof nodesInfo.nodes === "object") {
-        nodeEntry = Object.entries(nodesInfo.nodes).find(
-          ([, info]) => info.name === nodeName
-        );
-      }
-      if (nodeEntry) {
-        const [nodeId] = nodeEntry;
-        let specificStats;
-        try {
-          specificStats = await es.nodes.stats({
-            metric: ["fs", "os", "jvm"],
-            node_id: nodeId,
-          });
-        } catch (err) {
-          console.warn(
-            `Failed to get node stats for fallback nodeId ${nodeId}:`,
-            err.message
-          );
-          specificStats = null;
-        }
-        if (
-          specificStats &&
-          specificStats.nodes &&
-          typeof specificStats.nodes === "object" &&
-          specificStats.nodes[nodeId]
-        ) {
-          targetNodeStats = specificStats.nodes[nodeId];
-        }
-      }
-    } else if (
       nodeStats &&
       nodeStats.nodes &&
       typeof nodeStats.nodes === "object" &&

@@ -45,14 +45,11 @@ async function setCache(data) {
  * Refresh cache for running nodes. Accepts an optional node list to avoid redundant listNodes() calls.
  * @param {Array} nodes Optional array of node objects (with isRunning, host, port, etc)
  */
-async function refreshCacheForRunningNodes(nodes) {
+async function refreshCacheForRunningNodes() {
   // Reduced logging for regular refresh operations
   const currentCache = await getCache();
 
-  let runningNodes;
-  if (Array.isArray(nodes)) {
-    runningNodes = nodes;
-  } else {
+
     try {
       const allNodes = await clusterManager.listNodes();
       runningNodes = allNodes || [];
@@ -71,7 +68,7 @@ async function refreshCacheForRunningNodes(nodes) {
       );
       runningNodes = [];
     }
-  }
+
 
   const newCache = {};
 
@@ -290,9 +287,10 @@ async function syncSearchIndices() {
   }
 }
 
-async function getCacheFiltered(config) {
+async function getCacheFiltered() {
   // Get cached indices data without triggering a refresh
   const cache = await getCache();
+  const config = getConfig()
 
   // Convert the cache format to match what the validation code expects
   const processedCache = {};

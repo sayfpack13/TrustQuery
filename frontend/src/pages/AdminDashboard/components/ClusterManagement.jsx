@@ -24,6 +24,7 @@ import {
   faCheck,
   faTimes,
   faSync,
+  faRefresh,
 } from "@fortawesome/free-solid-svg-icons";
 import axiosClient from "../../../api/axiosClient";
 import { formatBytes } from "../../../utils/format";
@@ -285,7 +286,7 @@ export default function ClusterManagement({
               disabled={clustersLoading}
             >
               <FontAwesomeIcon
-                icon={faCircleNotch}
+                icon={faRefresh}
                 className={`mr-2 ${clustersLoading ? "fa-spin" : ""}`}
               />
               Refresh
@@ -509,7 +510,7 @@ export default function ClusterManagement({
               disabled={clusterLoading}
             >
               <FontAwesomeIcon
-                icon={faCircleNotch}
+                icon={faRefresh}
                 className={`mr-2 ${clusterLoading ? "fa-spin" : ""}`}
               />
               Refresh

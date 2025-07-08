@@ -13,6 +13,7 @@ import {
   faHdd,
   faCircleNotch,
   faMemory,
+  faRefresh,
 } from "@fortawesome/free-solid-svg-icons";
 import axiosClient from "../../../api/axiosClient";
 import { formatBytes } from "../../../utils/format";
@@ -744,7 +745,7 @@ export default function NodeDetailsModal({
                   title="Refresh indices data"
                 >
                   <FontAwesomeIcon
-                    icon={faCircleNotch}
+                    icon={faRefresh}
                     className={`mr-1 ${isRefreshingIndices ? "fa-spin" : ""}`}
                   />
                   {isRefreshingIndices ? "Refreshing..." : "Refresh"}
