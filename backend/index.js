@@ -127,35 +127,8 @@ initializeServer().catch((error) => {
   process.exit(1);
 });
 
-// In-memory task store
-const tasks = {};
-
-// Helper function to create a new task and add it to the in-memory store
-function createTask(type, initialStatus = "pending", filename = null) {
-  const taskId = randomUUID();
-  tasks[taskId] = {
-    taskId: taskId,
-    type: type,
-    status: initialStatus,
-    progress: 0,
-    total: 0,
-    error: null,
-    completed: false,
-    startTime: Date.now(),
-    fileMovedCount: 0,
-    filename: filename, // Store filename for single file parsing tasks
-  };
-  return taskId;
-}
-
-// Helper function to update an existing task
-function updateTask(taskId, updates) {
-  if (tasks[taskId]) {
-    Object.assign(tasks[taskId], updates);
-  }
-}
-
-// Import JWT middleware from centralized auth module
+// Import task helpers from the dedicated tasks module
+const { createTask, updateTask, getAllTasks, getTask, cleanupOldTasks } = require("./src/tasks");
 const { verifyJwt } = require("./src/middleware/auth");
 
 // Admin Login endpoint
@@ -897,7 +870,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           };
         }
 
-        const { url, username, password } = parseLineForDisplay(rawLine);
+        const { url, username, password } = parser.parseLineForDisplay(rawLine);
 
         return {
           id: hit._id,
@@ -1257,15 +1230,15 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
 // GET all current tasks
 app.get("/api/admin/tasks", verifyJwt, (req, res) => {
   // Filter for tasks that are not completed and not in an error state.
-  const activeTasks = Object.values(tasks).filter((task) => !task.completed && task.status !== "error");
+  const allTasks = getAllTasks();
+  const activeTasks = Object.values(allTasks).filter((task) => !task.completed && task.status !== "error");
   res.json(activeTasks);
 });
 
-// GET task status
+// GET a specific task
 app.get("/api/admin/tasks/:taskId", verifyJwt, (req, res) => {
   const { taskId } = req.params;
-  const task = tasks[taskId];
-
+  const task = getTask(taskId);
   if (task) {
     res.json(task);
   } else {
@@ -1273,44 +1246,36 @@ app.get("/api/admin/tasks/:taskId", verifyJwt, (req, res) => {
   }
 });
 
-// POST task actions (like clear, retry, etc.)
+// POST task actions (clear completed/error, clear all)
 app.post("/api/admin/tasks/:action", verifyJwt, (req, res) => {
   const { action } = req.params;
-  const payload = req.body;
-
-  try {
-    switch (action) {
-      case "clear":
-        // Clear completed and error tasks
-        const tasksToDelete = [];
-        Object.keys(tasks).forEach((taskId) => {
-          if (tasks[taskId].completed || tasks[taskId].status === "error") {
-            tasksToDelete.push(taskId);
-          }
-        });
-        tasksToDelete.forEach((taskId) => delete tasks[taskId]);
-        res.json({
-          message: `Cleared ${tasksToDelete.length} completed/error tasks`,
-          remainingTasks: Object.keys(tasks).length,
-        });
-        break;
-
-      case "clear-all":
-        // Clear all tasks
-        const totalCount = Object.keys(tasks).length;
-        Object.keys(tasks).forEach((taskId) => delete tasks[taskId]);
-        res.json({
-          message: `Cleared all ${totalCount} tasks`,
-          remainingTasks: 0,
-        });
-        break;
-
-      default:
-        res.status(400).json({ error: `Unknown task action: ${action}` });
-    }
-  } catch (error) {
-    console.error("Error handling task action:", error);
-    res.status(500).json({ error: "Failed to handle task action" });
+  if (action === "clear-completed") {
+    // Clear completed and error tasks
+    const allTasks = getAllTasks();
+    const tasksToDelete = [];
+    Object.keys(allTasks).forEach((taskId) => {
+      if (allTasks[taskId].completed || allTasks[taskId].status === "error") {
+        delete allTasks[taskId];
+      }
+    });
+    res.json({
+      message: `Cleared completed/error tasks`,
+      remainingTasks: Object.keys(getAllTasks()).length,
+    });
+  } else if (action === "clear-all") {
+    // Clear all tasks
+    const allTasks = getAllTasks();
+    const totalCount = Object.keys(allTasks).length;
+    Object.keys(allTasks).forEach((taskId) => delete allTasks[taskId]);
+    res.json({
+      message: `Cleared all ${totalCount} tasks`,
+      remainingTasks: 0,
+    });
+  } else if (action === "cleanup-old") {
+    cleanupOldTasks();
+    res.json({ message: "Cleaned up old tasks" });
+  } else {
+    res.status(400).json({ error: "Unknown action" });
   }
 });
 
@@ -1925,8 +1890,7 @@ app.get("/api/search", async (req, res) => {
       const es = clientsCache[nodeUrl];
       
       try {
-        // Use wildcard for substring search (slow for large datasets)
-        // Also include match (full word) and term (exact match)
+        // Use wildcard for case-insensitive substring search on raw_line (requires mapping with lowercase filter)
         const response = await es.search({
           index: entry.index,
           track_total_hits: true,
@@ -1938,7 +1902,7 @@ app.get("/api/search", async (req, res) => {
                 should: [
                   { term: { "raw_line.keyword": q } },
                   { match: { "raw_line": { query: q, operator: "and" } } },
-                  { wildcard: { "raw_line.keyword": `*${q.toLowerCase()}*` } }
+                  { wildcard: { "raw_line": `*${q.toLowerCase()}*` } } // Case-insensitive if mapping uses lowercase filter
                 ],
                 minimum_should_match: 1,
               },
@@ -1958,7 +1922,7 @@ app.get("/api/search", async (req, res) => {
         }
         // Process results
         const indexResults = response.hits.hits.map((hit) => {
-          const parsedAccount = parseLineForDisplay(hit._source.raw_line);
+          const parsedAccount = parser.parseLineForDisplay(hit._source.raw_line);
           if (isAdmin) {
             return {
               id: hit._id,
@@ -2047,61 +2011,6 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// Helper function to parse account line for display
-function parseLineForDisplay(rawLine) {
-  if (!rawLine || typeof rawLine !== "string") {
-    return {
-      url: "",
-      username: "",
-      password: "",
-    };
-  }
-
-  // Try to parse common formats: url:username:password or username:password@url
-  const line = rawLine.trim();
-
-  // Format 1: url:username:password
-  if (line.includes(":") && line.split(":").length >= 3) {
-    const parts = line.split(":");
-    return {
-      url: parts[0] || "",
-      username: parts[1] || "",
-      password: parts.slice(2).join(":") || "", // In case password contains ':'
-    };
-  }
-
-  // Format 2: username:password@url
-  if (line.includes("@") && line.includes(":")) {
-    const atIndex = line.lastIndexOf("@");
-    const colonIndex = line.indexOf(":");
-    if (colonIndex < atIndex) {
-      return {
-        url: line.substring(atIndex + 1) || "",
-        username: line.substring(0, colonIndex) || "",
-        password: line.substring(colonIndex + 1, atIndex) || "",
-      };
-    }
-  }
-
-  // Format 3: email:password (treat email as both url and username)
-  if (line.includes(":") && line.includes("@")) {
-    const parts = line.split(":");
-    const email = parts[0];
-    const password = parts.slice(1).join(":");
-    return {
-      url: email.includes("@") ? email.split("@")[1] : email,
-      username: email,
-      password: password || "",
-    };
-  }
-
-  // Fallback: treat the entire line as raw data
-  return {
-    url: line,
-    username: "",
-    password: "",
-  };
-}
 
 // Helper function to apply masking based on character ratio
 function maskString(str, ratio, minVisible = 2) {

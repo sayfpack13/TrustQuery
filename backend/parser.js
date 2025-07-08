@@ -131,3 +131,52 @@ exports.parseFile = async function (
     });
   });
 };
+
+
+
+
+// Helper function to parse account line for display
+exports.parseLineForDisplay = function (rawLine) {
+  if (!rawLine || typeof rawLine !== "string") {
+    return {
+      url: "",
+      username: "",
+      password: "",
+    };
+  }
+
+  const line = rawLine.trim();
+
+  // Parse from the right: last colon is password, next colon (from right) splits url and username
+  // Handles cases like url:username:password and also passwords/usernames with colons
+  const lastColon = line.lastIndexOf(":");
+  if (lastColon !== -1) {
+    const left = line.substring(0, lastColon);
+    const password = line.substring(lastColon + 1);
+    const secondLastColon = left.lastIndexOf(":");
+    if (secondLastColon !== -1) {
+      // url:username:password (or url:username:pass:with:colons)
+      const url = left.substring(0, secondLastColon);
+      const username = left.substring(secondLastColon + 1);
+      return {
+        url: url,
+        username: username,
+        password: password,
+      };
+    } else {
+      // username:password (or username:pass:with:colons)
+      return {
+        url: "",
+        username: left,
+        password: password,
+      };
+    }
+  }
+
+  // Fallback: treat the entire line as raw data
+  return {
+    url: line,
+    username: "",
+    password: "",
+  };
+}

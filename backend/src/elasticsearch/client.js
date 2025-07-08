@@ -126,6 +126,10 @@ function createIndexMapping(shards = 1, replicas = 0) {
             tokenizer: "autocomplete_tokenizer",
             filter: ["lowercase"],
           },
+          lowercase_analyzer: {
+            tokenizer: "standard",
+            filter: ["lowercase"],
+          },
         },
         tokenizer: {
           autocomplete_tokenizer: {
@@ -140,7 +144,9 @@ function createIndexMapping(shards = 1, replicas = 0) {
       properties: {
         raw_line: {
           type: "text",
+          analyzer: "lowercase_analyzer",
           fields: {
+            keyword: { type: "keyword" },
             autocomplete: {
               type: "text",
               analyzer: "autocomplete_analyzer",

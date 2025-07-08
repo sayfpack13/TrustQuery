@@ -11,6 +11,9 @@ const { getES } = require("../elasticsearch/client");
 const clusterManager = require("../elasticsearch/cluster-manager");
 const { buildNodeMetadata } = clusterManager;
 
+// Import task helpers from the dedicated tasks module
+const { createTask, updateTask } = require("../tasks");
+
 const router = express.Router();
 
 // Helper function to refresh cache and sync search indices using smart refresh
@@ -832,13 +835,27 @@ router.delete("/clusters/:name", verifyJwt, async (req, res) => {
 router.post("/nodes/:nodeName/start", verifyJwt, async (req, res) => {
   try {
     const { nodeName } = req.params;
+    // Create a persistent task for starting the node
+    const taskId = createTask("Start Node", "starting", nodeName);
+    res.json({ taskId });
 
-    const result = await clusterManager.startNode(nodeName);
-
-    res.json({
-      message: `Node "${nodeName}" started successfully`,
-      ...result,
-    });
+    (async () => {
+      try {
+        updateTask(taskId, { status: "starting", message: `Starting node ${nodeName}...` });
+        const result = await clusterManager.startNode(nodeName);
+        updateTask(taskId, {
+          status: "completed",
+          completed: true,
+          message: result.message || `Node \"${nodeName}\" started successfully`,
+        });
+      } catch (error) {
+        updateTask(taskId, {
+          status: "error",
+          error: error.message,
+          completed: true,
+        });
+      }
+    })();
   } catch (error) {
     console.error(`Error starting node ${req.params.nodeName}:`, error);
     res.status(500).json({ error: "Failed to start node: " + error.message });
