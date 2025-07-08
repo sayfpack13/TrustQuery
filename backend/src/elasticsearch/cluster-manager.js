@@ -1,20 +1,21 @@
 // Elasticsearch Cluster Management System
-const fs = require('fs').promises;
-const path = require('path');
-const { execSync, spawn } = require('child_process');
-const { getConfig, setConfig } = require('../config');
-const yaml = require('yaml');
+const fs = require("fs").promises;
+const path = require("path");
+const { execSync, spawn } = require("child_process");
+const { getConfig, setConfig } = require("../config");
+const yaml = require("yaml");
+const { refreshCache, syncSearchIndices } = require("../cache/indices-cache");
 
 // Helper to get environment and config info
 function getEnvAndConfig() {
   const config = getConfig();
-  const isWindows = process.platform === 'win32';
-  const isLinux = process.platform === 'linux';
-  const isMac = process.platform === 'darwin';
+  const isWindows = process.platform === "win32";
+  const isLinux = process.platform === "linux";
+  const isMac = process.platform === "darwin";
   const baseElasticsearchPath =
     (config.setupWizard && config.setupWizard.basePath) ||
     (config.elasticsearchConfig && config.elasticsearchConfig.basePath);
-  const javaPath = 'java';
+  const javaPath = "java";
   return { config, isWindows, isLinux, isMac, baseElasticsearchPath, javaPath };
 }
 
@@ -24,13 +25,15 @@ async function initialize() {
     const env = getEnvAndConfig();
     const esExists = await checkElasticsearchInstallation(env);
     if (!esExists) {
-      throw new Error('Elasticsearch installation not found. Please install Elasticsearch first.');
+      throw new Error(
+        "Elasticsearch installation not found. Please install Elasticsearch first."
+      );
     }
     await createBaseDirectories(env);
-    console.log('✅ Elasticsearch Cluster Manager initialized');
+    console.log("✅ Elasticsearch Cluster Manager initialized");
     return true;
   } catch (error) {
-    console.error('❌ Failed to initialize cluster manager:', error);
+    console.error("❌ Failed to initialize cluster manager:", error);
     throw error;
   }
 }
@@ -38,12 +41,16 @@ async function initialize() {
 // Check if Elasticsearch is installed
 async function checkElasticsearchInstallation(env) {
   try {
-    const binName = env.isWindows ? 'elasticsearch.bat' : 'elasticsearch';
-    const elasticsearchBin = path.join(env.baseElasticsearchPath, 'bin', binName);
+    const binName = env.isWindows ? "elasticsearch.bat" : "elasticsearch";
+    const elasticsearchBin = path.join(
+      env.baseElasticsearchPath,
+      "bin",
+      binName
+    );
     await fs.access(elasticsearchBin);
     return true;
   } catch (error) {
-    console.warn('Elasticsearch not found at default location');
+    console.warn("Elasticsearch not found at default location");
     return false;
   }
 }
@@ -51,18 +58,20 @@ async function checkElasticsearchInstallation(env) {
 // Create base directories for cluster
 async function createBaseDirectories(env) {
   const baseDirs = [
-    path.join(env.baseElasticsearchPath, 'nodes'),
-    path.join(env.baseElasticsearchPath, 'data'),
-    path.join(env.baseElasticsearchPath, 'logs'),
-    path.join(env.baseElasticsearchPath, 'config')
+    path.join(env.baseElasticsearchPath, "nodes"),
+    path.join(env.baseElasticsearchPath, "data"),
+    path.join(env.baseElasticsearchPath, "logs"),
+    path.join(env.baseElasticsearchPath, "config"),
   ];
 
   // First check if we can create the base directory
   try {
     await fs.mkdir(env.baseElasticsearchPath, { recursive: true });
   } catch (error) {
-    if (error.code === 'EPERM') {
-      throw new Error(`Permission denied: Cannot create directory at ${env.baseElasticsearchPath}. Please choose a different location or run with appropriate permissions.`);
+    if (error.code === "EPERM") {
+      throw new Error(
+        `Permission denied: Cannot create directory at ${env.baseElasticsearchPath}. Please choose a different location or run with appropriate permissions.`
+      );
     }
     throw error;
   }
@@ -72,9 +81,11 @@ async function createBaseDirectories(env) {
       await fs.mkdir(dir, { recursive: true });
       console.log(`📁 Created directory: ${dir}`);
     } catch (error) {
-      if (error.code === 'EPERM') {
-        throw new Error(`Permission denied: Cannot create directory at ${dir}. Please choose a different location or run with appropriate permissions.`);
-      } else if (error.code !== 'EEXIST') {
+      if (error.code === "EPERM") {
+        throw new Error(
+          `Permission denied: Cannot create directory at ${dir}. Please choose a different location or run with appropriate permissions.`
+        );
+      } else if (error.code !== "EEXIST") {
         console.error(`Failed to create directory ${dir}:`, error);
         throw error;
       }
@@ -90,11 +101,11 @@ function generateNodeConfig(nodeConfig) {
 # Generated automatically by TrustQuery
 
 # Cluster settings
-cluster.name: ${nodeConfig.clusterName || 'trustquery-cluster'}
+cluster.name: ${nodeConfig.clusterName || "trustquery-cluster"}
 node.name: ${nodeConfig.name}
 
 # Network settings
-network.host: ${nodeConfig.host || 'localhost'}
+network.host: ${nodeConfig.host || "localhost"}
 http.port: ${nodeConfig.port || 9200}
 transport.port: ${nodeConfig.transportPort || 9300}
 
@@ -129,10 +140,10 @@ xpack.security.http.ssl.enabled: false
  */
 function formatNodeRoles(roles) {
   const roleList = [];
-  if (roles.master) roleList.push('master');
-  if (roles.data) roleList.push('data');
-  if (roles.ingest) roleList.push('ingest');
-  return roleList.join(', ');
+  if (roles.master) roleList.push("master");
+  if (roles.data) roleList.push("data");
+  if (roles.ingest) roleList.push("ingest");
+  return roleList.join(", ");
 }
 
 /**
@@ -142,20 +153,21 @@ async function createNode(nodeConfig) {
   try {
     const {
       name,
-      host = 'localhost',
+      host = "localhost",
       port = 9200,
       transportPort = 9300,
       dataPath,
       logsPath,
       roles = { master: true, data: true, ingest: true },
-      heapSize = '1g'
+      heapSize = "1g",
     } = nodeConfig;
 
     // Accept cluster name from either 'cluster' or 'clusterName' (frontend sends 'cluster')
-    const clusterName = nodeConfig.cluster || nodeConfig.clusterName || 'trustquery-cluster';
+    const clusterName =
+      nodeConfig.cluster || nodeConfig.clusterName || "trustquery-cluster";
 
     if (!name) {
-      throw new Error('Node name is required');
+      throw new Error("Node name is required");
     }
 
     const env = getEnvAndConfig();
@@ -164,22 +176,22 @@ async function createNode(nodeConfig) {
     const isWindows = env.isWindows;
 
     if (!baseElasticsearchPath) {
-      throw new Error('Base Elasticsearch path is not set in configuration.');
+      throw new Error("Base Elasticsearch path is not set in configuration.");
     }
 
-    const nodeBaseDir = path.join(baseElasticsearchPath, 'nodes', name);
-    const finalDataPath = dataPath || path.join(nodeBaseDir, 'data');
-    const finalLogsPath = logsPath || path.join(nodeBaseDir, 'logs');
+    const nodeBaseDir = path.join(baseElasticsearchPath, "nodes", name);
+    const finalDataPath = dataPath || path.join(nodeBaseDir, "data");
+    const finalLogsPath = logsPath || path.join(nodeBaseDir, "logs");
 
     await fs.mkdir(finalDataPath, { recursive: true });
     await fs.mkdir(finalLogsPath, { recursive: true });
 
-    const nodeConfigDir = path.join(nodeBaseDir, 'config');
+    const nodeConfigDir = path.join(nodeBaseDir, "config");
     await fs.mkdir(nodeConfigDir, { recursive: true });
 
     // --- Linux: Ensure correct permissions and ownership for all node dirs and custom data/logs paths ---
     if (isLinux) {
-      const { execSync } = require('child_process');
+      const { execSync } = require("child_process");
       try {
         execSync(`chown -R elasticsearch:elasticsearch "${nodeConfigDir}"`);
         execSync(`chmod -R 770 "${nodeConfigDir}"`);
@@ -188,7 +200,10 @@ async function createNode(nodeConfig) {
         execSync(`chown -R elasticsearch:elasticsearch "${finalLogsPath}"`);
         execSync(`chmod -R 770 "${finalLogsPath}"`);
       } catch (err) {
-        console.warn('Could not set ownership/permissions for node directories:', err.message);
+        console.warn(
+          "Could not set ownership/permissions for node directories:",
+          err.message
+        );
       }
     }
 
@@ -200,23 +215,23 @@ async function createNode(nodeConfig) {
       dataPath: finalDataPath,
       logsPath: finalLogsPath,
       roles,
-      clusterName
+      clusterName,
     });
 
-    const configPath = path.join(nodeConfigDir, 'elasticsearch.yml');
+    const configPath = path.join(nodeConfigDir, "elasticsearch.yml");
     await fs.writeFile(configPath, configContent);
 
     const jvmOptions = generateJVMOptions(heapSize);
-    const jvmPath = path.join(nodeConfigDir, 'jvm.options');
+    const jvmPath = path.join(nodeConfigDir, "jvm.options");
     await fs.writeFile(jvmPath, jvmOptions);
 
-    const log4j2Config =  generateLog4j2Config(finalLogsPath);
-    const log4j2Path = path.join(nodeConfigDir, 'log4j2.properties');
+    const log4j2Config = generateLog4j2Config(finalLogsPath);
+    const log4j2Path = path.join(nodeConfigDir, "log4j2.properties");
     await fs.writeFile(log4j2Path, log4j2Config);
 
     // Create service script for the correct platform
-    const serviceScript =  generateServiceScript(name, nodeConfigDir, port, env);
-    const serviceFileName = isWindows ? 'start-node.bat' : 'start-node.sh';
+    const serviceScript = generateServiceScript(name, nodeConfigDir, port, env);
+    const serviceFileName = isWindows ? "start-node.bat" : "start-node.sh";
     const servicePath = path.join(nodeConfigDir, serviceFileName);
     await fs.writeFile(servicePath, serviceScript);
     if (!isWindows) {
@@ -228,32 +243,37 @@ async function createNode(nodeConfig) {
 
     const nodeUrl = `http://${host}:${port}`;
     const newNodeMetadata = {
-      [nodeUrl]: {
+      [name]: {
+        nodeUrl,
         name,
         dataPath: finalDataPath,
         logsPath: finalLogsPath,
         cluster: clusterName, // Use 'cluster' for consistency with frontend and config.json
         port,
+        transportPort,
         configPath,
         servicePath,
-        heapSize // <-- Save heap size in metadata
-      }
+        heapSize, // <-- Save heap size in metadata
+      },
     };
 
-    // Save metadata to config
+    // Save metadata to config (keyed by node name)
     const currentConfig = getConfig();
-    const updatedMetadata = { ...currentConfig.nodeMetadata, ...newNodeMetadata };
-    setConfig('nodeMetadata', updatedMetadata);
+    const updatedMetadata = {
+      ...currentConfig.nodeMetadata,
+      ...newNodeMetadata,
+    };
+    setConfig("nodeMetadata", updatedMetadata);
 
     return {
       name,
+      nodeUrl,
       configPath,
       servicePath,
       dataPath: finalDataPath,
       logsPath: finalLogsPath,
       port,
       transportPort,
-      nodeUrl
     };
   } catch (error) {
     console.error(`❌ Failed to create node ${nodeConfig.name}:`, error);
@@ -264,7 +284,7 @@ async function createNode(nodeConfig) {
 /**
  * Generate JVM options for node
  */
-function generateJVMOptions(heapSize = '1g') {
+function generateJVMOptions(heapSize = "1g") {
   return `# JVM Options for Elasticsearch Node
 
 # Heap size (adjust based on your system)
@@ -300,7 +320,7 @@ function generateJVMOptions(heapSize = '1g') {
  */
 function generateLog4j2Config(logsPath) {
   // Convert Windows path to forward slashes for log4j2
-  const logPath = logsPath.replace(/\\/g, '/');
+  const logPath = logsPath.replace(/\\/g, "/");
 
   return `# Log4j2 Configuration for Elasticsearch Node
 
@@ -407,8 +427,14 @@ async function startNode(nodeName) {
   if (metadata && metadata.servicePath) {
     servicePath = metadata.servicePath;
   } else {
-    const serviceFileName = env.isWindows ? 'start-node.bat' : 'start-node.sh';
-    servicePath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', serviceFileName);
+    const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
+    servicePath = path.join(
+      env.baseElasticsearchPath,
+      "nodes",
+      nodeName,
+      "config",
+      serviceFileName
+    );
   }
   // Ensure service file exists
   try {
@@ -420,14 +446,14 @@ async function startNode(nodeName) {
   const nodeConfig = await getNodeConfig(nodeName);
   const logDir = (await getNodeMetadata(nodeName)).logsPath;
   await fs.mkdir(logDir, { recursive: true });
-  const startupLogPath = path.join(logDir, 'startup.log');
-  const output = await fs.open(startupLogPath, 'a');
+  const startupLogPath = path.join(logDir, "startup.log");
+  const output = await fs.open(startupLogPath, "a");
   // Spawn process
   let child;
   if (env.isWindows) {
     child = spawn(servicePath, [], {
       detached: true,
-      stdio: ['ignore', output, output],
+      stdio: ["ignore", output, output],
       shell: true,
       windowsHide: true,
     });
@@ -436,7 +462,9 @@ async function startNode(nodeName) {
     try {
       await fs.chmod(servicePath, 0o755);
     } catch (chmodErr) {
-      console.warn(`Could not chmod service script: ${servicePath} - ${chmodErr.message}`);
+      console.warn(
+        `Could not chmod service script: ${servicePath} - ${chmodErr.message}`
+      );
     }
 
     // Check if running as root
@@ -448,7 +476,7 @@ async function startNode(nodeName) {
     // Check if 'elasticsearch' user exists
     let esUserExists = false;
     try {
-      execSync('id -u elasticsearch', { stdio: 'ignore' });
+      execSync("id -u elasticsearch", { stdio: "ignore" });
       esUserExists = true;
     } catch (e) {
       esUserExists = false;
@@ -457,7 +485,7 @@ async function startNode(nodeName) {
     // Check if 'sudo' is available
     let sudoAvailable = false;
     try {
-      execSync('which sudo', { stdio: 'ignore' });
+      execSync("which sudo", { stdio: "ignore" });
       sudoAvailable = true;
     } catch (e) {
       sudoAvailable = false;
@@ -466,50 +494,60 @@ async function startNode(nodeName) {
     if (isRoot) {
       // If root, must use sudo -u elasticsearch bash servicePath
       if (!sudoAvailable) {
-        throw new Error("Cannot start Elasticsearch node as root and 'sudo' is not available. Please install sudo and ensure the 'elasticsearch' user exists, or run as a non-root user.");
+        throw new Error(
+          "Cannot start Elasticsearch node as root and 'sudo' is not available. Please install sudo and ensure the 'elasticsearch' user exists, or run as a non-root user."
+        );
       }
       if (!esUserExists) {
         // Try to create the user
         try {
-          execSync('sudo useradd -r -s /usr/sbin/nologin elasticsearch', { stdio: 'ignore' });
+          execSync("sudo useradd -r -s /usr/sbin/nologin elasticsearch", {
+            stdio: "ignore",
+          });
           esUserExists = true;
-          console.log('Created elasticsearch user.');
+          console.log("Created elasticsearch user.");
         } catch (err) {
-          throw new Error("Cannot create 'elasticsearch' user automatically. Please create it manually and re-run.");
+          throw new Error(
+            "Cannot create 'elasticsearch' user automatically. Please create it manually and re-run."
+          );
         }
       }
       // Start as elasticsearch user
-      console.log(`🚀 Starting node ${nodeName} as 'elasticsearch' user using: sudo -u elasticsearch bash ${servicePath}`);
-      child = spawn('sudo', ['-u', 'elasticsearch', 'bash', servicePath], {
+      console.log(
+        `🚀 Starting node ${nodeName} as 'elasticsearch' user using: sudo -u elasticsearch bash ${servicePath}`
+      );
+      child = spawn("sudo", ["-u", "elasticsearch", "bash", servicePath], {
         detached: true,
-        stdio: ['ignore', output, output],
+        stdio: ["ignore", output, output],
         shell: false,
         env: {
           ...process.env,
           ES_HOME: env.baseElasticsearchPath,
           ES_PATH_CONF: path.dirname(servicePath),
-          ES_JAVA_OPTS: '-Xms1g -Xmx1g',
+          ES_JAVA_OPTS: "-Xms1g -Xmx1g",
         },
       });
       child.unref();
     } else {
       // Always use bash to run the script for non-root
-      let user = '';
+      let user = "";
       try {
-        user = execSync('whoami').toString().trim();
+        user = execSync("whoami").toString().trim();
       } catch {}
-      if (user !== 'elasticsearch') {
-        console.warn(`⚠️  Not running as 'elasticsearch' user. Current user: ${user}. Elasticsearch may refuse to start if not run as 'elasticsearch'.`);
+      if (user !== "elasticsearch") {
+        console.warn(
+          `⚠️  Not running as 'elasticsearch' user. Current user: ${user}. Elasticsearch may refuse to start if not run as 'elasticsearch'.`
+        );
       }
-      child = spawn('bash', [servicePath], {
+      child = spawn("bash", [servicePath], {
         detached: true,
-        stdio: ['ignore', output, output],
+        stdio: ["ignore", output, output],
         shell: false,
         env: {
           ...process.env,
           ES_HOME: env.baseElasticsearchPath,
           ES_PATH_CONF: path.dirname(servicePath),
-          ES_JAVA_OPTS: '-Xms1g -Xmx1g',
+          ES_JAVA_OPTS: "-Xms1g -Xmx1g",
         },
       });
       child.unref();
@@ -520,17 +558,19 @@ async function startNode(nodeName) {
     try {
       await fs.chmod(servicePath, 0o755);
     } catch (chmodErr) {
-      console.warn(`Could not chmod service script: ${servicePath} - ${chmodErr.message}`);
+      console.warn(
+        `Could not chmod service script: ${servicePath} - ${chmodErr.message}`
+      );
     }
     child = spawn(servicePath, [], {
       detached: true,
-      stdio: ['ignore', output, output],
+      stdio: ["ignore", output, output],
       shell: false,
       env: {
         ...process.env,
         ES_HOME: env.baseElasticsearchPath,
         ES_PATH_CONF: path.dirname(servicePath),
-        ES_JAVA_OPTS: '-Xms1g -Xmx1g',
+        ES_JAVA_OPTS: "-Xms1g -Xmx1g",
       },
     });
     child.unref();
@@ -541,48 +581,64 @@ async function startNode(nodeName) {
   if (metadata && metadata.configPath) {
     nodeConfigDir = path.dirname(metadata.configPath);
   } else {
-    nodeConfigDir = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config');
+    nodeConfigDir = path.join(
+      env.baseElasticsearchPath,
+      "nodes",
+      nodeName,
+      "config"
+    );
   }
-  const pidFilePath = path.join(nodeConfigDir, 'pid.json');
-  await fs.writeFile(pidFilePath, JSON.stringify({ pid: child.pid }), 'utf8');
+  const pidFilePath = path.join(nodeConfigDir, "pid.json");
+  await fs.writeFile(pidFilePath, JSON.stringify({ pid: child.pid }), "utf8");
   // Poll for port readiness (background, not blocking PID file)
   const port = nodeConfig.http.port;
   let foundPid = null;
-  for (let i = 0; i < 60; i++) { // up to 60s
+  for (let i = 0; i < 60; i++) {
+    // up to 60s
     foundPid = await findPidByPort(port);
     if (foundPid) break;
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000));
   }
   await output.close();
   if (foundPid) {
     // Optionally update PID file if different
     if (foundPid !== child.pid) {
-      await fs.writeFile(pidFilePath, JSON.stringify({ pid: foundPid }), 'utf8');
+      await fs.writeFile(
+        pidFilePath,
+        JSON.stringify({ pid: foundPid }),
+        "utf8"
+      );
     }
     // Re-initialize clients
     try {
-      const { initializeElasticsearchClients } = require('./client');
+      const { initializeElasticsearchClients } = require("./client");
       initializeElasticsearchClients();
     } catch {}
     // Refresh cache
     try {
-      const { refreshCache, syncSearchIndices } = require('../cache/indices-cache');
-      const config = getConfig();
-      await refreshCache(config);
-      await syncSearchIndices(config);
+
+      await refreshCache();
+      await syncSearchIndices();
     } catch {}
     return { success: true, pid: foundPid };
   } else {
     // Read logs for debugging
-    let startupLog = '';
-    let esLog = '';
+    let startupLog = "";
+    let esLog = "";
     try {
-      startupLog = await fs.readFile(startupLogPath, 'utf8');
+      startupLog = await fs.readFile(startupLogPath, "utf8");
     } catch {}
     try {
-      esLog = await fs.readFile(path.join(nodeConfig.path.logs, 'elasticsearch.log'), 'utf8');
+      esLog = await fs.readFile(
+        path.join(nodeConfig.path.logs, "elasticsearch.log"),
+        "utf8"
+      );
     } catch {}
-    throw new Error(`Failed to confirm node start for ${nodeName}.\nStartup log:\n${startupLog.slice(-1000)}\nES log:\n${esLog.slice(-1000)}`);
+    throw new Error(
+      `Failed to confirm node start for ${nodeName}.\nStartup log:\n${startupLog.slice(
+        -1000
+      )}\nES log:\n${esLog.slice(-1000)}`
+    );
   }
 }
 
@@ -591,11 +647,14 @@ async function findPidByPort(port) {
   const { isWindows } = getEnvAndConfig();
   try {
     if (isWindows) {
-      let output = '';
+      let output = "";
       try {
-        output = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', stdio: 'pipe' });
+        output = execSync(`netstat -ano | findstr :${port}`, {
+          encoding: "utf8",
+          stdio: "pipe",
+        });
       } catch (e) {
-        output = '';
+        output = "";
       }
       const lines = output.trim().split(/\r?\n/);
       for (const line of lines) {
@@ -611,26 +670,34 @@ async function findPidByPort(port) {
       }
     } else {
       // Try netstat -tulnp (tcp and tcp6)
-      let output = '';
+      let output = "";
       try {
-        output = execSync('netstat -tulnp', { encoding: 'utf8', stdio: 'pipe' });
+        output = execSync("netstat -tulnp", {
+          encoding: "utf8",
+          stdio: "pipe",
+        });
       } catch (e) {
         try {
-          output = execSync('ss -tulnp', { encoding: 'utf8', stdio: 'pipe' });
+          output = execSync("ss -tulnp", { encoding: "utf8", stdio: "pipe" });
         } catch (e2) {
           try {
-            output = execSync(`lsof -i :${port} -n -P`, { encoding: 'utf8', stdio: 'pipe' });
+            output = execSync(`lsof -i :${port} -n -P`, {
+              encoding: "utf8",
+              stdio: "pipe",
+            });
           } catch (e3) {
-            output = '';
+            output = "";
           }
         }
       }
       const lines = output.trim().split(/\r?\n/);
       for (const line of lines) {
         // Accept both tcp and tcp6, and all interfaces
-        if (line.match(new RegExp(`(tcp|tcp6).*[:.]${port}\\b`, 'i'))) {
+        if (line.match(new RegExp(`(tcp|tcp6).*[:.]${port}\\b`, "i"))) {
           // netstat: last column is PID/Program
-          const pidMatch = line.match(/\s(\d+)\/(java|elasticsearch|node|python|[a-zA-Z]+)/);
+          const pidMatch = line.match(
+            /\s(\d+)\/(java|elasticsearch|node|python|[a-zA-Z]+)/
+          );
           if (pidMatch) {
             const pid = parseInt(pidMatch[1], 10);
             if (pid > 0) {
@@ -677,31 +744,38 @@ async function stopNode(nodeName) {
 
     if (metadata && metadata.configPath) {
       const configDir = path.dirname(metadata.configPath);
-      pidFilePath = path.join(configDir, 'pid.json');
+      pidFilePath = path.join(configDir, "pid.json");
     } else {
       // Fallback to new organized path structure
-      pidFilePath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', 'pid.json');
+      pidFilePath = path.join(
+        env.baseElasticsearchPath,
+        "nodes",
+        nodeName,
+        "config",
+        "pid.json"
+      );
     }
 
     console.log(`🔍 Looking for PID file at: ${pidFilePath}`);
 
     try {
-      const pidData = await fs.readFile(pidFilePath, 'utf8');
+      const pidData = await fs.readFile(pidFilePath, "utf8");
       const { pid } = JSON.parse(pidData);
-
 
       if (pid) {
         console.log(`🔌 Attempting to stop node ${nodeName} with PID: ${pid}`);
-        const isWindows = process.platform === 'win32';
-        const isLinux = process.platform === 'linux';
+        const isWindows = process.platform === "win32";
+        const isLinux = process.platform === "linux";
 
         // Check if process is actually running first
         let processRunning = false;
         try {
           if (isWindows) {
-            execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, { stdio: 'ignore' });
+            execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, {
+              stdio: "ignore",
+            });
           } else if (isLinux) {
-            execSync(`ps -p ${pid}`, { stdio: 'ignore' });
+            execSync(`ps -p ${pid}`, { stdio: "ignore" });
           }
           processRunning = true;
           console.log(`✅ Process ${pid} is running, proceeding to stop it`);
@@ -719,12 +793,19 @@ async function stopNode(nodeName) {
         // Kill the process
         try {
           if (isWindows) {
-            execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe', timeout: 10000 });
+            execSync(`taskkill /F /PID ${pid}`, {
+              stdio: "pipe",
+              timeout: 10000,
+            });
             console.log(`✅ Successfully terminated process ${pid}`);
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise((resolve) => setTimeout(resolve, 2000));
             try {
-              execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, { stdio: 'ignore' });
-              console.warn(`⚠️ Process ${pid} still running after kill command`);
+              execSync(`tasklist /FI "PID eq ${pid}" | find "${pid}"`, {
+                stdio: "ignore",
+              });
+              console.warn(
+                `⚠️ Process ${pid} still running after kill command`
+              );
             } catch (verifyError) {
               console.log(`✅ Process ${pid} confirmed terminated`);
             }
@@ -745,7 +826,9 @@ async function stopNode(nodeName) {
                 killed = true;
                 console.log(`✅ sudo kill -9 ${pid} succeeded`);
               } catch (sudoError) {
-                console.warn(`⚠️ sudo kill -9 ${pid} failed: ${sudoError.message}`);
+                console.warn(
+                  `⚠️ sudo kill -9 ${pid} failed: ${sudoError.message}`
+                );
               }
             }
             if (!killed) {
@@ -753,23 +836,29 @@ async function stopNode(nodeName) {
               try {
                 execSync(`sudo pkill -u elasticsearch -f ${nodeName}`);
                 killed = true;
-                console.log(`✅ sudo pkill -u elasticsearch -f ${nodeName} succeeded`);
+                console.log(
+                  `✅ sudo pkill -u elasticsearch -f ${nodeName} succeeded`
+                );
               } catch (pkillError) {
-                console.warn(`⚠️ sudo pkill -u elasticsearch -f ${nodeName} failed: ${pkillError.message}`);
+                console.warn(
+                  `⚠️ sudo pkill -u elasticsearch -f ${nodeName} failed: ${pkillError.message}`
+                );
               }
             }
             // Wait a moment for the process to fully terminate
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise((resolve) => setTimeout(resolve, 2000));
             // Verify the process is actually gone
             let stillRunning = false;
             try {
-              execSync(`ps -p ${pid}`, { stdio: 'ignore' });
+              execSync(`ps -p ${pid}`, { stdio: "ignore" });
               stillRunning = true;
             } catch (verifyError) {
               stillRunning = false;
             }
             if (stillRunning) {
-              console.warn(`⚠️ Process ${pid} still running after kill attempts`);
+              console.warn(
+                `⚠️ Process ${pid} still running after kill attempts`
+              );
             } else {
               console.log(`✅ Process ${pid} confirmed terminated`);
             }
@@ -777,7 +866,9 @@ async function stopNode(nodeName) {
         } catch (killError) {
           if (isWindows && killError.status === 128) {
             // Process not found - already stopped
-            console.log(`ℹ️ Process ${pid} not found during kill - already stopped`);
+            console.log(
+              `ℹ️ Process ${pid} not found during kill - already stopped`
+            );
           } else {
             console.warn(`⚠️ Error killing process ${pid}:`, killError.message);
             throw killError;
@@ -795,10 +886,11 @@ async function stopNode(nodeName) {
 
       console.log(`🛑 Stopped Elasticsearch node: ${nodeName}`);
       return { success: true };
-
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        console.warn(`PID file not found for node ${nodeName}. It might already be stopped.`);
+      if (error.code === "ENOENT") {
+        console.warn(
+          `PID file not found for node ${nodeName}. It might already be stopped.`
+        );
         // If the PID file doesn't exist, we can assume the node is not running.
         return { success: true };
       }
@@ -825,49 +917,56 @@ async function getNodeConfig(nodeName) {
     console.log(`🔍 Using config path from metadata: ${configPath}`);
   } else {
     // Fallback to new organized path structure
-    configPath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', 'elasticsearch.yml');
+    configPath = path.join(
+      env.baseElasticsearchPath,
+      "nodes",
+      nodeName,
+      "config",
+      "elasticsearch.yml"
+    );
     console.log(`🔍 Using new organized config path: ${configPath}`);
   }
 
   try {
-    const configContent = await fs.readFile(configPath, 'utf8');
+    const configContent = await fs.readFile(configPath, "utf8");
     const flatConfig = yaml.parse(configContent);
 
     // Transform flat config (e.g., 'node.name') into a nested object
     const nestedConfig = {
       cluster: {
-        name: flatConfig['cluster.name'] || 'default-cluster'
+        name: flatConfig["cluster.name"] || "default-cluster",
       },
       node: {
-        name: flatConfig['node.name'] || nodeName
+        name: flatConfig["node.name"] || nodeName,
       },
       network: {
-        host: flatConfig['network.host'] || 'localhost'
+        host: flatConfig["network.host"] || "localhost",
       },
       http: {
-        port: flatConfig['http.port'] || '9200'
+        port: flatConfig["http.port"] || "9200",
       },
       transport: {
-        port: flatConfig['transport.port'] || '9300'
+        port: flatConfig["transport.port"] || "9300",
       },
       path: {
-        data: flatConfig['path.data'],
-        logs: flatConfig['path.logs']
-      }
+        data: flatConfig["path.data"],
+        logs: flatConfig["path.logs"],
+      },
     };
     return nestedConfig;
-
   } catch (error) {
-    if (error.code === 'ENOENT') {
-      console.warn(`Configuration file not found for ${nodeName}. Returning default.`);
+    if (error.code === "ENOENT") {
+      console.warn(
+        `Configuration file not found for ${nodeName}. Returning default.`
+      );
       // Return a default nested structure
       return {
-        cluster: { name: 'default-cluster' },
+        cluster: { name: "default-cluster" },
         node: { name: nodeName },
-        network: { host: 'localhost' },
-        http: { port: '9200' },
-        transport: { port: '9300' },
-        path: { data: '', logs: '' }
+        network: { host: "localhost" },
+        http: { port: "9200" },
+        transport: { port: "9300" },
+        path: { data: "", logs: "" },
       };
     }
     throw error;
@@ -879,7 +978,7 @@ async function getNodeConfig(nodeName) {
  */
 async function listNodes() {
   const env = getEnvAndConfig();
-  const nodesDir = path.join(env.baseElasticsearchPath, 'nodes');
+  const nodesDir = path.join(env.baseElasticsearchPath, "nodes");
   const nodes = [];
 
   try {
@@ -909,14 +1008,20 @@ async function listNodes() {
             host: config.network.host,
             port: config.http.port,
             transportPort: config.transport.port,
-            roles: config.node.roles || { master: true, data: true, ingest: true },
+            roles: config.node.roles || {
+              master: true,
+              data: true,
+              ingest: true,
+            },
             isRunning: await isNodeRunning(definitiveNodeName),
             dataPath: metadata.dataPath,
             logsPath: metadata.logsPath,
-            heapSize: metadata.heapSize // <-- Add heapSize from metadata if present
+            heapSize: metadata.heapSize, // <-- Add heapSize from metadata if present
           });
         } catch (configError) {
-          console.warn(`⚠️ Skipping node directory ${nodeDirName}: ${configError.message}`);
+          console.warn(
+            `⚠️ Skipping node directory ${nodeDirName}: ${configError.message}`
+          );
         }
       }
     }
@@ -927,11 +1032,13 @@ async function listNodes() {
     }
     return nodes;
   } catch (error) {
-    if (error.code === 'ENOENT') {
-      console.warn(`Nodes directory not found at ${nodesDir}, returning no nodes.`);
+    if (error.code === "ENOENT") {
+      console.warn(
+        `Nodes directory not found at ${nodesDir}, returning no nodes.`
+      );
       return [];
     }
-    console.error('❌ Failed to list nodes:', error);
+    console.error("❌ Failed to list nodes:", error);
     return [];
   }
 }
@@ -943,18 +1050,18 @@ function getNodeMetadata(nodeName) {
   const env = getEnvAndConfig();
   const config = getConfig();
   const nodeMetadata = config.nodeMetadata || {};
-  const metadata = Object.values(nodeMetadata).find(m => m.name === nodeName);
-  if (metadata) {
-    return metadata;
+  // Use node name as key
+  if (nodeMetadata[nodeName]) {
+    return nodeMetadata[nodeName];
   }
   // Return default paths using new organized structure if not in metadata
-  const nodeBaseDir = path.join(env.baseElasticsearchPath, 'nodes', nodeName);
-  const serviceFileName = env.isWindows ? 'start-node.bat' : 'start-node.sh';
+  const nodeBaseDir = path.join(env.baseElasticsearchPath, "nodes", nodeName);
+  const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
   return {
-    dataPath: path.join(nodeBaseDir, 'data'),
-    logsPath: path.join(nodeBaseDir, 'logs'),
-    configPath: path.join(nodeBaseDir, 'config', 'elasticsearch.yml'),
-    servicePath: path.join(nodeBaseDir, 'config', serviceFileName),
+    dataPath: path.join(nodeBaseDir, "data"),
+    logsPath: path.join(nodeBaseDir, "logs"),
+    configPath: path.join(nodeBaseDir, "config", "elasticsearch.yml"),
+    servicePath: path.join(nodeBaseDir, "config", serviceFileName),
   };
 }
 
@@ -971,14 +1078,20 @@ async function getNodeConfigContent(nodeName) {
     configPath = metadata.configPath;
   } else {
     // Fallback to new organized path structure
-    configPath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', 'elasticsearch.yml');
+    configPath = path.join(
+      env.baseElasticsearchPath,
+      "nodes",
+      nodeName,
+      "config",
+      "elasticsearch.yml"
+    );
   }
 
   try {
-    const configContent = await fs.readFile(configPath, 'utf8');
+    const configContent = await fs.readFile(configPath, "utf8");
     return configContent;
   } catch (error) {
-    if (error.code === 'ENOENT') {
+    if (error.code === "ENOENT") {
       throw new Error(`Configuration file not found for node ${nodeName}.`);
     }
     throw error;
@@ -1001,25 +1114,30 @@ async function removeNode(nodeName) {
         await stopNode(nodeName);
 
         // Wait a moment and verify it's actually stopped
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         const stillRunning = await isNodeRunning(nodeName);
         if (stillRunning) {
-          throw new Error(`Node ${nodeName} is still running after stop attempt`);
+          throw new Error(
+            `Node ${nodeName} is still running after stop attempt`
+          );
         }
         console.log(`✅ Node ${nodeName} successfully stopped`);
       } catch (stopError) {
         console.error(`❌ Failed to stop node ${nodeName}:`, stopError.message);
-        throw new Error(`Cannot delete running node ${nodeName}. Stop failed: ${stopError.message}`);
+        throw new Error(
+          `Cannot delete running node ${nodeName}. Stop failed: ${stopError.message}`
+        );
       }
     } else {
-      console.log(`✅ Node ${nodeName} is not running, proceeding with deletion`);
+      console.log(
+        `✅ Node ${nodeName} is not running, proceeding with deletion`
+      );
     }
 
     const config = getConfig();
     const nodeMetadata = config.nodeMetadata || {};
-
-    // Find metadata by node name to get data/log paths
-    const metadata = Object.values(nodeMetadata).find(m => m.name === nodeName);
+    // Use node name as key
+    const metadata = nodeMetadata[nodeName];
 
     if (metadata) {
       console.log(`🔍 Found metadata for node ${nodeName}:`);
@@ -1036,10 +1154,14 @@ async function removeNode(nodeName) {
             await fs.rm(dirPath, { recursive: true, force: true });
             console.log(`🗑️ Removed directory: ${dirPath}`);
           } catch (dirError) {
-            if (dirError.code !== 'ENOENT') {
-              console.warn(`⚠️ Could not remove directory ${dirPath}: ${dirError.message}`);
+            if (dirError.code !== "ENOENT") {
+              console.warn(
+                `⚠️ Could not remove directory ${dirPath}: ${dirError.message}`
+              );
             } else {
-              console.log(`ℹ️ Directory already removed or doesn't exist: ${dirPath}`);
+              console.log(
+                `ℹ️ Directory already removed or doesn't exist: ${dirPath}`
+              );
             }
           }
         }
@@ -1052,10 +1174,14 @@ async function removeNode(nodeName) {
           await fs.rm(configDir, { recursive: true, force: true });
           console.log(`🗑️ Removed config directory: ${configDir}`);
         } catch (dirError) {
-          if (dirError.code !== 'ENOENT') {
-            console.warn(`⚠️ Could not remove config directory ${configDir}: ${dirError.message}`);
+          if (dirError.code !== "ENOENT") {
+            console.warn(
+              `⚠️ Could not remove config directory ${configDir}: ${dirError.message}`
+            );
           } else {
-            console.log(`ℹ️ Config directory already removed or doesn't exist: ${configDir}`);
+            console.log(
+              `ℹ️ Config directory already removed or doesn't exist: ${configDir}`
+            );
           }
         }
       }
@@ -1070,21 +1196,30 @@ async function removeNode(nodeName) {
         }
       } catch (e) {
         // Ignore if it fails (e.g., not empty, permissions, etc.)
-        console.log(`ℹ️ Could not check/remove parent directory ${parentDir}: ${e.message}`);
+        console.log(
+          `ℹ️ Could not check/remove parent directory ${parentDir}: ${e.message}`
+        );
       }
-
     } else {
-      console.warn(`⚠️ No metadata found for node ${nodeName}. Will attempt to remove from new directory structure.`);
+      console.warn(
+        `⚠️ No metadata found for node ${nodeName}. Will attempt to remove from new directory structure.`
+      );
 
       // Use new organized structure as fallback
       const env = getEnvAndConfig();
-      const nodeBaseDir = path.join(env.baseElasticsearchPath, 'nodes', nodeName);
+      const nodeBaseDir = path.join(
+        env.baseElasticsearchPath,
+        "nodes",
+        nodeName
+      );
       try {
         await fs.rm(nodeBaseDir, { recursive: true, force: true });
         console.log(`🗑️ Removed node directory: ${nodeBaseDir}`);
       } catch (dirError) {
-        if (dirError.code !== 'ENOENT') {
-          console.warn(`⚠️ Could not remove node directory ${nodeBaseDir}: ${dirError.message}`);
+        if (dirError.code !== "ENOENT") {
+          console.warn(
+            `⚠️ Could not remove node directory ${nodeBaseDir}: ${dirError.message}`
+          );
         }
       }
     }
@@ -1092,35 +1227,49 @@ async function removeNode(nodeName) {
     // Also try to remove from new organized structure if metadata exists
     if (metadata) {
       const env = getEnvAndConfig();
-      const nodeBaseDir = path.join(env.baseElasticsearchPath, 'nodes', nodeName);
+      const nodeBaseDir = path.join(
+        env.baseElasticsearchPath,
+        "nodes",
+        nodeName
+      );
       try {
         await fs.rm(nodeBaseDir, { recursive: true, force: true });
         console.log(`🗑️ Removed organized node directory: ${nodeBaseDir}`);
       } catch (dirError) {
-        if (dirError.code !== 'ENOENT') {
-          console.warn(`⚠️ Could not remove organized node directory: ${dirError.message}`);
+        if (dirError.code !== "ENOENT") {
+          console.warn(
+            `⚠️ Could not remove organized node directory: ${dirError.message}`
+          );
         }
       }
     }
 
     // Legacy cleanup - remove old config directory if it exists
     const env = getEnvAndConfig();
-    const oldNodeConfigDir = path.join(env.baseElasticsearchPath, 'config', nodeName);
+    const oldNodeConfigDir = path.join(
+      env.baseElasticsearchPath,
+      "config",
+      nodeName
+    );
     try {
       await fs.rm(oldNodeConfigDir, { recursive: true, force: true });
-      console.log(`🗑️ Removed legacy node configuration directory: ${oldNodeConfigDir}`);
+      console.log(
+        `🗑️ Removed legacy node configuration directory: ${oldNodeConfigDir}`
+      );
     } catch (dirError) {
-      if (dirError.code !== 'ENOENT') {
-        console.warn(`⚠️ Could not remove legacy node configuration directory:`, dirError.message);
+      if (dirError.code !== "ENOENT") {
+        console.warn(
+          `⚠️ Could not remove legacy node configuration directory:`,
+          dirError.message
+        );
       }
     }
 
     // Clean up the metadata from the config file
-    const nodeUrlToDelete = Object.keys(nodeMetadata).find(url => nodeMetadata[url].name === nodeName);
-    if (nodeUrlToDelete) {
+    if (nodeMetadata[nodeName]) {
       const newMeta = { ...config.nodeMetadata };
-      delete newMeta[nodeUrlToDelete];
-      await setConfig('nodeMetadata', newMeta);
+      delete newMeta[nodeName];
+      await setConfig("nodeMetadata", newMeta);
       console.log(`✅ Removed metadata for ${nodeName} from configuration.`);
     }
 
@@ -1129,7 +1278,7 @@ async function removeNode(nodeName) {
       success: true,
       message: `Node "${nodeName}" stopped and removed successfully`,
       wasRunning: wasRunning,
-      metadataRemoved: !!nodeUrlToDelete
+      metadataRemoved: !!metadata,
     };
   } catch (error) {
     console.error(`❌ Failed to remove node ${nodeName}:`, error);
@@ -1150,18 +1299,18 @@ async function getClusterStatus() {
       runningNodes.push({
         ...node,
         isRunning,
-        status: isRunning ? 'running' : 'stopped'
+        status: isRunning ? "running" : "stopped",
       });
     }
 
     return {
       totalNodes: nodes.length,
-      runningNodes: runningNodes.filter(n => n.isRunning).length,
-      stoppedNodes: runningNodes.filter(n => !n.isRunning).length,
-      nodes: runningNodes
+      runningNodes: runningNodes.filter((n) => n.isRunning).length,
+      stoppedNodes: runningNodes.filter((n) => !n.isRunning).length,
+      nodes: runningNodes,
     };
   } catch (error) {
-    console.error('❌ Failed to get cluster status:', error);
+    console.error("❌ Failed to get cluster status:", error);
     throw error;
   }
 }
@@ -1177,14 +1326,20 @@ async function isNodeRunning(nodeName) {
 
   if (metadata && metadata.configPath) {
     const configDir = path.dirname(metadata.configPath);
-    pidFilePath = path.join(configDir, 'pid.json');
+    pidFilePath = path.join(configDir, "pid.json");
   } else {
     // Fallback to new organized path structure
-    pidFilePath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', 'pid.json');
+    pidFilePath = path.join(
+      env.baseElasticsearchPath,
+      "nodes",
+      nodeName,
+      "config",
+      "pid.json"
+    );
   }
 
   try {
-    const pidData = await fs.readFile(pidFilePath, 'utf8');
+    const pidData = await fs.readFile(pidFilePath, "utf8");
     const { pid } = JSON.parse(pidData);
 
     if (!pid) return false;
@@ -1192,14 +1347,16 @@ async function isNodeRunning(nodeName) {
     if (env.isWindows) {
       // Windows: use tasklist
       const command = `tasklist /FI "PID eq ${pid}"`;
-      const result = execSync(command, { encoding: 'utf8' });
+      const result = execSync(command, { encoding: "utf8" });
       return result.includes(pid);
     } else {
       // Linux/Mac: use ps
       const command = `ps -p ${pid}`;
-      const result = execSync(command, { encoding: 'utf8' });
+      const result = execSync(command, { encoding: "utf8" });
       // The output will include the PID if the process is running
-      return result.split('\n').some(line => line.trim().startsWith(pid.toString()));
+      return result
+        .split("\n")
+        .some((line) => line.trim().startsWith(pid.toString()));
     }
   } catch (error) {
     // If file doesn't exist or any other error, assume not running
@@ -1219,43 +1376,59 @@ async function updateNode(nodeName, updates, options = {}) {
     const currentConfig = await getNodeConfig(nodeName);
     const currentMetadata = getNodeMetadata(nodeName);
 
-
-
     // Get the correct config path from metadata
     let configPath;
 
     if (currentMetadata && currentMetadata.configPath) {
       configPath = currentMetadata.configPath;
-      console.log(`🔍 Using config path from metadata for update: ${configPath}`);
+      console.log(
+        `🔍 Using config path from metadata for update: ${configPath}`
+      );
     } else {
       // Fallback to new organized path structure
       const env = getEnvAndConfig();
-      configPath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', 'elasticsearch.yml');
-      console.log(`🔍 Using new organized config path for update: ${configPath}`);
+      configPath = path.join(
+        env.baseElasticsearchPath,
+        "nodes",
+        nodeName,
+        "config",
+        "elasticsearch.yml"
+      );
+      console.log(
+        `🔍 Using new organized config path for update: ${configPath}`
+      );
     }
 
     // Create updated configuration object
     const updatedConfig = {
-      'cluster.name': updates.cluster || currentConfig.cluster.name,
-      'node.name': updates.name || currentConfig.node.name,
-      'network.host': updates.host || currentConfig.network.host,
-      'http.port': updates.port || currentConfig.http.port,
-      'transport.port': updates.transportPort || currentConfig.transport.port,
-      'path.data': updates.dataPath || currentConfig.path.data,
-      'path.logs': updates.logsPath || currentConfig.path.logs,
-      'node.roles': updates.roles ? `[${formatNodeRoles(updates.roles)}]` : `[${formatNodeRoles(currentConfig.node.roles || { master: true, data: true, ingest: true })}]`,
-      'node.attr.custom_id': updates.name || currentConfig.node.name,
-      'discovery.type': 'single-node',
-      'bootstrap.memory_lock': false,
-      'xpack.security.enabled': false,
-      'xpack.security.transport.ssl.enabled': false,
-      'xpack.security.http.ssl.enabled': false
+      "cluster.name": updates.cluster || currentConfig.cluster.name,
+      "node.name": updates.name || currentConfig.node.name,
+      "network.host": updates.host || currentConfig.network.host,
+      "http.port": updates.port || currentConfig.http.port,
+      "transport.port": updates.transportPort || currentConfig.transport.port,
+      "path.data": updates.dataPath || currentConfig.path.data,
+      "path.logs": updates.logsPath || currentConfig.path.logs,
+      "node.roles": updates.roles
+        ? `[${formatNodeRoles(updates.roles)}]`
+        : `[${formatNodeRoles(
+            currentConfig.node.roles || {
+              master: true,
+              data: true,
+              ingest: true,
+            }
+          )}]`,
+      "node.attr.custom_id": updates.name || currentConfig.node.name,
+      "discovery.type": "single-node",
+      "bootstrap.memory_lock": false,
+      "xpack.security.enabled": false,
+      "xpack.security.transport.ssl.enabled": false,
+      "xpack.security.http.ssl.enabled": false,
     };
 
     // Update JVM options if heap size is provided
     if (updates.heapSize) {
       const configDir = path.dirname(configPath);
-      const jvmPath = path.join(configDir, 'jvm.options');
+      const jvmPath = path.join(configDir, "jvm.options");
       const jvmOptions = generateJVMOptions(updates.heapSize);
       await fs.writeFile(jvmPath, jvmOptions);
       console.log(`✅ Updated JVM options with heap size: ${updates.heapSize}`);
@@ -1264,11 +1437,15 @@ async function updateNode(nodeName, updates, options = {}) {
       const config = getConfig();
       const nodeMetadata = config.nodeMetadata || {};
       // Find the metadata entry by node name
-      const metaKey = Object.keys(nodeMetadata).find(key => nodeMetadata[key].name === nodeName);
+      const metaKey = Object.keys(nodeMetadata).find(
+        (key) => nodeMetadata[key].name === nodeName
+      );
       if (metaKey) {
         nodeMetadata[metaKey].heapSize = updates.heapSize;
-        setConfig('nodeMetadata', nodeMetadata);
-        console.log(`✅ Updated heapSize in nodeMetadata for node: ${nodeName}`);
+        setConfig("nodeMetadata", nodeMetadata);
+        console.log(
+          `✅ Updated heapSize in nodeMetadata for node: ${nodeName}`
+        );
       }
     }
 
@@ -1281,7 +1458,10 @@ async function updateNode(nodeName, updates, options = {}) {
         await fs.mkdir(newDataPath, { recursive: true });
         console.log(`📁 Ensured data directory exists: ${newDataPath}`);
       } catch (error) {
-        console.warn(`⚠️ Could not create data directory ${newDataPath}:`, error.message);
+        console.warn(
+          `⚠️ Could not create data directory ${newDataPath}:`,
+          error.message
+        );
       }
     }
 
@@ -1290,47 +1470,62 @@ async function updateNode(nodeName, updates, options = {}) {
         await fs.mkdir(newLogsPath, { recursive: true });
         console.log(`📁 Ensured logs directory exists: ${newLogsPath}`);
       } catch (error) {
-        console.warn(`⚠️ Could not create logs directory ${newLogsPath}:`, error.message);
+        console.warn(
+          `⚠️ Could not create logs directory ${newLogsPath}:`,
+          error.message
+        );
       }
     }
 
     // Generate new YAML configuration
     const configLines = [];
-    configLines.push(`# Elasticsearch Configuration for ${updatedConfig['node.name']}`);
+    configLines.push(
+      `# Elasticsearch Configuration for ${updatedConfig["node.name"]}`
+    );
     configLines.push(`# Updated automatically by TrustQuery`);
-    configLines.push('');
-    configLines.push('# Cluster settings');
-    configLines.push(`cluster.name: ${updatedConfig['cluster.name']}`);
-    configLines.push(`node.name: ${updatedConfig['node.name']}`);
-    configLines.push('');
-    configLines.push('# Network settings');
-    configLines.push(`network.host: ${updatedConfig['network.host']}`);
-    configLines.push(`http.port: ${updatedConfig['http.port']}`);
-    configLines.push(`transport.port: ${updatedConfig['transport.port']}`);
-    configLines.push('');
-    configLines.push('# Path settings');
-    configLines.push(`path.data: ${updatedConfig['path.data']}`);
-    configLines.push(`path.logs: ${updatedConfig['path.logs']}`);
-    configLines.push('');
-    configLines.push('# Node roles');
-    configLines.push(`node.roles: ${updatedConfig['node.roles']}`);
-    configLines.push('');
-    configLines.push('# Custom attribute for shard allocation');
-    configLines.push(`node.attr.custom_id: ${updatedConfig['node.attr.custom_id']}`);
-    configLines.push('');
-    configLines.push('# Discovery settings');
-    configLines.push(`discovery.type: ${updatedConfig['discovery.type']}`);
-    configLines.push('');
-    configLines.push('# Memory settings');
-    configLines.push(`bootstrap.memory_lock: ${updatedConfig['bootstrap.memory_lock']}`);
-    configLines.push('');
-    configLines.push('# Security settings (basic)');
-    configLines.push(`xpack.security.enabled: ${updatedConfig['xpack.security.enabled']}`);
-    configLines.push(`xpack.security.transport.ssl.enabled: ${updatedConfig['xpack.security.transport.ssl.enabled']}`);
-    configLines.push(`xpack.security.http.ssl.enabled: ${updatedConfig['xpack.security.http.ssl.enabled']}`);
-    configLines.push('');
+    configLines.push("");
+    configLines.push("# Cluster settings");
+    configLines.push(`cluster.name: ${updatedConfig["cluster.name"]}`);
+    configLines.push(`node.name: ${updatedConfig["node.name"]}`);
+    configLines.push("");
+    configLines.push("# Network settings");
+    configLines.push(`network.host: ${updatedConfig["network.host"]}`);
+    configLines.push(`http.port: ${updatedConfig["http.port"]}`);
+    configLines.push(`transport.port: ${updatedConfig["transport.port"]}`);
+    configLines.push("");
+    configLines.push("# Path settings");
+    configLines.push(`path.data: ${updatedConfig["path.data"]}`);
+    configLines.push(`path.logs: ${updatedConfig["path.logs"]}`);
+    configLines.push("");
+    configLines.push("# Node roles");
+    configLines.push(`node.roles: ${updatedConfig["node.roles"]}`);
+    configLines.push("");
+    configLines.push("# Custom attribute for shard allocation");
+    configLines.push(
+      `node.attr.custom_id: ${updatedConfig["node.attr.custom_id"]}`
+    );
+    configLines.push("");
+    configLines.push("# Discovery settings");
+    configLines.push(`discovery.type: ${updatedConfig["discovery.type"]}`);
+    configLines.push("");
+    configLines.push("# Memory settings");
+    configLines.push(
+      `bootstrap.memory_lock: ${updatedConfig["bootstrap.memory_lock"]}`
+    );
+    configLines.push("");
+    configLines.push("# Security settings (basic)");
+    configLines.push(
+      `xpack.security.enabled: ${updatedConfig["xpack.security.enabled"]}`
+    );
+    configLines.push(
+      `xpack.security.transport.ssl.enabled: ${updatedConfig["xpack.security.transport.ssl.enabled"]}`
+    );
+    configLines.push(
+      `xpack.security.http.ssl.enabled: ${updatedConfig["xpack.security.http.ssl.enabled"]}`
+    );
+    configLines.push("");
 
-    const newConfigContent = configLines.join('\n');
+    const newConfigContent = configLines.join("\n");
 
     // Write updated configuration to file
     await fs.writeFile(configPath, newConfigContent);
@@ -1343,10 +1538,12 @@ async function updateNode(nodeName, updates, options = {}) {
 
         // Use the same base directory as the config file
         const configDir = path.dirname(configPath);
-        const log4j2Path = path.join(configDir, 'log4j2.properties');
+        const log4j2Path = path.join(configDir, "log4j2.properties");
 
         await fs.writeFile(log4j2Path, log4j2Config);
-        console.log(`✅ Updated log4j2.properties with new logs path: ${log4j2Path}`);
+        console.log(
+          `✅ Updated log4j2.properties with new logs path: ${log4j2Path}`
+        );
       } catch (error) {
         console.warn(`⚠️ Could not update log4j2.properties:`, error.message);
       }
@@ -1355,7 +1552,7 @@ async function updateNode(nodeName, updates, options = {}) {
     // Verify paths exist after creation
     const pathStatus = {
       dataPath: { path: newDataPath, exists: false },
-      logsPath: { path: newLogsPath, exists: false }
+      logsPath: { path: newLogsPath, exists: false },
     };
 
     try {
@@ -1382,9 +1579,8 @@ async function updateNode(nodeName, updates, options = {}) {
       dataPath: newDataPath,
       logsPath: newLogsPath,
       pathStatus,
-      message: `Node ${nodeName} configuration updated successfully`
+      message: `Node ${nodeName} configuration updated successfully`,
     };
-
   } catch (error) {
     console.error(`❌ Failed to update node ${nodeName}:`, error);
     throw error;
@@ -1402,59 +1598,86 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
     const currentConfig = await getNodeConfig(nodeName);
     const currentMetadata = getNodeMetadata(nodeName);
 
-    const fs = require('fs').promises;
-    const path = require('path');
+    const fs = require("fs").promises;
+    const path = require("path");
 
     // Define old and new paths
     const oldPaths = {
       configPath: currentMetadata.configPath,
       servicePath: currentMetadata.servicePath,
       dataPath: currentMetadata.dataPath,
-      logsPath: currentMetadata.logsPath
+      logsPath: currentMetadata.logsPath,
     };
 
     const newPaths = {
-      configPath: path.join(newBasePath, 'config', 'elasticsearch.yml'),
-      servicePath: path.join(newBasePath, 'config', 'start-node.bat'),
-      dataPath: path.join(newBasePath, 'data'),
-      logsPath: path.join(newBasePath, 'logs')
+      configPath: path.join(newBasePath, "config", "elasticsearch.yml"),
+      servicePath: path.join(newBasePath, "config", "start-node.bat"),
+      dataPath: path.join(newBasePath, "data"),
+      logsPath: path.join(newBasePath, "logs"),
     };
 
     // Create new directory structure
-    await fs.mkdir(path.join(newBasePath, 'config'), { recursive: true });
+    await fs.mkdir(path.join(newBasePath, "config"), { recursive: true });
     await fs.mkdir(newPaths.dataPath, { recursive: true });
     await fs.mkdir(newPaths.logsPath, { recursive: true });
 
     // Move/copy config files
-    const configExists = await fs.access(oldPaths.configPath).then(() => true).catch(() => false);
+    const configExists = await fs
+      .access(oldPaths.configPath)
+      .then(() => true)
+      .catch(() => false);
     if (configExists) {
       await fs.copyFile(oldPaths.configPath, newPaths.configPath);
     }
 
-    const serviceExists = await fs.access(oldPaths.servicePath).then(() => true).catch(() => false);
+    const serviceExists = await fs
+      .access(oldPaths.servicePath)
+      .then(() => true)
+      .catch(() => false);
     if (serviceExists) {
       await fs.copyFile(oldPaths.servicePath, newPaths.servicePath);
     }
 
     // Copy jvm.options if it exists
-    const oldJvmPath = path.join(path.dirname(oldPaths.configPath), 'jvm.options');
-    const newJvmPath = path.join(path.dirname(newPaths.configPath), 'jvm.options');
-    const jvmExists = await fs.access(oldJvmPath).then(() => true).catch(() => false);
+    const oldJvmPath = path.join(
+      path.dirname(oldPaths.configPath),
+      "jvm.options"
+    );
+    const newJvmPath = path.join(
+      path.dirname(newPaths.configPath),
+      "jvm.options"
+    );
+    const jvmExists = await fs
+      .access(oldJvmPath)
+      .then(() => true)
+      .catch(() => false);
     if (jvmExists) {
       await fs.copyFile(oldJvmPath, newJvmPath);
     }
 
     // Copy log4j2.properties if it exists
-    const oldLog4j2Path = path.join(path.dirname(oldPaths.configPath), 'log4j2.properties');
-    const newLog4j2Path = path.join(path.dirname(newPaths.configPath), 'log4j2.properties');
-    const log4j2Exists = await fs.access(oldLog4j2Path).then(() => true).catch(() => false);
+    const oldLog4j2Path = path.join(
+      path.dirname(oldPaths.configPath),
+      "log4j2.properties"
+    );
+    const newLog4j2Path = path.join(
+      path.dirname(newPaths.configPath),
+      "log4j2.properties"
+    );
+    const log4j2Exists = await fs
+      .access(oldLog4j2Path)
+      .then(() => true)
+      .catch(() => false);
     if (log4j2Exists) {
       await fs.copyFile(oldLog4j2Path, newLog4j2Path);
     }
 
     // Copy data if requested
     if (preserveData) {
-      const dataExists = await fs.access(oldPaths.dataPath).then(() => true).catch(() => false);
+      const dataExists = await fs
+        .access(oldPaths.dataPath)
+        .then(() => true)
+        .catch(() => false);
       if (dataExists) {
         const dataFiles = await fs.readdir(oldPaths.dataPath).catch(() => []);
         for (const file of dataFiles) {
@@ -1469,7 +1692,10 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
         }
       }
 
-      const logsExists = await fs.access(oldPaths.logsPath).then(() => true).catch(() => false);
+      const logsExists = await fs
+        .access(oldPaths.logsPath)
+        .then(() => true)
+        .catch(() => false);
       if (logsExists) {
         const logFiles = await fs.readdir(oldPaths.logsPath).catch(() => []);
         for (const file of logFiles) {
@@ -1488,8 +1714,11 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
     // Update config file with new paths
     const updatedConfig = {
       name: currentConfig.node?.name || nodeName,
-      clusterName: currentConfig.cluster?.name || currentMetadata.cluster || 'trustquery-cluster',
-      host: currentMetadata.host || 'localhost',
+      clusterName:
+        currentConfig.cluster?.name ||
+        currentMetadata.cluster ||
+        "trustquery-cluster",
+      host: currentMetadata.host || "localhost",
       port: currentMetadata.port || 9200,
       transportPort: currentMetadata.transportPort || 9300,
       dataPath: newPaths.dataPath,
@@ -1497,8 +1726,8 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
       roles: currentMetadata.roles || {
         master: true,
         data: true,
-        ingest: true
-      }
+        ingest: true,
+      },
     };
 
     const configContent = generateNodeConfig(updatedConfig);
@@ -1506,17 +1735,25 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
 
     // Generate and write JVM options file
     const jvmOptions = generateJVMOptions();
-    const jvmPath = path.join(path.dirname(newPaths.configPath), 'jvm.options');
+    const jvmPath = path.join(path.dirname(newPaths.configPath), "jvm.options");
     await fs.writeFile(jvmPath, jvmOptions);
 
     // Generate and write log4j2.properties file
     const log4j2Config = generateLog4j2Config(newPaths.logsPath);
-    const log4j2Path = path.join(path.dirname(newPaths.configPath), 'log4j2.properties');
+    const log4j2Path = path.join(
+      path.dirname(newPaths.configPath),
+      "log4j2.properties"
+    );
     await fs.writeFile(log4j2Path, log4j2Config);
 
     // Update service file with new paths
     const env = getEnvAndConfig();
-    const serviceContent = generateServiceScript(updatedConfig.name, path.dirname(newPaths.configPath), updatedConfig.port, env);
+    const serviceContent = generateServiceScript(
+      updatedConfig.name,
+      path.dirname(newPaths.configPath),
+      updatedConfig.port,
+      env
+    );
     await fs.writeFile(newPaths.servicePath, serviceContent);
 
     // Remove old directories if move was successful
@@ -1541,7 +1778,10 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
         // Directory not empty or doesn't exist, that's fine
       }
     } catch (cleanupError) {
-      console.warn(`⚠️ Could not fully clean up old paths:`, cleanupError.message);
+      console.warn(
+        `⚠️ Could not fully clean up old paths:`,
+        cleanupError.message
+      );
     }
 
     console.log(`✅ Node "${nodeName}" moved successfully to: ${newBasePath}`);
@@ -1550,9 +1790,8 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
       newConfigPath: newPaths.configPath,
       newServicePath: newPaths.servicePath,
       newDataPath: newPaths.dataPath,
-      newLogsPath: newPaths.logsPath
+      newLogsPath: newPaths.logsPath,
     };
-
   } catch (error) {
     console.error(`❌ Failed to move node ${nodeName}:`, error);
     throw error;
@@ -1562,40 +1801,53 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
 /**
  * Copy a node to a new location with a new name
  */
-async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = false) {
+async function copyNode(
+  sourceNodeName,
+  newNodeName,
+  newBasePath,
+  copyData = false
+) {
   try {
-    console.log(`📋 Copying node "${sourceNodeName}" to "${newNodeName}" at: ${newBasePath}`);
+    console.log(
+      `📋 Copying node "${sourceNodeName}" to "${newNodeName}" at: ${newBasePath}`
+    );
 
     // Get source node config and metadata
     const sourceConfig = await getNodeConfig(sourceNodeName);
     const sourceMetadata = getNodeMetadata(sourceNodeName);
 
-    const fs = require('fs').promises;
-    const path = require('path');
+    const fs = require("fs").promises;
+    const path = require("path");
 
     // Define new paths
     const newPaths = {
-      configPath: path.join(newBasePath, 'config', 'elasticsearch.yml'),
-      servicePath: path.join(newBasePath, 'config', 'start-node.bat'),
-      dataPath: path.join(newBasePath, 'data'),
-      logsPath: path.join(newBasePath, 'logs')
+      configPath: path.join(newBasePath, "config", "elasticsearch.yml"),
+      servicePath: path.join(newBasePath, "config", "start-node.bat"),
+      dataPath: path.join(newBasePath, "data"),
+      logsPath: path.join(newBasePath, "logs"),
     };
 
     // Create new directory structure
-    await fs.mkdir(path.join(newBasePath, 'config'), { recursive: true });
+    await fs.mkdir(path.join(newBasePath, "config"), { recursive: true });
     await fs.mkdir(newPaths.dataPath, { recursive: true });
     await fs.mkdir(newPaths.logsPath, { recursive: true });
 
     // Copy existing config files from source (will be overwritten with updated content)
     if (sourceMetadata.configPath) {
-      const sourceConfigExists = await fs.access(sourceMetadata.configPath).then(() => true).catch(() => false);
+      const sourceConfigExists = await fs
+        .access(sourceMetadata.configPath)
+        .then(() => true)
+        .catch(() => false);
       if (sourceConfigExists) {
         await fs.copyFile(sourceMetadata.configPath, newPaths.configPath);
       }
     }
 
     if (sourceMetadata.servicePath) {
-      const sourceServiceExists = await fs.access(sourceMetadata.servicePath).then(() => true).catch(() => false);
+      const sourceServiceExists = await fs
+        .access(sourceMetadata.servicePath)
+        .then(() => true)
+        .catch(() => false);
       if (sourceServiceExists) {
         await fs.copyFile(sourceMetadata.servicePath, newPaths.servicePath);
       }
@@ -1603,9 +1855,18 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
 
     // Copy jvm.options if it exists in source
     if (sourceMetadata.configPath) {
-      const sourceJvmPath = path.join(path.dirname(sourceMetadata.configPath), 'jvm.options');
-      const newJvmPath = path.join(path.dirname(newPaths.configPath), 'jvm.options');
-      const sourceJvmExists = await fs.access(sourceJvmPath).then(() => true).catch(() => false);
+      const sourceJvmPath = path.join(
+        path.dirname(sourceMetadata.configPath),
+        "jvm.options"
+      );
+      const newJvmPath = path.join(
+        path.dirname(newPaths.configPath),
+        "jvm.options"
+      );
+      const sourceJvmExists = await fs
+        .access(sourceJvmPath)
+        .then(() => true)
+        .catch(() => false);
       if (sourceJvmExists) {
         await fs.copyFile(sourceJvmPath, newJvmPath);
       }
@@ -1613,18 +1874,27 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
 
     // Copy log4j2.properties if it exists in source
     if (sourceMetadata.configPath) {
-      const sourceLog4j2Path = path.join(path.dirname(sourceMetadata.configPath), 'log4j2.properties');
-      const newLog4j2Path = path.join(path.dirname(newPaths.configPath), 'log4j2.properties');
-      const sourceLog4j2Exists = await fs.access(sourceLog4j2Path).then(() => true).catch(() => false);
+      const sourceLog4j2Path = path.join(
+        path.dirname(sourceMetadata.configPath),
+        "log4j2.properties"
+      );
+      const newLog4j2Path = path.join(
+        path.dirname(newPaths.configPath),
+        "log4j2.properties"
+      );
+      const sourceLog4j2Exists = await fs
+        .access(sourceLog4j2Path)
+        .then(() => true)
+        .catch(() => false);
       if (sourceLog4j2Exists) {
         await fs.copyFile(sourceLog4j2Path, newLog4j2Path);
       }
     }
 
     // Generate new ports for the copied node
-    const existingMetadata = getConfig('nodeMetadata') || {};
+    const existingMetadata = getConfig("nodeMetadata") || {};
     const usedPorts = new Set();
-    Object.values(existingMetadata).forEach(meta => {
+    Object.values(existingMetadata).forEach((meta) => {
       if (meta.port) usedPorts.add(parseInt(meta.port));
       if (meta.transportPort) usedPorts.add(parseInt(meta.transportPort));
     });
@@ -1638,8 +1908,11 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
     // Create new config with updated settings
     const newConfig = {
       name: newNodeName,
-      clusterName: sourceConfig.cluster?.name || sourceMetadata.cluster || 'trustquery-cluster',
-      host: sourceMetadata.host || 'localhost',
+      clusterName:
+        sourceConfig.cluster?.name ||
+        sourceMetadata.cluster ||
+        "trustquery-cluster",
+      host: sourceMetadata.host || "localhost",
       port: newHttpPort,
       transportPort: newTransportPort,
       dataPath: newPaths.dataPath,
@@ -1647,8 +1920,8 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
       roles: sourceMetadata.roles || {
         master: true,
         data: true,
-        ingest: true
-      }
+        ingest: true,
+      },
     };
 
     // Write new config file
@@ -1657,34 +1930,50 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
 
     // Generate and write JVM options file
     const jvmOptions = generateJVMOptions();
-    const jvmPath = path.join(path.dirname(newPaths.configPath), 'jvm.options');
+    const jvmPath = path.join(path.dirname(newPaths.configPath), "jvm.options");
     await fs.writeFile(jvmPath, jvmOptions);
 
     // Generate and write log4j2.properties file
     const log4j2Config = generateLog4j2Config(newPaths.logsPath);
-    const log4j2Path = path.join(path.dirname(newPaths.configPath), 'log4j2.properties');
+    const log4j2Path = path.join(
+      path.dirname(newPaths.configPath),
+      "log4j2.properties"
+    );
     await fs.writeFile(log4j2Path, log4j2Config);
 
     // Write new service file
     const env = getEnvAndConfig();
-    const serviceContent = generateServiceScript(newConfig.name, path.dirname(newPaths.configPath), newConfig.port, env);
+    const serviceContent = generateServiceScript(
+      newConfig.name,
+      path.dirname(newPaths.configPath),
+      newConfig.port,
+      env
+    );
     await fs.writeFile(newPaths.servicePath, serviceContent);
 
     // Copy data if requested
     if (copyData) {
-      const sourceDataExists = await fs.access(sourceMetadata.dataPath).then(() => true).catch(() => false);
+      const sourceDataExists = await fs
+        .access(sourceMetadata.dataPath)
+        .then(() => true)
+        .catch(() => false);
       if (sourceDataExists) {
         await copyDirectory(sourceMetadata.dataPath, newPaths.dataPath);
       }
 
-      const sourceLogsExists = await fs.access(sourceMetadata.logsPath).then(() => true).catch(() => false);
+      const sourceLogsExists = await fs
+        .access(sourceMetadata.logsPath)
+        .then(() => true)
+        .catch(() => false);
       if (sourceLogsExists) {
         await copyDirectory(sourceMetadata.logsPath, newPaths.logsPath);
       }
     }
 
     // FIX: Correct unterminated string and missing closing brace
-    console.log(`✅ Node "${sourceNodeName}" copied successfully to "${newNodeName}"`);
+    console.log(
+      `✅ Node "${sourceNodeName}" copied successfully to "${newNodeName}"`
+    );
 
     return {
       name: newNodeName,
@@ -1696,9 +1985,8 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
       cluster: newConfig.clusterName,
       port: newHttpPort,
       transportPort: newTransportPort,
-      roles: newConfig.roles
+      roles: newConfig.roles,
     };
-
   } catch (error) {
     console.error(`❌ Failed to copy node ${sourceNodeName}:`, error);
     throw error;
@@ -1709,8 +1997,8 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
  * Helper method to recursively copy directories
  */
 async function copyDirectory(src, dest) {
-  const fs = require('fs').promises;
-  const path = require('path');
+  const fs = require("fs").promises;
+  const path = require("path");
 
   await fs.mkdir(dest, { recursive: true });
   const entries = await fs.readdir(src, { withFileTypes: true });
@@ -1733,10 +2021,10 @@ async function copyDirectory(src, dest) {
  */
 async function verifyNodeMetadata() {
   try {
-    console.log('🔍 Verifying node metadata against filesystem...');
+    console.log("🔍 Verifying node metadata against filesystem...");
 
-    const nodeMetadata = getConfig('nodeMetadata') || {};
-    const elasticsearchNodes = getConfig('elasticsearchNodes') || [];
+    const nodeMetadata = getConfig("nodeMetadata") || {};
+    const elasticsearchNodes = getConfig("elasticsearchNodes") || [];
 
     let metadataChanged = false;
     let nodesChanged = false;
@@ -1751,9 +2039,13 @@ async function verifyNodeMetadata() {
 
       // Check if the node directory structure exists
       const env = getEnvAndConfig();
-      const nodeBaseDir = path.join(env.baseElasticsearchPath, 'nodes', nodeName);
+      const nodeBaseDir = path.join(
+        env.baseElasticsearchPath,
+        "nodes",
+        nodeName
+      );
       try {
-        await require('fs').promises.access(nodeBaseDir);
+        await require("fs").promises.access(nodeBaseDir);
         nodeExists = true;
       } catch (e) {
         nodeExists = false;
@@ -1768,35 +2060,46 @@ async function verifyNodeMetadata() {
 
     // Scan the base nodes directory for any existing nodes not in metadata
     const env = getEnvAndConfig();
-    if (!env.baseElasticsearchPath || typeof env.baseElasticsearchPath !== 'string') {
-      throw new Error('Invalid baseElasticsearchPath: not set or not a string. Please check your configuration.');
+    if (
+      !env.baseElasticsearchPath ||
+      typeof env.baseElasticsearchPath !== "string"
+    ) {
+      throw new Error(
+        "Invalid baseElasticsearchPath: not set or not a string. Please check your configuration."
+      );
     }
-    const baseNodesPath = path.join(env.baseElasticsearchPath, 'nodes');
+    const baseNodesPath = path.join(env.baseElasticsearchPath, "nodes");
     try {
-      const nodeDirs = await require('fs').promises.readdir(baseNodesPath, { withFileTypes: true });
+      const nodeDirs = await require("fs").promises.readdir(baseNodesPath, {
+        withFileTypes: true,
+      });
       for (const dirent of nodeDirs) {
         if (dirent.isDirectory()) {
           const nodeName = dirent.name;
-          const found = Object.values(nodeMetadata).some(m => m.name === nodeName);
+          const found = Object.values(nodeMetadata).some(
+            (m) => m.name === nodeName
+          );
           if (!found) {
             // Optionally, could add missing nodes to metadata here
             // For now, just log
-            console.log(`ℹ️ Node directory found with no metadata: ${nodeName}`);
+            console.log(
+              `ℹ️ Node directory found with no metadata: ${nodeName}`
+            );
           }
         }
       }
     } catch (error) {
-      if (error.code !== 'ENOENT') {
-        console.error('❌ Error reading nodes directory:', error);
+      if (error.code !== "ENOENT") {
+        console.error("❌ Error reading nodes directory:", error);
       }
     }
     if (metadataChanged) {
-      await setConfig('nodeMetadata', nodeMetadata);
-      console.log(`🗑️ Removed metadata for nodes: ${removedNodes.join(', ')}`);
+      await setConfig("nodeMetadata", nodeMetadata);
+      console.log(`🗑️ Removed metadata for nodes: ${removedNodes.join(", ")}`);
     }
     return { removedNodes };
   } catch (error) {
-    console.error('❌ Error verifying node metadata:', error);
+    console.error("❌ Error verifying node metadata:", error);
     throw error;
   }
 }
@@ -1810,25 +2113,31 @@ async function getNodeHeapSize(nodeName) {
     let jvmPath;
 
     if (metadata && metadata.configPath) {
-      jvmPath = path.join(path.dirname(metadata.configPath), 'jvm.options');
+      jvmPath = path.join(path.dirname(metadata.configPath), "jvm.options");
     } else {
       const env = getEnvAndConfig();
-      jvmPath = path.join(env.baseElasticsearchPath, 'nodes', nodeName, 'config', 'jvm.options');
+      jvmPath = path.join(
+        env.baseElasticsearchPath,
+        "nodes",
+        nodeName,
+        "config",
+        "jvm.options"
+      );
     }
 
     try {
-      const jvmContent = await fs.readFile(jvmPath, 'utf8');
+      const jvmContent = await fs.readFile(jvmPath, "utf8");
       const heapMatch = jvmContent.match(/-Xms([0-9]+[kmgt])/i);
-      return heapMatch ? heapMatch[1] : '1g';
+      return heapMatch ? heapMatch[1] : "1g";
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        return '1g'; // Default if file doesn't exist
+      if (error.code === "ENOENT") {
+        return "1g"; // Default if file doesn't exist
       }
       throw error;
     }
   } catch (error) {
     console.error(`❌ Failed to get heap size for node ${nodeName}:`, error);
-    return '1g'; // Default on error
+    return "1g"; // Default on error
   }
 }
 

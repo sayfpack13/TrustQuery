@@ -1,8 +1,13 @@
 // frontend/src/pages/AdminLogin.jsx
 import React, { useState, useEffect } from "react";
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCircleNotch, faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons';
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faCircleNotch,
+  faEye,
+  faEyeSlash,
+} from "@fortawesome/free-solid-svg-icons";
 import useSound from "../components/useSound";
+import buttonStyles from "../components/ButtonStyles";
 
 export default function AdminLogin({ onLogin }) {
   const [username, setUsername] = useState("admin");
@@ -13,7 +18,8 @@ export default function AdminLogin({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
 
   // Sound hook for error sound
-  const { audioRef: errorAudioRef, playSound: playErrorSound } = useSound("/sounds/error.mp3");
+  const { audioRef: errorAudioRef, playSound: playErrorSound } =
+    useSound("/sounds/error.mp3");
 
   useEffect(() => {
     setFormLoaded(true);
@@ -58,9 +64,13 @@ export default function AdminLogin({ onLogin }) {
       <audio ref={errorAudioRef} src="/sounds/error.mp3" preload="auto" />
 
       <div
-        className={`bg-header-bg-to p-10 rounded-xl shadow-2xl max-w-md w-full ${formLoaded ? 'animate-pop-in' : 'opacity-0'}`}
+        className={`bg-header-bg-to p-10 rounded-xl shadow-2xl max-w-md w-full ${
+          formLoaded ? "animate-pop-in" : "opacity-0"
+        }`}
       >
-        <h2 className="text-4xl font-extrabold mb-8 text-center text-header-text">Login</h2>
+        <h2 className="text-4xl font-extrabold mb-8 text-center text-header-text">
+          Login
+        </h2>
         <input
           type="text"
           placeholder="Username"
@@ -80,7 +90,7 @@ export default function AdminLogin({ onLogin }) {
             aria-label="Password"
             disabled={loading}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !loading) {
+              if (e.key === "Enter" && !loading) {
                 handleSubmit();
               }
             }}
@@ -92,13 +102,18 @@ export default function AdminLogin({ onLogin }) {
             aria-label={showPassword ? "Hide password" : "Show password"}
             disabled={loading}
           >
-            <FontAwesomeIcon icon={showPassword ? faEyeSlash : faEye} className="text-xl" />
+            <FontAwesomeIcon
+              icon={showPassword ? faEyeSlash : faEye}
+              className="text-xl"
+            />
           </button>
         </div>
         <button
           onClick={handleSubmit}
           type="submit"
-          className="w-full bg-button-bg hover:bg-button-hover-bg text-white font-bold py-3.5 rounded-lg shadow-lg hover:shadow-xl transition duration-200 ease-in-out active:scale-95 focus:outline-none focus:ring-3 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+          className={
+            buttonStyles.primary + " w-full flex items-center justify-center"
+          }
           disabled={loading}
         >
           {loading ? (

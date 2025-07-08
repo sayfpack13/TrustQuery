@@ -378,12 +378,6 @@ export default function HomePage() {
         {totalCollectedData > 0 && (
           <div className="text-center text-info text-md mb-4 animate-pulse">
             <p>Total records: {totalCollectedData.toLocaleString()}</p>
-            {searchedIndicesForTotal.length > 1 && (
-              <p className="text-xs text-neutral-400 mt-1">
-                Across {searchedIndicesForTotal.length} indices:{" "}
-                {searchedIndicesForTotal.join(", ")}
-              </p>
-            )}
           </div>
         )}
 

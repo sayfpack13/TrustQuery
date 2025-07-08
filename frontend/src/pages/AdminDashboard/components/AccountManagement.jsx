@@ -36,7 +36,8 @@ export default function AccountManagement({
 
   // Node and index filtering state
   const [selectedNode, setSelectedNode] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState("");
+  // Use node+index pair for unique selection
+  const [selectedNodeIndex, setSelectedNodeIndex] = useState(""); // format: nodeName::indexName
 
   // Use enhancedNodesData prop to extract available nodes and indices
   const availableNodes = React.useMemo(() => {
@@ -48,21 +49,21 @@ export default function AccountManagement({
     }));
   }, [enhancedNodesData]);
 
-  const availableIndices = React.useMemo(() => {
-    const allIndices = [];
+  // Build unique node+index pairs for selection
+  const availableNodeIndices = React.useMemo(() => {
+    const all = [];
     Object.entries(enhancedNodesData).forEach(([nodeName, nodeData]) => {
       if (nodeData.indices) {
         nodeData.indices.forEach((index) => {
-          if (!allIndices.find((idx) => idx.index === index.index)) {
-            allIndices.push({
-              ...index,
-              nodeName: nodeName,
-            });
-          }
+          all.push({
+            nodeName,
+            indexName: index.index,
+            label: `${index.index} (${nodeName})`,
+          });
         });
       }
     });
-    return allIndices;
+    return all;
   }, [enhancedNodesData]);
 
   // Password visibility state for the main table (per-row, overridden by global toggle)
@@ -92,9 +93,17 @@ export default function AccountManagement({
       setLoading(true);
 
       // Fetch accounts normally (with node/index filter if selected)
+      // Parse node+index selection
       const params = { page, size: pageSize };
-      if (selectedNode) params.node = selectedNode;
-      if (selectedIndex) params.index = selectedIndex;
+      let node = selectedNode;
+      let index = "";
+      if (selectedNodeIndex) {
+        const [n, i] = selectedNodeIndex.split("::");
+        node = n;
+        index = i;
+      }
+      if (node) params.node = node;
+      if (index) params.index = index;
 
       const accountsRes = await axiosClient.get("/api/admin/accounts", {
         params,
@@ -128,7 +137,7 @@ export default function AccountManagement({
     pageSize,
     showNotification,
     selectedNode,
-    selectedIndex,
+    selectedNodeIndex,
     availableNodes,
   ]);
 
@@ -191,14 +200,23 @@ export default function AccountManagement({
   };
 
   // Handle save edit
+  // Handle save edit (send node+index)
   const handleSaveEdit = async () => {
     if (!currentEditingAccount || editLoading) return;
 
     setEditLoading(true);
     try {
+      let node = selectedNode;
+      let index = "";
+      if (selectedNodeIndex) {
+        const [n, i] = selectedNodeIndex.split("::");
+        node = n;
+        index = i;
+      }
       await axiosClient.put(
         `/api/admin/accounts/${currentEditingAccount.id}`,
-        editFormData
+        editFormData,
+        { params: { node, index } }
       );
       showNotification(
         "success",
@@ -233,6 +251,7 @@ export default function AccountManagement({
   };
 
   // Handle delete account
+  // Handle delete account (send node+index)
   const handleDeleteAccount = async (accountId) => {
     if (!window.confirm("Are you sure you want to delete this account?")) {
       return;
@@ -242,7 +261,16 @@ export default function AccountManagement({
 
     setDeletingAccountIds((prev) => new Set([...prev, accountId]));
     try {
-      await axiosClient.delete(`/api/admin/accounts/${accountId}`);
+      let node = selectedNode;
+      let index = "";
+      if (selectedNodeIndex) {
+        const [n, i] = selectedNodeIndex.split("::");
+        node = n;
+        index = i;
+      }
+      await axiosClient.delete(`/api/admin/accounts/${accountId}`, {
+        params: { node, index },
+      });
       showNotification(
         "success",
         "Account deleted successfully!",
@@ -278,11 +306,13 @@ export default function AccountManagement({
 
     setLoading(true);
     try {
-      // Use bulk delete endpoint if available, otherwise use individual deletes
-      const deletePromises = selected.map((account) =>
-        axiosClient.delete(`/api/admin/accounts/${account.id}`)
-      );
-      await Promise.all(deletePromises);
+      // Use new bulk delete endpoint with node+index for each account
+      const items = selected.map((account) => ({
+        id: account.id,
+        node: account.node || account._source?.node,
+        index: account._index || account.index,
+      }));
+      await axiosClient.post("/api/admin/accounts/bulk-delete", { items });
       showNotification(
         "success",
         `${selected.length} account(s) deleted successfully!`,
@@ -372,7 +402,11 @@ export default function AccountManagement({
     <>
       <section className="mb-12 p-6 bg-neutral-800 rounded-xl shadow-lg border border-neutral-700">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-3xl font-bold text-white">Account Management</h2>
+          <h2 className="text-3xl font-semibold text-white mb-6 flex items-center">
+            <FontAwesomeIcon icon={faDatabase} className="mr-3 text-primary" />
+            Account Management
+          </h2>
+
           <div className="flex space-x-4">
             <button
               className={buttonStyles.primary}
@@ -429,22 +463,22 @@ export default function AccountManagement({
               <FontAwesomeIcon icon={faDatabase} className="text-blue-400" />
               <label className="text-neutral-300">Index:</label>
               <select
-                value={selectedIndex}
-                onChange={(e) => setSelectedIndex(e.target.value)}
+                value={selectedNodeIndex}
+                onChange={(e) => setSelectedNodeIndex(e.target.value)}
                 className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 disabled={disabled || loading}
               >
                 <option value="">All Indices</option>
-                {availableIndices
+                {availableNodeIndices
                   .filter(
-                    (index) => !selectedNode || index.nodeName === selectedNode
+                    (item) => !selectedNode || item.nodeName === selectedNode
                   )
-                  .map((index) => (
+                  .map((item) => (
                     <option
-                      key={`${index.nodeName}-${index.index}`}
-                      value={index.index}
+                      key={`${item.nodeName}::${item.indexName}`}
+                      value={`${item.nodeName}::${item.indexName}`}
                     >
-                      {index.index} ({index.nodeName})
+                      {item.label}
                     </option>
                   ))}
               </select>
@@ -490,9 +524,6 @@ export default function AccountManagement({
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
                   Password
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
-                  Source File
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-neutral-300 uppercase tracking-wider">
                   Node
@@ -565,9 +596,6 @@ export default function AccountManagement({
                           />
                         </button>
                       </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
-                      {account.sourceFile}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-200">
                       <div className="flex items-center space-x-2">

@@ -1,4 +1,4 @@
-require('dotenv').config();
+require("dotenv").config();
 
 const express = require("express");
 const fs = require("fs").promises;
@@ -16,11 +16,10 @@ const { loadConfig: loadCentralizedConfig, getConfig, setConfig, saveConfig } = 
 // Configuration state will be managed by centralized config module
 
 // Use shared formatBytes utility
-const { formatBytes } = require('./src/utils/format');
+const { formatBytes } = require("./src/utils/format");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-
 
 const SECRET_KEY = process.env.SECRET_KEY;
 const ADMIN_USER = process.env.ADMIN_USER;
@@ -41,35 +40,34 @@ const storage = multer.diskStorage({
     const baseName = path.basename(file.originalname, ext);
 
     let newFilename = baseName;
-    if (ext === '') {
-      newFilename += '.txt';
-    } else if (ext.toLowerCase() !== '.txt') {
-      newFilename += '.txt';
+    if (ext === "") {
+      newFilename += ".txt";
+    } else if (ext.toLowerCase() !== ".txt") {
+      newFilename += ".txt";
     } else {
       newFilename = file.originalname;
     }
     cb(null, newFilename);
-  }
+  },
 });
 
 const upload = multer({ storage: storage });
-
 
 app.use(cors());
 app.use(express.json());
 
 // Import route modules
-const clusterAdvancedRoutes = require('./src/routes/cluster-advanced');
-const esConfigRoutes = require('./src/routes/elasticsearch-config');
-const setupWizardRoutes = require('./src/routes/setup-wizard');
+const clusterAdvancedRoutes = require("./src/routes/cluster-advanced");
+const esConfigRoutes = require("./src/routes/elasticsearch-config");
+const setupWizardRoutes = require("./src/routes/setup-wizard");
 
 // Add route middleware
-app.use('/api/admin/cluster-advanced', clusterAdvancedRoutes);
-app.use('/api/admin/es/config', esConfigRoutes);
-app.use('/api/setup-wizard', setupWizardRoutes);
+app.use("/api/admin/cluster-advanced", clusterAdvancedRoutes);
+app.use("/api/admin/es/config", esConfigRoutes);
+app.use("/api/setup-wizard", setupWizardRoutes);
 
 // Initialize Elasticsearch client with configuration
-const { getES, isElasticsearchAvailable } = require('./src/elasticsearch/client');
+const { getES, isElasticsearchAvailable } = require("./src/elasticsearch/client");
 
 // Helper function to get current ES client
 function getCurrentES() {
@@ -81,21 +79,41 @@ async function initializeServer() {
   await loadCentralizedConfig();
 
   // Verify and clean up node metadata
-  const clusterManager = require('./src/elasticsearch/cluster-manager');
+  const clusterManager = require("./src/elasticsearch/cluster-manager");
   await clusterManager.verifyNodeMetadata();
 
   // Perform initial smart cache refresh for indices
-  const { refreshCacheForRunningNodes, syncSearchIndices } = require('./src/cache/indices-cache');
+  const { refreshCacheForRunningNodes, syncSearchIndices } = require("./src/cache/indices-cache");
   const config = getConfig();
   try {
     await refreshCacheForRunningNodes(config);
-    console.log('🔄 Initial smart cache refresh completed');
+    console.log("🔄 Initial smart cache refresh completed");
+
+    // Log the real structure of searchIndices
+    const searchIndices = getConfig("searchIndices");
+
+    // Validate searchIndices: keep only valid { node, index } objects
+    if (Array.isArray(searchIndices)) {
+      const validIndices = searchIndices.filter((e) => e && typeof e === "object" && "node" in e && "index" in e);
+      if (validIndices.length !== searchIndices.length) {
+        console.warn(
+          `🗑️ Removing invalid entries from searchIndices:`,
+          JSON.stringify(
+            searchIndices.filter((e) => !(e && typeof e === "object" && "node" in e && "index" in e)),
+            null,
+            2
+          )
+        );
+        await setConfig("searchIndices", validIndices);
+        console.log("💾 Saved cleaned searchIndices to config.");
+      }
+    }
 
     // Sync search indices to remove any invalid entries from config
-    await syncSearchIndices(config);
-    console.log('🔄 Initial search indices sync completed');
+    await syncSearchIndices();
+    console.log("🔄 Initial search indices sync completed");
   } catch (error) {
-    console.warn('⚠️ Initial cache refresh failed:', error.message);
+    console.warn("⚠️ Initial cache refresh failed:", error.message);
   }
 
   // Start the server
@@ -105,7 +123,7 @@ async function initializeServer() {
 }
 
 // Start the server after initialization is complete
-initializeServer().catch(error => {
+initializeServer().catch((error) => {
   console.error("❌ Failed to initialize server:", error);
   process.exit(1);
 });
@@ -139,7 +157,7 @@ function updateTask(taskId, updates) {
 }
 
 // Import JWT middleware from centralized auth module
-const { verifyJwt } = require('./src/middleware/auth');
+const { verifyJwt } = require("./src/middleware/auth");
 
 // Admin Login endpoint
 app.post("/api/admin/login", (req, res) => {
@@ -181,7 +199,7 @@ app.post("/api/admin/move-to-unparsed", verifyJwt, async (req, res) => {
         progress: 1,
         total: 1,
         completed: true,
-        message: `File ${filename} moved to unparsed.`
+        message: `File ${filename} moved to unparsed.`,
       });
       console.log(`Task ${taskId} completed: File ${filename} moved to unparsed.`);
     } catch (error) {
@@ -212,7 +230,7 @@ app.post("/api/admin/move-to-pending/:filename", verifyJwt, async (req, res) => 
         progress: 1,
         total: 1,
         completed: true,
-        message: `File ${filename} moved to pending.`
+        message: `File ${filename} moved to pending.`,
       });
       console.log(`Task ${taskId} completed: File ${filename} moved to pending.`);
     } catch (error) {
@@ -242,7 +260,7 @@ app.delete("/api/admin/pending-files/:filename", verifyJwt, async (req, res) => 
         progress: 1,
         total: 1,
         completed: true,
-        message: `Pending file ${filename} deleted.`
+        message: `Pending file ${filename} deleted.`,
       });
       console.log(`Task ${taskId} completed: Pending file ${filename} deleted.`);
     } catch (error) {
@@ -265,7 +283,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
   (async () => {
     try {
       const files = await fs.readdir(UNPARSED_DIR);
-      const txtFiles = files.filter(file => path.extname(file).toLowerCase() === '.txt');
+      const txtFiles = files.filter((file) => path.extname(file).toLowerCase() === ".txt");
 
       if (txtFiles.length === 0) {
         updateTask(taskId, {
@@ -273,7 +291,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
           progress: 0,
           total: 0,
           completed: true,
-          message: "No .txt files found in unparsed directory to parse."
+          message: "No .txt files found in unparsed directory to parse.",
         });
         return;
       }
@@ -282,7 +300,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
       let grandTotalLines = 0;
       updateTask(taskId, {
         status: "counting lines",
-        message: `Counting lines in ${txtFiles.length} files...`
+        message: `Counting lines in ${txtFiles.length} files...`,
       });
       for (const filename of txtFiles) {
         const filePath = path.join(UNPARSED_DIR, filename);
@@ -292,7 +310,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
           // Update total in task as we count, providing early feedback
           updateTask(taskId, {
             total: grandTotalLines,
-            message: `Counting lines: ${linesInFile} in ${filename}. Total: ${grandTotalLines} lines found.`
+            message: `Counting lines: ${linesInFile} in ${filename}. Total: ${grandTotalLines} lines found.`,
           });
         } catch (countError) {
           console.warn(`Task ${taskId}: Could not count lines for ${filename}:`, countError.message);
@@ -312,26 +330,33 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
           progress: 0,
           total: 0,
           completed: true,
-          message: "No lines found in any .txt files to parse."
+          message: "No lines found in any .txt files to parse.",
         });
         return;
       }
 
       // Determine target index and node for this parsing operation
       const parseTargetIndex = targetIndex || getSelectedIndex();
-      const parseTargetNode = targetNode || getConfig('writeNode');
-
-      // Create or get Elasticsearch client for the specified node
+      let parseTargetNode = targetNode || getConfig("writeNode");
       let parseES = getCurrentES();
-      if (parseTargetNode && parseTargetNode !== getConfig('writeNode')) {
-        // Use specific node if different from current write node
-        const { Client } = require('@elastic/elasticsearch');
-        parseES = new Client({ node: parseTargetNode });
+      if (parseTargetNode) {
+        // If parseTargetNode is a node name, resolve to URL
+        const config = getConfig();
+        const nodeMetadata = config.nodeMetadata || {};
+        let nodeUrl = nodeMetadata[parseTargetNode]?.nodeUrl;
+        if (!nodeUrl && parseTargetNode.startsWith("http")) {
+          nodeUrl = parseTargetNode;
+        }
+        if (nodeUrl) {
+          const { Client } = require("@elastic/elasticsearch");
+          parseES = new Client({ node: nodeUrl });
+          parseTargetNode = nodeUrl;
+        }
       }
 
       updateTask(taskId, {
         total: grandTotalLines,
-        message: `Found ${grandTotalLines} lines across ${txtFiles.length} files. Parsing to index '${parseTargetIndex}' via node '${parseTargetNode}'...`
+        message: `Found ${grandTotalLines} lines across ${txtFiles.length} files. Parsing to index '${parseTargetIndex}' via node '${parseTargetNode}'...`,
       });
 
       let cumulativeProcessedLines = 0;
@@ -348,27 +373,28 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
           await parser.parseFile(
             filePath,
             async (batch) => {
-              const bulkBody = batch.flatMap((doc) => [
-                { index: { _index: parseTargetIndex } },
-                { raw_line: doc },
-              ]);
+              const bulkBody = batch.flatMap((doc) => [{ index: { _index: parseTargetIndex } }, { raw_line: doc }]);
 
               if (bulkBody.length > 0) {
                 if (parseES && parseES.bulk) {
-                  await parseES.bulk({ refresh: false, body: bulkBody });
+                  try {
+                    await parseES.bulk({ refresh: false, body: bulkBody });
+                  } catch (err) {
+                    console.error("Bulk indexing error:", err);
+                  }
                 } else {
                   console.warn("Elasticsearch client not available for bulk indexing.");
                 }
               }
             },
-            getConfig('batchSize'),
+            getConfig("batchSize"),
             (processedLinesInCurrentFile) => {
               // Update the overall task's progress with the cumulative lines processed so far
               const currentCumulativeProgress = cumulativeProcessedLines + processedLinesInCurrentFile;
               updateTask(taskId, {
                 status: "processing files",
                 progress: currentCumulativeProgress, // Update overall progress
-                message: `Processing file ${filename}: ${processedLinesInCurrentFile} lines processed. Overall: ${currentCumulativeProgress}/${grandTotalLines} lines.`
+                message: `Processing file ${filename}: ${processedLinesInCurrentFile} lines processed. Overall: ${currentCumulativeProgress}/${grandTotalLines} lines.`,
               });
             }
           );
@@ -380,7 +406,6 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
 
           filesParsedCount++;
           await fs.rename(filePath, parsedFilePath); // Move file to parsed directory
-
         } catch (fileError) {
           console.error(`Task ${taskId}: Error processing file ${filename}:`, fileError);
           updateTask(taskId, {
@@ -397,7 +422,7 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
         status: "completed",
         progress: cumulativeProcessedLines, // Final progress should match grandTotalLines if successful
         completed: true,
-        message: `Successfully parsed and moved ${filesParsedCount} out of ${txtFiles.length} files. Total lines processed: ${cumulativeProcessedLines}.`
+        message: `Successfully parsed and moved ${filesParsedCount} out of ${txtFiles.length} files. Total lines processed: ${cumulativeProcessedLines}.`,
       });
       console.log(`Task ${taskId} completed.`);
     } catch (error) {
@@ -441,17 +466,17 @@ app.post("/api/admin/upload", verifyJwt, upload.array("files"), async (req, res)
     return res.status(400).json({ error: "No files uploaded" });
   }
 
-  const taskId = createTask("Upload Files", "uploading", req.files.map(f => f.originalname).join(', '));
+  const taskId = createTask("Upload Files", "uploading", req.files.map((f) => f.originalname).join(", "));
   res.json({ taskId });
 
   try {
-    const uploadedFiles = req.files.map(file => file.originalname);
+    const uploadedFiles = req.files.map((file) => file.originalname);
     updateTask(taskId, {
       status: "completed",
       progress: uploadedFiles.length,
       total: uploadedFiles.length,
       completed: true,
-      message: `Files uploaded successfully: ${uploadedFiles.join(", ")}`
+      message: `Files uploaded successfully: ${uploadedFiles.join(", ")}`,
     });
     console.log(`Task ${taskId} completed: Files ${uploadedFiles.join(", ")} uploaded.`);
   } catch (error) {
@@ -486,46 +511,55 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
 
       // Determine target index and node for this parsing operation
       const parseTargetIndex = targetIndex || getSelectedIndex();
-      const parseTargetNode = targetNode || getConfig('writeNode');
-
-      // Create or get Elasticsearch client for the specified node
+      let parseTargetNode = targetNode || getConfig("writeNode");
       let parseES = getCurrentES();
-      if (parseTargetNode && parseTargetNode !== getConfig('writeNode')) {
-        // Use specific node if different from current write node
-        const { Client } = require('@elastic/elasticsearch');
-        parseES = new Client({ node: parseTargetNode });
+      if (parseTargetNode) {
+        // If parseTargetNode is a node name, resolve to URL
+        const config = getConfig();
+        const nodeMetadata = config.nodeMetadata || {};
+        let nodeUrl = nodeMetadata[parseTargetNode]?.nodeUrl;
+        if (!nodeUrl && parseTargetNode.startsWith("http")) {
+          nodeUrl = parseTargetNode;
+        }
+        if (nodeUrl) {
+          const { Client } = require("@elastic/elasticsearch");
+          parseES = new Client({ node: nodeUrl });
+          parseTargetNode = nodeUrl;
+        }
       }
 
       // === Get total lines for this file once at the beginning ===
       const totalLinesInFile = await parser.countLines(filePath);
       updateTask(taskId, {
         total: totalLinesInFile, // Set the fixed total for this file
-        message: `Found ${totalLinesInFile} lines in ${filename}. Parsing to index '${parseTargetIndex}' via node '${parseTargetNode}'...`
+        message: `Found ${totalLinesInFile} lines in ${filename}. Parsing to index '${parseTargetIndex}' via node '${parseTargetNode}'...`,
       });
 
       await parser.parseFile(
         filePath,
         async (batch) => {
-          const bulkBody = batch.flatMap((doc) => [
-            { index: { _index: parseTargetIndex } },
-            { raw_line: doc },
-          ]);
+          const bulkBody = batch.flatMap((doc) => [{ index: { _index: parseTargetIndex } }, { raw_line: doc }]);
 
           if (bulkBody.length > 0) {
             if (parseES && parseES.bulk) {
-              await parseES.bulk({ refresh: false, body: bulkBody });
+              try {
+                await parseES.bulk({ refresh: false, body: bulkBody });
+              } catch (err) {
+                console.error("Bulk indexing error:", err);
+              }
             } else {
               console.warn("Elasticsearch client not available for bulk indexing.");
             }
           }
         },
-        getConfig('batchSize'),
-        (currentProcessedLines) => { // This callback gives real-time progress
+        getConfig("batchSize"),
+        (currentProcessedLines) => {
+          // This callback gives real-time progress
           updateTask(taskId, {
             status: "parsing",
             progress: currentProcessedLines,
             // 'total' remains fixed from initial count
-            message: `Parsing file: ${currentProcessedLines}/${totalLinesInFile} lines processed...`
+            message: `Parsing file: ${currentProcessedLines}/${totalLinesInFile} lines processed...`,
           });
         }
       );
@@ -570,7 +604,7 @@ app.delete("/api/admin/unparsed-files/:filename", verifyJwt, async (req, res) =>
         progress: 1,
         total: 1,
         completed: true,
-        message: `Unparsed file ${filename} deleted.`
+        message: `Unparsed file ${filename} deleted.`,
       });
       console.log(`Task ${taskId} completed: Unparsed file ${filename} deleted.`);
     } catch (error) {
@@ -593,17 +627,8 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
   const requestedIndex = req.query.index;
 
   try {
-    const esAvailable = await isElasticsearchAvailable();
-    if (!esAvailable) {
-      return res.json({
-        results: [],
-        total: 0,
-        message: "Elasticsearch not available"
-      });
-    }
-
     const config = getConfig();
-    const { getCacheFiltered } = require('./src/cache/indices-cache');
+    const { getCacheFiltered } = require("./src/cache/indices-cache");
     const cachedIndices = await getCacheFiltered(config);
 
     // Determine which index(es) to search and which ES client to use
@@ -612,31 +637,79 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
     let targetNodeUrl;
 
     if (requestedNode && requestedIndex) {
+      // Only allow search if this node/index pair is in configured searchIndices
+      const searchIndices = config.searchIndices || [];
+      const isAllowed = searchIndices.some((entry) => entry.node === requestedNode && entry.index === requestedIndex);
+      if (!isAllowed) {
+        return res.status(403).json({
+          error: `Node/index pair (${requestedNode}/${requestedIndex}) is not allowed by current searchIndices configuration`,
+          results: [],
+          total: 0,
+        });
+      }
       // Specific index on specific node requested
-      const nodeData = cachedIndices[requestedNode];
-      if (!nodeData || !nodeData.indices || !nodeData.indices.find(idx => idx.index === requestedIndex)) {
+      // Try to find the node in the cache by name
+      let nodeData = cachedIndices[requestedNode];
+      let nodeCacheKey = requestedNode;
+      const nodeMetadata = config.nodeMetadata || {};
+      if (!nodeData) {
+        // Try to resolve node name from nodeMetadata (in case frontend sent URL or alias)
+        const url = Object.keys(nodeMetadata).find((url) => nodeMetadata[url].name === requestedNode);
+        if (url && cachedIndices[nodeMetadata[url].name]) {
+          nodeData = cachedIndices[nodeMetadata[url].name];
+          nodeCacheKey = nodeMetadata[url].name;
+        } else if (url && cachedIndices[url]) {
+          nodeData = cachedIndices[url];
+          nodeCacheKey = url;
+        }
+      }
+      // Always inject nodeUrl from config if missing
+      if (nodeData && !nodeData.nodeUrl && nodeMetadata[requestedNode] && nodeMetadata[requestedNode].nodeUrl) {
+        nodeData.nodeUrl = nodeMetadata[requestedNode].nodeUrl;
+      }
+
+      if (
+        !nodeData ||
+        !nodeData.indices ||
+        !Object.keys(
+          Array.isArray(nodeData.indices)
+            ? nodeData.indices.reduce((acc, idx) => {
+                acc[idx.index] = true;
+                return acc;
+              }, {})
+            : nodeData.indices
+        ).includes(requestedIndex)
+      ) {
         return res.status(400).json({
           error: `Index '${requestedIndex}' not found on node '${requestedNode}'`,
           results: [],
-          total: 0
+          total: 0,
         });
+      }
+
+      if (!nodeData.isRunning) {
+        return res.status(503).json({
+          error: `Node '${requestedNode}' is not running or not reachable`,
+          results: [],
+          total: 0,
+        });
+      }
+
+      // Build nodeUrl from config if not present in cache
+      let nodeUrl = nodeData.nodeUrl;
+      if (!nodeUrl && nodeMetadata[requestedNode] && nodeMetadata[requestedNode].nodeUrl) {
+        nodeUrl = nodeMetadata[requestedNode].nodeUrl;
+      }
+      if (!nodeUrl) {
+        nodeUrl = `http://localhost:${nodeData.port || 9200}`;
       }
 
       searchIndex = requestedIndex;
-      targetNodeUrl = nodeData.nodeUrl;
-
-      if (!targetNodeUrl) {
-        return res.status(400).json({
-          error: `Node '${requestedNode}' not found or not configured`,
-          results: [],
-          total: 0
-        });
-      }
+      targetNodeUrl = nodeUrl;
 
       // Create ES client for specific node
-      const { Client } = require('@elastic/elasticsearch');
+      const { Client } = require("@elastic/elasticsearch");
       es = new Client({ node: targetNodeUrl });
-
     } else if (requestedNode && !requestedIndex) {
       // Specific node requested, but no specific index - search all indices on that node
       const nodeData = cachedIndices[requestedNode];
@@ -644,7 +717,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
         return res.status(400).json({
           error: `Node '${requestedNode}' not found or not configured`,
           results: [],
-          total: 0
+          total: 0,
         });
       }
 
@@ -652,23 +725,22 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
         return res.json({
           results: [],
           total: 0,
-          message: `No indices found on node '${requestedNode}'`
+          message: `No indices found on node '${requestedNode}'`,
         });
       }
 
       // Use all indices on the specified node
-      searchIndex = nodeData.indices.map(idx => idx.index).join(',');
+      searchIndex = nodeData.indices.map((idx) => idx.index).join(","); // This is correct, as nodeData.indices is always an array of objects
       targetNodeUrl = nodeData.nodeUrl;
 
-      const { Client } = require('@elastic/elasticsearch');
+      const { Client } = require("@elastic/elasticsearch");
       es = new Client({ node: targetNodeUrl });
-
     } else if (!requestedNode && requestedIndex) {
       // Specific index requested, but no specific node - use default ES client
       // First check if the index exists on any node
       let indexExists = false;
       for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
-        if (nodeData.indices && nodeData.indices.find(idx => idx.index === requestedIndex)) {
+        if (nodeData.indices && nodeData.indices.find((idx) => idx.index === requestedIndex)) {
           indexExists = true;
           break;
         }
@@ -678,13 +750,12 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
         return res.status(400).json({
           error: `Index '${requestedIndex}' not found on any configured node`,
           results: [],
-          total: 0
+          total: 0,
         });
       }
 
       searchIndex = requestedIndex;
       es = getCurrentES();
-
     } else {
       // No specific node or index - use default search indices from config
       const searchIndices = config.searchIndices || [];
@@ -693,22 +764,51 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
         return res.json({
           results: [],
           total: 0,
-          message: "No search indices configured. Please configure search indices in the Configuration tab."
+          message: "No search indices configured. Please configure search indices in the Configuration tab.",
         });
       }
 
-      searchIndex = searchIndices.join(',');
-      es = getCurrentES();
+      // Group indices by node for multi-node search
+      // If all indices are on the same node, use that node's ES client
+      const nodeGroups = {};
+      for (const entry of searchIndices) {
+        if (!nodeGroups[entry.node]) nodeGroups[entry.node] = [];
+        nodeGroups[entry.node].push(entry.index);
+      }
+
+      const nodeNames = Object.keys(nodeGroups);
+      if (nodeNames.length === 1) {
+        // All indices are on a single node, use that node's ES client
+        const nodeName = nodeNames[0];
+        const { getCacheFiltered } = require("./src/cache/indices-cache");
+        const cachedIndices = await getCacheFiltered(config);
+        const nodeData = cachedIndices[nodeName];
+        if (!nodeData || !nodeData.nodeUrl) {
+          return res.status(400).json({
+            error: `Node '${nodeName}' not found or not configured`,
+            results: [],
+            total: 0,
+          });
+        }
+        searchIndex = nodeGroups[nodeName].join(",");
+        const { Client } = require("@elastic/elasticsearch");
+        es = new Client({ node: nodeData.nodeUrl });
+        targetNodeUrl = nodeData.nodeUrl;
+      } else {
+        // Indices are on multiple nodes, use the default ES client (must be configured to access all nodes)
+        searchIndex = searchIndices.map((e) => e.index).join(",");
+        es = getCurrentES();
+      }
     }
 
-    console.log(`Searching index(es): ${searchIndex} on ${targetNodeUrl || 'default ES client'}`);
+    //console.log(`Searching index(es): ${searchIndex} on ${targetNodeUrl || "default ES client"}`);
 
     const response = await es.search({
       index: searchIndex,
       from: from,
       size: size,
       body: {
-        query: { match_all: {} }
+        query: { match_all: {} },
       },
     });
 
@@ -720,8 +820,8 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
         id: hit._id,
         raw_line: hit._source.raw_line,
         _index: hit._index,
-        node: requestedNode || 'default',
-        ...parsedAccount
+        node: requestedNode || "default",
+        ...parsedAccount,
       };
     });
 
@@ -742,7 +842,7 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
     const esAvailable = await isElasticsearchAvailable();
     if (!esAvailable) {
       return res.status(503).json({
-        error: "Elasticsearch not available - cannot delete account"
+        error: "Elasticsearch not available - cannot delete account",
       });
     }
 
@@ -752,22 +852,23 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
 
     if (requestedNode && requestedIndex) {
       const config = getConfig();
-      const { getCacheFiltered } = require('./src/cache/indices-cache');
+      const { getCacheFiltered } = require("./src/cache/indices-cache");
       const cachedIndices = await getCacheFiltered(config);
       const nodeData = cachedIndices[requestedNode];
 
       if (!nodeData || !nodeData.nodeUrl) {
         return res.status(400).json({
-          error: `Node '${requestedNode}' not found or not configured`
+          error: `Node '${requestedNode}' not found or not configured`,
         });
       }
 
-      const { Client } = require('@elastic/elasticsearch');
+      const { Client } = require("@elastic/elasticsearch");
       es = new Client({ node: nodeData.nodeUrl });
       targetIndex = requestedIndex;
     } else {
-      es = getCurrentES();
-      targetIndex = getSelectedIndex();
+      return res.status(400).json({
+        error: "Both node and index are required for account deletion.",
+      });
     }
 
     await es.delete({
@@ -793,7 +894,7 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
     const esAvailable = await isElasticsearchAvailable();
     if (!esAvailable) {
       return res.status(503).json({
-        error: "Elasticsearch not available - cannot update account"
+        error: "Elasticsearch not available - cannot update account",
       });
     }
 
@@ -806,22 +907,23 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
 
     if (requestedNode && requestedIndex) {
       const config = getConfig();
-      const { getCacheFiltered } = require('./src/cache/indices-cache');
+      const { getCacheFiltered } = require("./src/cache/indices-cache");
       const cachedIndices = await getCacheFiltered(config);
       const nodeData = cachedIndices[requestedNode];
 
       if (!nodeData || !nodeData.nodeUrl) {
         return res.status(400).json({
-          error: `Node '${requestedNode}' not found or not configured`
+          error: `Node '${requestedNode}' not found or not configured`,
         });
       }
 
-      const { Client } = require('@elastic/elasticsearch');
+      const { Client } = require("@elastic/elasticsearch");
       es = new Client({ node: nodeData.nodeUrl });
       targetIndex = requestedIndex;
     } else {
-      es = getCurrentES();
-      targetIndex = getSelectedIndex();
+      return res.status(400).json({
+        error: "Both node and index are required for account update.",
+      });
     }
 
     await es.update({
@@ -842,11 +944,13 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   }
 });
 
-// BULK DELETE accounts by IDs
+// BULK DELETE accounts by IDs (now expects array of { id, node, index })
 app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
-  const { ids } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ error: "Invalid or empty array of IDs provided." });
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      error: "Invalid or empty array of items provided. Each item must have id, node, and index.",
+    });
   }
 
   const taskId = createTask("Bulk Delete", "deleting");
@@ -857,52 +961,66 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
       const chunkSize = 1000;
       let deletedCount = 0;
 
-      for (let i = 0; i < ids.length; i += chunkSize) {
-        const chunkIds = ids.slice(i, i + chunkSize);
+      for (let i = 0; i < items.length; i += chunkSize) {
+        const chunkItems = items.slice(i, i + chunkSize);
 
-        let bulkResponse;
-        try {
-          const es = getCurrentES();
-          bulkResponse = await es.bulk({
-            refresh: true,
-            body: chunkIds.flatMap((id) => [{ delete: { _index: getSelectedIndex(), _id: id } }]),
-          });
-        } catch (esError) {
-          console.error(`Elasticsearch bulk request failed at chunk starting with ID ${chunkIds[0]}:`, esError);
-          updateTask(taskId, {
-            status: "error",
-            error: esError.message,
-            completed: true,
-          });
-          return;
+        // Group by node+index for efficient bulk
+        const groupMap = {};
+        for (const { id, node, index } of chunkItems) {
+          if (!node || !index || !id) continue;
+          const key = `${node}::${index}`;
+          if (!groupMap[key]) groupMap[key] = { node, index, ids: [] };
+          groupMap[key].ids.push(id);
         }
 
-        const bulkItems = bulkResponse.items
+        for (const group of Object.values(groupMap)) {
+          const { node, index, ids } = group;
+          // Get ES client for node
+          const config = getConfig();
+          const { getCacheFiltered } = require("./src/cache/indices-cache");
+          const cachedIndices = await getCacheFiltered(config);
+          const nodeData = cachedIndices[node];
+          if (!nodeData || !nodeData.nodeUrl) continue;
+          const { Client } = require("@elastic/elasticsearch");
+          const es = new Client({ node: nodeData.nodeUrl });
 
-        const currentDeleted = bulkItems.filter(
-          (item) =>
-            item.delete &&
-            (item.delete.result === "deleted" || item.delete.result === "not_found")
-        ).length;
+          let bulkResponse;
+          try {
+            bulkResponse = await es.bulk({
+              refresh: true,
+              body: ids.flatMap((id) => [{ delete: { _index: index, _id: id } }]),
+            });
+          } catch (esError) {
+            console.error(`Elasticsearch bulk request failed for node ${node}, index ${index}:`, esError);
+            updateTask(taskId, {
+              status: "error",
+              error: esError.message,
+              completed: true,
+            });
+            return;
+          }
 
-        deletedCount += currentDeleted;
-
+          const bulkItems = bulkResponse.items;
+          const currentDeleted = bulkItems.filter(
+            (item) => item.delete && (item.delete.result === "deleted" || item.delete.result === "not_found")
+          ).length;
+          deletedCount += currentDeleted;
+        }
 
         updateTask(taskId, {
           status: "deleting",
           progress: deletedCount,
-          total: ids.length,
-          message: `Deleted ${deletedCount}/${ids.length} accounts (including missing).`
+          total: items.length,
+          message: `Deleted ${deletedCount}/${items.length} accounts (including missing).`,
         });
       }
-
 
       updateTask(taskId, {
         status: "completed",
         progress: deletedCount,
-        total: ids.length,
+        total: items.length,
         completed: true,
-        message: `Bulk delete completed: ${deletedCount} accounts processed.`
+        message: `Bulk delete completed: ${deletedCount} accounts processed.`,
       });
       console.log(`Task ${taskId} completed: Bulk deleted ${deletedCount} accounts.`);
     } catch (error) {
@@ -915,7 +1033,6 @@ app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
     }
   })();
 });
-
 
 // DELETE ALL accounts and move parsed files back to unparsed
 app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
@@ -952,12 +1069,12 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
       const estimatedTotalProgressUnits = accountsToDelete + filesToMove;
       updateTask(taskId, {
         total: estimatedTotalProgressUnits,
-        message: "Initializing clean task: counting items..."
+        message: "Initializing clean task: counting items...",
       });
 
       updateTask(taskId, {
         status: "deleting accounts",
-        message: `Starting deletion of ${accountsToDelete} accounts...`
+        message: `Starting deletion of ${accountsToDelete} accounts...`,
       });
 
       // Perform delete by query
@@ -970,13 +1087,14 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
         refresh: true, // Refresh index after deletion
       });
 
-      accountsDeleted = (deleteResponse.body && deleteResponse.body.deleted !== undefined) ? deleteResponse.body.deleted : 0;
+      accountsDeleted =
+        deleteResponse.body && deleteResponse.body.deleted !== undefined ? deleteResponse.body.deleted : 0;
       console.log(`Task ${taskId}: Deleted ${accountsDeleted} accounts from Elasticsearch.`);
 
       updateTask(taskId, {
         status: "accounts deleted",
         progress: accountsDeleted,
-        message: `Deleted ${accountsDeleted} accounts. Starting file movement...`
+        message: `Deleted ${accountsDeleted} accounts. Starting file movement...`,
       });
 
       for (const file of parsedFiles) {
@@ -989,7 +1107,7 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
           status: "moving files",
           // Progress is sum of deleted accounts and moved files
           progress: accountsDeleted + filesMoved,
-          message: `Moving files: ${filesMoved}/${filesToMove} files moved.`
+          message: `Moving files: ${filesMoved}/${filesToMove} files moved.`,
         });
       }
       console.log(`Task ${taskId}: Moved ${filesMoved} files from parsed to unparsed.`);
@@ -999,7 +1117,7 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
         progress: accountsDeleted + filesMoved,
         completed: true,
         fileMovedCount: filesMoved,
-        message: `Cleaned database: deleted ${accountsDeleted} accounts and moved ${filesMoved} files.`
+        message: `Cleaned database: deleted ${accountsDeleted} accounts and moved ${filesMoved} files.`,
       });
       console.log(`Task ${taskId} completed.`);
     } catch (error) {
@@ -1013,16 +1131,12 @@ app.post("/api/admin/accounts/clean", verifyJwt, async (req, res) => {
   })();
 });
 
-
 // GET all current tasks
 app.get("/api/admin/tasks", verifyJwt, (req, res) => {
   // Filter for tasks that are not completed and not in an error state.
-  const activeTasks = Object.values(tasks).filter(
-    (task) => !task.completed && task.status !== "error"
-  );
+  const activeTasks = Object.values(tasks).filter((task) => !task.completed && task.status !== "error");
   res.json(activeTasks);
 });
-
 
 // GET task status
 app.get("/api/admin/tasks/:taskId", verifyJwt, (req, res) => {
@@ -1043,28 +1157,28 @@ app.post("/api/admin/tasks/:action", verifyJwt, (req, res) => {
 
   try {
     switch (action) {
-      case 'clear':
+      case "clear":
         // Clear completed and error tasks
         const tasksToDelete = [];
-        Object.keys(tasks).forEach(taskId => {
-          if (tasks[taskId].completed || tasks[taskId].status === 'error') {
+        Object.keys(tasks).forEach((taskId) => {
+          if (tasks[taskId].completed || tasks[taskId].status === "error") {
             tasksToDelete.push(taskId);
           }
         });
-        tasksToDelete.forEach(taskId => delete tasks[taskId]);
+        tasksToDelete.forEach((taskId) => delete tasks[taskId]);
         res.json({
           message: `Cleared ${tasksToDelete.length} completed/error tasks`,
-          remainingTasks: Object.keys(tasks).length
+          remainingTasks: Object.keys(tasks).length,
         });
         break;
 
-      case 'clear-all':
+      case "clear-all":
         // Clear all tasks
         const totalCount = Object.keys(tasks).length;
-        Object.keys(tasks).forEach(taskId => delete tasks[taskId]);
+        Object.keys(tasks).forEach((taskId) => delete tasks[taskId]);
         res.json({
           message: `Cleared all ${totalCount} tasks`,
-          remainingTasks: 0
+          remainingTasks: 0,
         });
         break;
 
@@ -1072,8 +1186,8 @@ app.post("/api/admin/tasks/:action", verifyJwt, (req, res) => {
         res.status(400).json({ error: `Unknown task action: ${action}` });
     }
   } catch (error) {
-    console.error('Error handling task action:', error);
-    res.status(500).json({ error: 'Failed to handle task action' });
+    console.error("Error handling task action:", error);
+    res.status(500).json({ error: "Failed to handle task action" });
   }
 });
 
@@ -1105,12 +1219,13 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
 
     // Handle adminSettings - if sent as complete object, merge individual fields
     if (adminSettings !== undefined) {
-      const currentAdminSettings = getConfig('adminSettings') || {};
+      const currentAdminSettings = getConfig("adminSettings") || {};
 
       // If adminSettings contains system settings that should be at root level
       if (adminSettings.minVisibleChars !== undefined) updates.minVisibleChars = adminSettings.minVisibleChars;
       if (adminSettings.maskingRatio !== undefined) updates.maskingRatio = adminSettings.maskingRatio;
-      if (adminSettings.usernameMaskingRatio !== undefined) updates.usernameMaskingRatio = adminSettings.usernameMaskingRatio;
+      if (adminSettings.usernameMaskingRatio !== undefined)
+        updates.usernameMaskingRatio = adminSettings.usernameMaskingRatio;
       if (adminSettings.batchSize !== undefined) updates.batchSize = adminSettings.batchSize;
 
       // UI-specific settings go in adminSettings
@@ -1126,7 +1241,7 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
 
     res.json({
       message: "Configuration updated successfully",
-      config: getConfig()
+      config: getConfig(),
     });
   } catch (error) {
     console.error("Error updating configuration:", error);
@@ -1135,76 +1250,63 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
 });
 
 // POST update search indices
+// Store searchIndices as array of { node, index } objects
 app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
   try {
     const { indices } = req.body;
 
     if (!Array.isArray(indices)) {
-      return res.status(400).json({ error: "Indices must be an array" });
+      return res.status(400).json({ error: "Indices must be an array of { node, index } objects" });
     }
 
     // Allow empty array to clear all search indices (makes search return nothing)
     if (indices.length === 0) {
-      await setConfig('searchIndices', []);
+      await setConfig("searchIndices", []);
       return res.json({
         message: "Search indices cleared - search will return no results",
         searchIndices: [],
-        config: getConfig()
+        config: getConfig(),
       });
     }
 
-    // Validate that indices exist in our persistent cached data
-    const { getCacheFiltered } = require('./src/cache/indices-cache');
+    // Validate that each entry is { node, index } and exists in cache
+    const { getCacheFiltered } = require("./src/cache/indices-cache");
     const config = getConfig();
-
-    // Get cached indices data (don't refresh to avoid issues if nodes are down)
-    console.log('🔍 About to call getCacheFiltered...');
     let cachedIndices;
     try {
       cachedIndices = await getCacheFiltered(config);
-      console.log('✅ getCacheFiltered completed successfully');
     } catch (cacheError) {
-      console.error('❌ Error in getCacheFiltered:', cacheError);
       throw new Error(`Cache access failed: ${cacheError.message}`);
     }
-    const allAvailableIndices = [];
 
-    console.log('🔍 Validating search indices selection...');
-    console.log('Requested indices:', indices);
-    console.log('Cached data nodes:', Object.keys(cachedIndices));
-    console.log('Full cached data structure:', JSON.stringify(cachedIndices, null, 2));
-
-    // Collect all available indices from all nodes
-    Object.values(cachedIndices).forEach(nodeData => {
-      console.log('Processing node data:', nodeData);
+    const allAvailable = [];
+    for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
       if (nodeData.indices && Array.isArray(nodeData.indices)) {
-        nodeData.indices.forEach(idx => {
-          console.log('Processing index:', idx);
-          if (idx.index && !allAvailableIndices.includes(idx.index)) {
-            allAvailableIndices.push(idx.index);
-          }
-        });
-      }
-    });
-
-    console.log('Available indices:', allAvailableIndices);
-
-    // Check if all requested indices exist
-    for (const index of indices) {
-      if (!allAvailableIndices.includes(index)) {
-        return res.status(400).json({
-          error: `Index '${index}' does not exist in any configured node`,
-          availableIndices: allAvailableIndices
+        nodeData.indices.forEach((idx) => {
+          allAvailable.push({ node: nodeName, index: idx.index });
         });
       }
     }
 
-    await setConfig('searchIndices', indices);
+    for (const entry of indices) {
+      if (!entry.node || !entry.index) {
+        return res.status(400).json({
+          error: "Each search index must have both node and index properties.",
+        });
+      }
+      if (!allAvailable.find((ai) => ai.node === entry.node && ai.index === entry.index)) {
+        return res.status(400).json({
+          error: `Index '${entry.index}' not found on node '${entry.node}'`,
+        });
+      }
+    }
+
+    await setConfig("searchIndices", indices);
 
     res.json({
       message: "Search indices updated successfully",
       searchIndices: indices,
-      config: getConfig()
+      config: getConfig(),
     });
   } catch (error) {
     console.error("Error updating search indices:", error);
@@ -1217,20 +1319,25 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
 // Storage for selected index (uses configuration)
 function getSelectedIndex() {
   // For backward compatibility, check both selectedIndex and searchIndices
-  const selectedIndex = getConfig('selectedIndex');
-  const searchIndices = getConfig('searchIndices') || [];
+  const selectedIndex = getConfig("selectedIndex");
+  const searchIndices = getConfig("searchIndices") || [];
 
   // If we have searchIndices configured, use those (modern approach)
   if (searchIndices.length > 0) {
-    return searchIndices.join(',');
+    // If array of { node, index }, return comma-separated indices
+    if (typeof searchIndices[0] === "object" && searchIndices[0] !== null && "index" in searchIndices[0]) {
+      return searchIndices.map((e) => e.index).join(",");
+    } else {
+      return searchIndices.join(",");
+    }
   }
 
   // Fallback to old selectedIndex if no searchIndices
-  return selectedIndex || '';
+  return selectedIndex || "";
 }
 
 async function setSelectedIndex(indexName) {
-  await setConfig('selectedIndex', indexName);
+  await setConfig("selectedIndex", indexName);
 }
 
 // Helper function to create proper index mapping
@@ -1243,17 +1350,17 @@ function createIndexMapping(shards = 1, replicas = 0) {
         analyzer: {
           autocomplete_analyzer: {
             tokenizer: "autocomplete_tokenizer",
-            filter: ["lowercase"]
-          }
+            filter: ["lowercase"],
+          },
         },
         tokenizer: {
           autocomplete_tokenizer: {
             type: "edge_ngram",
             min_gram: 2,
             max_gram: 10,
-          }
-        }
-      }
+          },
+        },
+      },
     },
     mappings: {
       properties: {
@@ -1262,9 +1369,9 @@ function createIndexMapping(shards = 1, replicas = 0) {
           fields: {
             autocomplete: {
               type: "text",
-              analyzer: "autocomplete_analyzer"
-            }
-          }
+              analyzer: "autocomplete_analyzer",
+            },
+          },
         },
       },
     },
@@ -1273,7 +1380,7 @@ function createIndexMapping(shards = 1, replicas = 0) {
 
 // Helper function to safely format index name
 function formatIndexName(name) {
-  return name.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+  return name.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
 }
 
 // ==================== ELASTICSEARCH MANAGEMENT ENDPOINTS ====================
@@ -1286,7 +1393,7 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
       return res.json({
         indices: [],
         selectedIndex: getSelectedIndex(),
-        message: "Elasticsearch not available"
+        message: "Elasticsearch not available",
       });
     }
 
@@ -1295,22 +1402,22 @@ app.get("/api/admin/es/indices", verifyJwt, async (req, res) => {
     const indicesResponse = await es.cat.indices({
       format: "json",
       h: "health,status,index,uuid,pri,rep,doc.count,store.size",
-      s: "index:asc" // Sort by index name
+      s: "index:asc", // Sort by index name
     });
 
-    const indices = indicesResponse.map(index => ({
+    const indices = indicesResponse.map((index) => ({
       name: index.index,
       health: index.health,
       status: index.status,
       uuid: index.uuid,
-      "doc.count": index['doc.count'] || 0,
-      "store.size": index['store.size'] || 0,
-      isSelected: index.index === getSelectedIndex()
+      "doc.count": index["doc.count"] || 0,
+      "store.size": index["store.size"] || 0,
+      isSelected: index.index === getSelectedIndex(),
     }));
 
     res.json({
       indices: indices,
-      selectedIndex: getSelectedIndex()
+      selectedIndex: getSelectedIndex(),
     });
   } catch (error) {
     console.error("Error fetching Elasticsearch indices:", error);
@@ -1323,11 +1430,12 @@ app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
   const { indexName } = req.params;
 
   // Prevent deletion of system indices and current selected index being used
-  if (indexName.startsWith('.') || indexName === getSelectedIndex()) {
+  if (indexName.startsWith(".") || indexName === getSelectedIndex()) {
     return res.status(400).json({
-      error: indexName === getSelectedIndex() ?
-        "Cannot delete the currently selected index" :
-        "Cannot delete system indices"
+      error:
+        indexName === getSelectedIndex()
+          ? "Cannot delete the currently selected index"
+          : "Cannot delete system indices",
     });
   }
 
@@ -1361,9 +1469,8 @@ app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
 
       // Sync search indices to remove the deleted index from configuration
       try {
-        const { syncSearchIndices } = require('./src/cache/indices-cache');
-        const config = getConfig();
-        await syncSearchIndices(config);
+        const { syncSearchIndices } = require("./src/cache/indices-cache");
+        await syncSearchIndices();
         console.log(`🔄 Synced search indices after deleting index '${indexName}'`);
       } catch (syncError) {
         console.warn(`⚠️ Failed to sync search indices after deleting index:`, syncError.message);
@@ -1374,7 +1481,7 @@ app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
         progress: 1,
         total: 1,
         completed: true,
-        message: `Index '${indexName}' deleted successfully`
+        message: `Index '${indexName}' deleted successfully`,
       });
       console.log(`Task ${taskId} completed: Index '${indexName}' deleted.`);
     } catch (error) {
@@ -1393,7 +1500,7 @@ app.post("/api/admin/es/select-index", verifyJwt, async (req, res) => {
   const { indexName } = req.body;
   console.log(`🔄 Received request to change index to: ${indexName}`);
 
-  if (!indexName || typeof indexName !== 'string') {
+  if (!indexName || typeof indexName !== "string") {
     console.log(`❌ Invalid index name: ${indexName}`);
     return res.status(400).json({ error: "Index name is required" });
   }
@@ -1416,7 +1523,7 @@ app.post("/api/admin/es/select-index", verifyJwt, async (req, res) => {
 
     res.json({
       message: `Selected index set to '${indexName}'`,
-      selectedIndex: getSelectedIndex()
+      selectedIndex: getSelectedIndex(),
     });
   } catch (error) {
     console.error("❌ Error setting selected index:", error);
@@ -1434,16 +1541,12 @@ app.get("/api/admin/es/health", verifyJwt, async (req, res) => {
         version: null,
         storage: null,
         selectedIndex: getSelectedIndex(),
-        message: "Elasticsearch not available"
+        message: "Elasticsearch not available",
       });
     }
 
     const es = getCurrentES();
-    const [health, info, stats] = await Promise.all([
-      es.cluster.health(),
-      es.info(),
-      es.cluster.stats()
-    ]);
+    const [health, info, stats] = await Promise.all([es.cluster.health(), es.info(), es.cluster.stats()]);
 
     res.json({
       cluster: {
@@ -1455,18 +1558,18 @@ app.get("/api/admin/es/health", verifyJwt, async (req, res) => {
         activeShards: health.active_shards,
         relocatingShards: health.relocating_shards,
         initializingShards: health.initializing_shards,
-        unassignedShards: health.unassigned_shards
+        unassignedShards: health.unassigned_shards,
       },
       version: {
         number: info.version.number,
-        luceneVersion: info.version.lucene_version
+        luceneVersion: info.version.lucene_version,
       },
       storage: {
         totalSize: stats.indices.store.size_in_bytes,
         totalSizeReadable: stats.indices.store.size_in_bytes,
-        documentCount: stats.indices.doc.count
+        documentCount: stats.indices.doc.count,
       },
-      selectedIndex: getSelectedIndex()
+      selectedIndex: getSelectedIndex(),
     });
   } catch (error) {
     console.error("Error fetching Elasticsearch health:", error);
@@ -1487,7 +1590,7 @@ app.get("/api/indices/:indexName/details", verifyJwt, async (req, res) => {
     const [settingsResponse, mappingsResponse, statsResponse] = await Promise.all([
       client.indices.getSettings({ index: indexName }),
       client.indices.getMapping({ index: indexName }),
-      client.indices.stats({ index: indexName })
+      client.indices.stats({ index: indexName }),
     ]);
 
     // Safely access stats to prevent crashes on unhealthy indices
@@ -1500,12 +1603,12 @@ app.get("/api/indices/:indexName/details", verifyJwt, async (req, res) => {
       mappings: mappingsResponse[indexName].mappings,
       stats: {
         docs: {
-          count: docsCount
+          count: docsCount,
         },
         store: {
-          size_in_bytes: storeSize
-        }
-      }
+          size_in_bytes: storeSize,
+        },
+      },
     };
 
     res.json(details);
@@ -1533,7 +1636,7 @@ app.get("/api/indices/:indexName/documents", verifyJwt, async (req, res) => {
       from: from,
       size: size,
       body: {
-        query: { match_all: {} }
+        query: { match_all: {} },
       },
     });
 
@@ -1550,8 +1653,6 @@ app.get("/api/indices/:indexName/documents", verifyJwt, async (req, res) => {
   }
 });
 
-
-
 // ==================== PUBLIC ENDPOINTS ====================
 
 // GET total accounts count (public endpoint)
@@ -1559,51 +1660,61 @@ app.get("/api/total-accounts", async (req, res) => {
   try {
     const config = getConfig();
     const searchIndices = config.searchIndices || [];
+    const nodeMetadata = config.nodeMetadata || {};
 
     // If no search indices are configured, return 0
     if (searchIndices.length === 0) {
       return res.json({
         totalAccounts: 0,
         searchIndices: [],
-        message: "No search indices configured"
-      });
-    }
-
-    const esAvailable = await isElasticsearchAvailable();
-    if (!esAvailable) {
-      return res.json({
-        totalAccounts: 0,
-        searchIndices: searchIndices,
-        message: "Elasticsearch not available"
+        message: "No search indices configured",
       });
     }
 
     let totalCount = 0;
     const availableIndices = [];
+    let anySuccess = false;
 
     // Count documents across all configured search indices
-    for (const indexName of searchIndices) {
+    for (const entry of searchIndices) {
+      let nodeName, indexName;
+      if (typeof entry === "object" && entry.node && entry.index) {
+        nodeName = entry.node;
+        indexName = entry.index;
+      } else {
+        // fallback for legacy config
+        nodeName = null;
+        indexName = entry;
+      }
+      let es = null;
+      if (nodeName && nodeMetadata[nodeName] && nodeMetadata[nodeName].nodeUrl) {
+        const { Client } = require("@elastic/elasticsearch");
+        es = new Client({ node: nodeMetadata[nodeName].nodeUrl });
+      } else {
+        es = getCurrentES();
+      }
       try {
-        const es = getCurrentES();
         const response = await es.count({ index: indexName });
         totalCount += response.count;
-        availableIndices.push(indexName);
+        availableIndices.push({ node: nodeName, index: indexName });
+        anySuccess = true;
       } catch (indexError) {
-        console.warn(`Failed to count documents in index ${indexName}:`, indexError.message);
+        console.warn(`Failed to count documents in index ${indexName} (node: ${nodeName}):`, indexError.message);
         // Continue with other indices even if one fails
       }
     }
 
     res.json({
       totalAccounts: totalCount,
-      searchIndices: availableIndices
+      searchIndices: availableIndices,
+      message: anySuccess ? undefined : "Elasticsearch not available",
     });
   } catch (error) {
     console.error("Error fetching total accounts:", error);
     res.json({
       totalAccounts: 0,
       searchIndices: [],
-      message: "Error fetching total accounts"
+      message: "Error fetching total accounts",
     });
   }
 });
@@ -1630,6 +1741,7 @@ app.get("/api/search", async (req, res) => {
     const { q, page = 1, size = 10 } = req.query;
     const config = getConfig();
     const searchIndices = config.searchIndices || [];
+    const nodeMetadata = config.nodeMetadata || {};
     const isAdmin = isAdminRequest(req);
 
     // If no search indices are configured, return empty results
@@ -1638,7 +1750,7 @@ app.get("/api/search", async (req, res) => {
         results: [],
         total: 0,
         searchIndices: [],
-        message: "No search indices configured for search"
+        message: "No search indices configured for search",
       });
     }
 
@@ -1646,27 +1758,35 @@ app.get("/api/search", async (req, res) => {
       return res.status(400).json({ error: "Search query is required" });
     }
 
-    const esAvailable = await isElasticsearchAvailable();
-    if (!esAvailable) {
-      return res.json({
-        results: [],
-        total: 0,
-        searchIndices: searchIndices,
-        message: "Elasticsearch not available"
-      });
-    }
-
     const from = (parseInt(page) - 1) * parseInt(size);
     const searchResults = [];
     let totalResults = 0;
     const searchedIndices = [];
+    let esAvailable = false;
 
-    // Search across all configured search indices
-    for (const indexName of searchIndices) {
+    // Support both old (string) and new ({node,index}) formats
+    const indicesToSearch =
+      Array.isArray(searchIndices) && typeof searchIndices[0] === "object"
+        ? searchIndices
+        : searchIndices.map((idx) => ({ node: "default", index: idx }));
+
+    for (const entry of indicesToSearch) {
+      if (!entry.node || !entry.index) continue;
+      let nodeUrl = nodeMetadata[entry.node]?.nodeUrl;
+      if (!nodeUrl && entry.node.startsWith("http")) nodeUrl = entry.node;
+      if (!nodeUrl) nodeUrl = `http://localhost:9200`;
       try {
-        const es = getCurrentES();
+        const { Client } = require("@elastic/elasticsearch");
+        const es = new Client({ node: nodeUrl });
+        // Check if ES is available for this node
+        try {
+          await es.ping();
+          esAvailable = true;
+        } catch (err) {
+          continue;
+        }
         const response = await es.search({
-          index: indexName,
+          index: entry.index,
           from: from,
           size: parseInt(size),
           body: {
@@ -1689,19 +1809,15 @@ app.get("/api/search", async (req, res) => {
             },
           },
         });
-
         const indexResults = response.hits.hits.map((hit) => {
           const parsedAccount = parseLineForDisplay(hit._source.raw_line);
-
           if (isAdmin) {
-            // For admin users: no masking, include raw_line
             return {
               id: hit._id,
               ...parsedAccount,
               raw_line: hit._source.raw_line,
             };
           } else {
-            // For public users: apply masking, exclude raw_line and other sensitive fields
             const maskedAccount = applyMaskingForPublicSearch(parsedAccount, config);
             return {
               id: hit._id,
@@ -1709,14 +1825,22 @@ app.get("/api/search", async (req, res) => {
             };
           }
         });
-
         searchResults.push(...indexResults);
         totalResults += response.hits.total.value;
-        searchedIndices.push(indexName);
+        searchedIndices.push(entry);
       } catch (indexError) {
-        console.warn(`Failed to search in index ${indexName}:`, indexError.message);
         // Continue with other indices even if one fails
+        continue;
       }
+    }
+
+    if (!esAvailable) {
+      return res.json({
+        results: [],
+        total: 0,
+        searchIndices: searchIndices,
+        message: "Elasticsearch not available",
+      });
     }
 
     // Sort results by relevance (for public search, sort by id for consistency)
@@ -1725,12 +1849,12 @@ app.get("/api/search", async (req, res) => {
     });
 
     // Apply pagination to combined results
-    const paginatedResults = searchResults.slice(from, from + parseInt(size));
+    const paginatedResults = searchResults.slice(0, parseInt(size));
 
     res.json({
       results: paginatedResults,
       total: totalResults,
-      searchIndices: searchedIndices,
+      searchIndices: searchIndices,
       page: parseInt(page),
       size: parseInt(size),
     });
@@ -1738,19 +1862,18 @@ app.get("/api/search", async (req, res) => {
     console.error("Error performing search:", error);
     res.status(500).json({
       error: "Search failed",
-      details: error.message
+      details: error.message,
     });
   }
 });
 
 // Helper function to parse account line for display
 function parseLineForDisplay(rawLine) {
-  if (!rawLine || typeof rawLine !== 'string') {
+  if (!rawLine || typeof rawLine !== "string") {
     return {
-      url: '',
-      username: '',
-      password: '',
-      sourceFile: 'unknown'
+      url: "",
+      username: "",
+      password: "",
     };
   }
 
@@ -1758,56 +1881,52 @@ function parseLineForDisplay(rawLine) {
   const line = rawLine.trim();
 
   // Format 1: url:username:password
-  if (line.includes(':') && line.split(':').length >= 3) {
-    const parts = line.split(':');
+  if (line.includes(":") && line.split(":").length >= 3) {
+    const parts = line.split(":");
     return {
-      url: parts[0] || '',
-      username: parts[1] || '',
-      password: parts.slice(2).join(':') || '', // In case password contains ':'
-      sourceFile: 'parsed'
+      url: parts[0] || "",
+      username: parts[1] || "",
+      password: parts.slice(2).join(":") || "", // In case password contains ':'
     };
   }
 
   // Format 2: username:password@url
-  if (line.includes('@') && line.includes(':')) {
-    const atIndex = line.lastIndexOf('@');
-    const colonIndex = line.indexOf(':');
+  if (line.includes("@") && line.includes(":")) {
+    const atIndex = line.lastIndexOf("@");
+    const colonIndex = line.indexOf(":");
     if (colonIndex < atIndex) {
       return {
-        url: line.substring(atIndex + 1) || '',
-        username: line.substring(0, colonIndex) || '',
-        password: line.substring(colonIndex + 1, atIndex) || '',
-        sourceFile: 'parsed'
+        url: line.substring(atIndex + 1) || "",
+        username: line.substring(0, colonIndex) || "",
+        password: line.substring(colonIndex + 1, atIndex) || "",
       };
     }
   }
 
   // Format 3: email:password (treat email as both url and username)
-  if (line.includes(':') && line.includes('@')) {
-    const parts = line.split(':');
+  if (line.includes(":") && line.includes("@")) {
+    const parts = line.split(":");
     const email = parts[0];
-    const password = parts.slice(1).join(':');
+    const password = parts.slice(1).join(":");
     return {
-      url: email.includes('@') ? email.split('@')[1] : email,
+      url: email.includes("@") ? email.split("@")[1] : email,
       username: email,
-      password: password || '',
-      sourceFile: 'parsed'
+      password: password || "",
     };
   }
 
   // Fallback: treat the entire line as raw data
   return {
     url: line,
-    username: '',
-    password: '',
-    sourceFile: 'unknown'
+    username: "",
+    password: "",
   };
 }
 
 // Helper function to apply masking based on character ratio
 function maskString(str, ratio, minVisible = 2) {
-  if (!str || typeof str !== 'string' || str.length === 0) {
-    return '';
+  if (!str || typeof str !== "string" || str.length === 0) {
+    return "";
   }
 
   if (ratio <= 0) {
@@ -1815,7 +1934,7 @@ function maskString(str, ratio, minVisible = 2) {
   }
 
   if (ratio >= 1) {
-    return '*'.repeat(str.length); // Full masking
+    return "*".repeat(str.length); // Full masking
   }
 
   const totalVisibleChars = Math.max(minVisible, Math.floor(str.length * (1 - ratio)));
@@ -1828,9 +1947,11 @@ function maskString(str, ratio, minVisible = 2) {
   // For very short strings, show beginning and end
   if (str.length <= 4) {
     const visiblePart = str.substring(0, Math.ceil(totalVisibleChars / 2));
-    const maskedPart = '*'.repeat(maskedChars);
-    const endPart = totalVisibleChars > visiblePart.length ?
-      str.substring(str.length - (totalVisibleChars - visiblePart.length)) : '';
+    const maskedPart = "*".repeat(maskedChars);
+    const endPart =
+      totalVisibleChars > visiblePart.length
+        ? str.substring(str.length - (totalVisibleChars - visiblePart.length))
+        : "";
     return visiblePart + maskedPart + endPart;
   }
 
@@ -1839,8 +1960,8 @@ function maskString(str, ratio, minVisible = 2) {
   const endVisible = totalVisibleChars - startVisible;
 
   const startPart = str.substring(0, startVisible);
-  const endPart = endVisible > 0 ? str.substring(str.length - endVisible) : '';
-  const maskedPart = '*'.repeat(maskedChars);
+  const endPart = endVisible > 0 ? str.substring(str.length - endVisible) : "";
+  const maskedPart = "*".repeat(maskedChars);
 
   return startPart + maskedPart + endPart;
 }
@@ -1852,9 +1973,9 @@ function applyMaskingForPublicSearch(accountData, config) {
   const minVisibleChars = config.minVisibleChars || 2;
 
   return {
-    url: maskString(accountData.url || '', maskingRatio, minVisibleChars), // URL is now also masked
-    username: maskString(accountData.username || '', usernameMaskingRatio, minVisibleChars),
-    password: maskString(accountData.password || '', maskingRatio, minVisibleChars),
-    // Note: raw_line, index, highlight, and sourceFile are intentionally excluded for privacy
+    url: maskString(accountData.url || "", maskingRatio, minVisibleChars), // URL is now also masked
+    username: maskString(accountData.username || "", usernameMaskingRatio, minVisibleChars),
+    password: maskString(accountData.password || "", maskingRatio, minVisibleChars),
+    // Note: raw_line, index, highlight are intentionally excluded for privacy
   };
 }

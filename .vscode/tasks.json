@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Restart Backend Server",
+			"command": "powershell.exe Stop-Process -Name node -Force; npm start",
+			"group": "build",
+			"isBackground": false
+		}
+	]
+}

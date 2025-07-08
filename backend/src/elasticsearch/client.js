@@ -9,21 +9,32 @@ let esAvailable = false;
 const singleNodeClients = {}; // Cache for single-node clients
 
 function initializeElasticsearchClients() {
-  // Main client for reading/searching - connects to all nodes
-  const nodes = getConfig('elasticsearchNodes');
-  if (nodes && nodes.length > 0) {
-    es = new Client({ nodes });
-    console.log(`🔍 Initialized main Elasticsearch client with nodes: ${nodes.join(', ')}`);
+  // Always resolve node names to URLs for all client initializations
+  const nodeNames = getConfig("elasticsearchNodes");
+  const nodeMetadata = getConfig("nodeMetadata") || {};
+  const nodeUrls = (nodeNames || [])
+    .map((name) => nodeMetadata[name]?.nodeUrl)
+    .filter(Boolean);
+  if (nodeUrls.length > 0) {
+    es = new Client({ nodes: nodeUrls });
+    console.log(
+      `🔍 Initialized main Elasticsearch client with nodes: ${nodeUrls.join(
+        ", "
+      )}`
+    );
   } else {
     // Fall back to default configuration
     const { DEFAULT_CONFIG } = require("../config");
     const defaultNodes = DEFAULT_CONFIG.elasticsearchNodes;
     es = new Client({ nodes: defaultNodes });
-    console.log(`🔍 Initialized main Elasticsearch client with default nodes: ${defaultNodes.join(', ')}`);
+    console.log(
+      `🔍 Initialized main Elasticsearch client with default nodes: ${defaultNodes.join(
+        ", "
+      )}`
+    );
   }
 
-  // Write client - connects to specific write node
-  const writeNode = getConfig('writeNode');
+  const writeNode = getConfig("writeNode");
   if (writeNode) {
     esWrite = new Client({ node: writeNode });
     console.log(`✍️ Initialized write client for node: ${writeNode}`);
@@ -33,7 +44,31 @@ function initializeElasticsearchClients() {
     const defaultWriteNode = DEFAULT_CONFIG.writeNode;
     if (defaultWriteNode) {
       esWrite = new Client({ node: defaultWriteNode });
-      console.log(`✍️ Initialized write client with default node: ${defaultWriteNode}`);
+      console.log(
+        `✍️ Initialized write client with default node: ${defaultWriteNode}`
+      );
+    } else {
+      console.log("✍️ Using main client for writes");
+      esWrite = es;
+    }
+  }
+  // Write client - connects to specific write node
+  const writeNodeName = getConfig("writeNode");
+  const writeNodeMetadata = nodeMetadata?.[writeNodeName];
+  if (writeNodeMetadata && writeNodeMetadata.nodeUrl) {
+    esWrite = new Client({ node: writeNodeMetadata.nodeUrl });
+    console.log(
+      `✍️ Initialized write client for node: ${writeNodeMetadata.nodeUrl}`
+    );
+  } else {
+    // Fall back to default write node or use main client
+    const { DEFAULT_CONFIG } = require("../config");
+    const defaultWriteNode = DEFAULT_CONFIG.writeNode;
+    if (defaultWriteNode) {
+      esWrite = new Client({ node: defaultWriteNode });
+      console.log(
+        `✍️ Initialized write client with default node: ${defaultWriteNode}`
+      );
     } else {
       console.log("✍️ Using main client for writes");
       esWrite = es;
@@ -44,18 +79,19 @@ function initializeElasticsearchClients() {
 }
 
 function getSingleNodeClient(nodeUrl) {
-  if (singleNodeClients[nodeUrl]) {
-    return singleNodeClients[nodeUrl];
+  // If a node name is passed, resolve to URL
+  const nodeMetadata = getConfig("nodeMetadata") || {};
+  const url = nodeMetadata[nodeUrl]?.nodeUrl || nodeUrl;
+  if (singleNodeClients[url]) {
+    return singleNodeClients[url];
   }
-
   const client = new Client({
-    node: nodeUrl,
+    node: url,
     requestTimeout: 30000,
     sniffOnStart: false,
-    sniffOnConnectionFault: false
+    sniffOnConnectionFault: false,
   });
-
-  singleNodeClients[nodeUrl] = client;
+  singleNodeClients[url] = client;
   return client;
 }
 
@@ -66,13 +102,13 @@ async function isElasticsearchAvailable() {
     await es.ping();
     return true;
   } catch (error) {
-    console.warn('⚠️ Elasticsearch not available:', error.message);
+    console.warn("⚠️ Elasticsearch not available:", error.message);
     return false;
   }
 }
 
 // Use shared formatBytes utility
-const { formatBytes } = require('../utils/format');
+const { formatBytes } = require("../utils/format");
 
 // Helper function to create proper index mapping
 function createIndexMapping(shards = 1, replicas = 0) {
@@ -84,17 +120,17 @@ function createIndexMapping(shards = 1, replicas = 0) {
         analyzer: {
           autocomplete_analyzer: {
             tokenizer: "autocomplete_tokenizer",
-            filter: ["lowercase"]
-          }
+            filter: ["lowercase"],
+          },
         },
         tokenizer: {
           autocomplete_tokenizer: {
             type: "edge_ngram",
             min_gram: 2,
             max_gram: 10,
-          }
-        }
-      }
+          },
+        },
+      },
     },
     mappings: {
       properties: {
@@ -103,9 +139,9 @@ function createIndexMapping(shards = 1, replicas = 0) {
           fields: {
             autocomplete: {
               type: "text",
-              analyzer: "autocomplete_analyzer"
-            }
-          }
+              analyzer: "autocomplete_analyzer",
+            },
+          },
         },
       },
     },
@@ -114,7 +150,7 @@ function createIndexMapping(shards = 1, replicas = 0) {
 
 // Helper function to safely format index name
 function formatIndexName(name) {
-  return name.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+  return name.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
 }
 
 module.exports = {
@@ -125,5 +161,5 @@ module.exports = {
   isElasticsearchAvailable,
   formatBytes,
   createIndexMapping,
-  formatIndexName
+  formatIndexName,
 };
