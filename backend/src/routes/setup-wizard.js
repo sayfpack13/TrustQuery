@@ -547,10 +547,12 @@ router.post('/initialize', verifyJwt, async (req, res) => {
       }
     }
 
-    console.log('[SetupWizard] Setup completed and config saved:', {
-      basePath,
-      detectedPaths
-    });
+    // After setup, verify and sync node metadata
+    try {
+      await clusterManager.verifyNodeMetadata();
+    } catch (metaError) {
+      console.warn('Warning: Failed to verify node metadata after setup:', metaError.message);
+    }
 
     res.json({
       success: true,

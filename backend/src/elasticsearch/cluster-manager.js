@@ -2028,28 +2028,21 @@ async function verifyNodeMetadata() {
     let metadataChanged = false;
     let nodesChanged = false;
     const removedNodes = [];
+    const nodesNeedingUserPaths = [];
 
-    // Check each node in metadata
+    // Check each node in metadata: remove metadata for missing node dirs
     for (const [nodeUrl, metadata] of Object.entries(nodeMetadata)) {
       if (!metadata || !metadata.name) continue;
-
       const nodeName = metadata.name;
       let nodeExists = false;
-
-      // Check if the node directory structure exists
       const env = getEnvAndConfig();
-      const nodeBaseDir = path.join(
-        env.baseElasticsearchPath,
-        "nodes",
-        nodeName
-      );
+      const nodeBaseDir = path.join(env.baseElasticsearchPath, "nodes", nodeName);
       try {
         await require("fs").promises.access(nodeBaseDir);
         nodeExists = true;
       } catch (e) {
         nodeExists = false;
       }
-
       if (!nodeExists) {
         removedNodes.push(nodeName);
         delete nodeMetadata[nodeUrl];
@@ -2057,33 +2050,120 @@ async function verifyNodeMetadata() {
       }
     }
 
-    // Scan the base nodes directory for any existing nodes not in metadata
+    // Scan the base nodes directory for any existing nodes not in metadata or with incomplete metadata/paths
     const env = getEnvAndConfig();
-    if (
-      !env.baseElasticsearchPath ||
-      typeof env.baseElasticsearchPath !== "string"
-    ) {
-      throw new Error(
-        "Invalid baseElasticsearchPath: not set or not a string. Please check your configuration."
-      );
+    if (!env.baseElasticsearchPath || typeof env.baseElasticsearchPath !== "string") {
+      throw new Error("Invalid baseElasticsearchPath: not set or not a string. Please check your configuration.");
     }
     const baseNodesPath = path.join(env.baseElasticsearchPath, "nodes");
     try {
-      const nodeDirs = await require("fs").promises.readdir(baseNodesPath, {
-        withFileTypes: true,
-      });
+      const nodeDirs = await require("fs").promises.readdir(baseNodesPath, { withFileTypes: true });
       for (const dirent of nodeDirs) {
         if (dirent.isDirectory()) {
           const nodeName = dirent.name;
-          const found = Object.values(nodeMetadata).some(
-            (m) => m.name === nodeName
+          // Find metadata by node name
+          const metaKey = Object.keys(nodeMetadata).find(
+            (key) => nodeMetadata[key] && nodeMetadata[key].name === nodeName
           );
-          if (!found) {
-            // Optionally, could add missing nodes to metadata here
-            // For now, just log
-            console.log(
-              `ℹ️ Node directory found with no metadata: ${nodeName}`
-            );
+          let meta = metaKey ? nodeMetadata[metaKey] : null;
+          let needsUser = false;
+          let dataPath, logsPath;
+          // If missing metadata, try to read config from node's config folder
+          if (!meta) {
+            const nodeBaseDir = path.join(env.baseElasticsearchPath, "nodes", nodeName);
+            const configPath = path.join(nodeBaseDir, "config", "elasticsearch.yml");
+            const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
+            const servicePath = path.join(nodeBaseDir, "config", serviceFileName);
+            let configData = {};
+            let flatConfig = {};
+            let clusterName = "trustquery-cluster";
+            let host = "localhost";
+            let port = 9200;
+            let transportPort = 9300;
+            let roles = { master: true, data: true, ingest: true };
+            let heapSize = "1g";
+            try {
+              const configContent = await require("fs").promises.readFile(configPath, "utf8");
+              const yaml = require("yaml");
+              flatConfig = yaml.parse(configContent) || {};
+              clusterName = flatConfig["cluster.name"] || clusterName;
+              host = flatConfig["network.host"] || host;
+              port = parseInt(flatConfig["http.port"] || port);
+              transportPort = parseInt(flatConfig["transport.port"] || transportPort);
+              // Parse roles if present
+              if (flatConfig["node.roles"]) {
+                // Accept both array and string
+                let r = flatConfig["node.roles"];
+                if (typeof r === "string") {
+                  r = r.replace(/\[|\]|\s/g, "").split(",");
+                }
+                if (Array.isArray(r)) {
+                  roles = {
+                    master: r.includes("master"),
+                    data: r.includes("data"),
+                    ingest: r.includes("ingest"),
+                  };
+                }
+              }
+            } catch (e) {
+              flatConfig = {};
+            }
+            // JVM heap size
+            let jvmPath = path.join(nodeBaseDir, "config", "jvm.options");
+            try {
+              const jvmContent = await require("fs").promises.readFile(jvmPath, "utf8");
+              const heapMatch = jvmContent.match(/-Xms([0-9]+[kmgt])/i);
+              heapSize = heapMatch ? heapMatch[1] : "1g";
+            } catch (e) {}
+            dataPath = flatConfig["path.data"] || path.join(nodeBaseDir, "data");
+            logsPath = flatConfig["path.logs"] || path.join(nodeBaseDir, "logs");
+            // Add to nodeMetadata with all relevant fields
+            const nodeUrl = `http://${host}:${port}`;
+            const newMeta = {
+              nodeUrl,
+              name: nodeName,
+              configPath,
+              servicePath,
+              dataPath,
+              logsPath,
+              cluster: clusterName,
+              host,
+              port,
+              transportPort,
+              roles,
+              heapSize,
+            };
+            nodeMetadata[nodeName] = newMeta;
+            meta = newMeta;
+            metadataChanged = true;
+          } else {
+            dataPath = meta.dataPath;
+            logsPath = meta.logsPath;
+            if (!dataPath || !logsPath) {
+              needsUser = true;
+            }
+          }
+          // Check if dataPath/logsPath exist
+          const fsPromises = require("fs").promises;
+          let dataExists = false, logsExists = false;
+          try {
+            if (dataPath) await fsPromises.access(dataPath); dataExists = true;
+          } catch { dataExists = false; }
+          try {
+            if (logsPath) await fsPromises.access(logsPath); logsExists = true;
+          } catch { logsExists = false; }
+          if (!dataExists || !logsExists) {
+            needsUser = true;
+          }
+          if (needsUser) {
+            nodesNeedingUserPaths.push({
+              nodeName,
+              dataPath,
+              logsPath,
+              dataExists,
+              logsExists,
+              hasMetadata: !!meta,
+            });
           }
         }
       }
@@ -2096,7 +2176,7 @@ async function verifyNodeMetadata() {
       await setConfig("nodeMetadata", nodeMetadata);
       console.log(`🗑️ Removed metadata for nodes: ${removedNodes.join(", ")}`);
     }
-    return { removedNodes };
+    return { removedNodes, nodesNeedingUserPaths };
   } catch (error) {
     console.error("❌ Error verifying node metadata:", error);
     throw error;

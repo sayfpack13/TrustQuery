@@ -525,7 +525,7 @@ export default function ClusterManagement({
                 icon={isVerifyingMetadata ? faSpinner : faCog}
                 className={"mr-2" + (isVerifyingMetadata ? " fa-spin" : "")}
               />
-              {isVerifyingMetadata ? "Verifying..." : "Verify Metadata"}
+              {isVerifyingMetadata ? "Repairing..." : "Repair Nodes Metadata"}
             </button>
           </div>
         </div>

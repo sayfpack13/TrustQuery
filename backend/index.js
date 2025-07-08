@@ -635,6 +635,14 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
     let targetNodeUrl;
 
     if (requestedNode && requestedIndex) {
+      // Only allow search if node is running
+      if (!cachedIndices[requestedNode] || !cachedIndices[requestedNode].isRunning) {
+        return res.status(503).json({
+          error: `Node '${requestedNode}' is not running or not reachable`,
+          results: [],
+          total: 0,
+        });
+      }
       // Only allow search if this node/index pair is in configured searchIndices
       const searchIndices = config.searchIndices || [];
       const isAllowed = searchIndices.some((entry) => entry.node === requestedNode && entry.index === requestedIndex);
@@ -709,6 +717,13 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       const { Client } = require("@elastic/elasticsearch");
       es = new Client({ node: targetNodeUrl });
     } else if (requestedNode && !requestedIndex) {
+      if (!cachedIndices[requestedNode] || !cachedIndices[requestedNode].isRunning) {
+        return res.status(503).json({
+          error: `Node '${requestedNode}' is not running or not reachable`,
+          results: [],
+          total: 0,
+        });
+      }
       // Specific node requested, but no specific index - search all indices on that node
       const nodeData = cachedIndices[requestedNode];
       if (!nodeData || !nodeData.nodeUrl) {
@@ -738,6 +753,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       // First check if the index exists on any node
       let indexExists = false;
       for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
+        if (!nodeData.isRunning) continue;
         if (nodeData.indices && nodeData.indices.find((idx) => idx.index === requestedIndex)) {
           indexExists = true;
           break;
@@ -770,6 +786,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       // If all indices are on the same node, use that node's ES client
       const nodeGroups = {};
       for (const entry of searchIndices) {
+        if (!cachedIndices[entry.node] || !cachedIndices[entry.node].isRunning) continue;
         if (!nodeGroups[entry.node]) nodeGroups[entry.node] = [];
         nodeGroups[entry.node].push(entry.index);
       }
@@ -1664,7 +1681,8 @@ app.get("/api/total-accounts", async (req, res) => {
     const availableIndices = [];
     let anySuccess = false;
 
-    // Count documents across all configured search indices
+    // Only count indices on running nodes
+    const cachedIndices = await getCacheFiltered();
     for (const entry of searchIndices) {
       let nodeName, indexName;
       if (typeof entry === "object" && entry.node && entry.index) {
@@ -1674,6 +1692,9 @@ app.get("/api/total-accounts", async (req, res) => {
         // fallback for legacy config
         nodeName = null;
         indexName = entry;
+      }
+      if (nodeName && (!cachedIndices[nodeName] || !cachedIndices[nodeName].isRunning)) {
+        continue; // skip non-running nodes
       }
       let es = null;
       if (nodeName && nodeMetadata[nodeName] && nodeMetadata[nodeName].nodeUrl) {
