@@ -22,6 +22,14 @@ const DEFAULT_CONFIG = {
   // Admin UI settings
   adminSettings: {
   },
+
+  // Add safe defaults for Elasticsearch base path for first-time users
+  elasticsearchConfig: {
+    basePath: path.resolve(__dirname, '../../elasticsearch-nodes')
+  },
+  setupWizard: {
+    basePath: path.resolve(__dirname, '../../elasticsearch-nodes')
+  }
 };
 
 // Configuration state
@@ -32,6 +40,29 @@ async function loadConfig() {
   try {
     const configData = await fs.readFile(CONFIG_FILE, 'utf8');
     config = { ...DEFAULT_CONFIG, ...JSON.parse(configData) };
+
+    // MIGRATION: Ensure critical fields exist for old configs
+    let migrated = false;
+    // Ensure elasticsearchConfig.basePath exists and is a string
+    if (!config.elasticsearchConfig || typeof config.elasticsearchConfig !== 'object') {
+      config.elasticsearchConfig = { basePath: path.resolve(__dirname, '../../elasticsearch-nodes') };
+      migrated = true;
+    } else if (!config.elasticsearchConfig.basePath || typeof config.elasticsearchConfig.basePath !== 'string') {
+      config.elasticsearchConfig.basePath = path.resolve(__dirname, '../../elasticsearch-nodes');
+      migrated = true;
+    }
+    // Ensure setupWizard.basePath exists and is a string
+    if (!config.setupWizard || typeof config.setupWizard !== 'object') {
+      config.setupWizard = { basePath: path.resolve(__dirname, '../../elasticsearch-nodes') };
+      migrated = true;
+    } else if (!config.setupWizard.basePath || typeof config.setupWizard.basePath !== 'string') {
+      config.setupWizard.basePath = path.resolve(__dirname, '../../elasticsearch-nodes');
+      migrated = true;
+    }
+    if (migrated) {
+      console.log('🔄 Migrated old config.json to add missing elasticsearchConfig/setupWizard basePath.');
+      await saveConfig();
+    }
     // Check for important fields
     console.log("✅ Configuration loaded from file and contains all critical fields.");
   } catch (error) {
