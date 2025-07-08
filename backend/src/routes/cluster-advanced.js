@@ -9,6 +9,7 @@ const {
 } = require("../cache/indices-cache");
 const { getES } = require("../elasticsearch/client");
 const clusterManager = require("../elasticsearch/cluster-manager");
+const { buildNodeMetadata } = clusterManager;
 
 const router = express.Router();
 
@@ -338,22 +339,10 @@ router.post("/create", verifyJwt, async (req, res) => {
       await setConfig("writeNode", nodeNames[0]); // Set first node as write node
     }
 
-    // Store node metadata (keyed by node name)
+    // Store node metadata (keyed by node name) using canonical builder
     const nodeMetadata = {};
     createdNodes.forEach((node) => {
-      nodeMetadata[node.name] = {
-        nodeUrl: node.nodeUrl,
-        name: node.name,
-        configPath: node.configPath,
-        servicePath: node.servicePath,
-        dataPath: node.dataPath,
-        logsPath: node.logsPath,
-        host: node.host,
-        port: node.port,
-        transportPort: node.transportPort,
-        roles: node.roles,
-        cluster: node.cluster || "trustquery-cluster",
-      };
+      nodeMetadata[node.name] = buildNodeMetadata(node);
     });
     await setConfig("nodeMetadata", nodeMetadata);
 

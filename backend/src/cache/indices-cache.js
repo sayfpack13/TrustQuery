@@ -294,12 +294,14 @@ async function getCacheFiltered() {
 
   // Convert the cache format to match what the validation code expects
   const processedCache = {};
-  // Get nodeMetadata from config for nodeUrl injection
+
+  // Use canonical node metadata structure for all nodes
+  const { buildNodeMetadata } = require("../elasticsearch/cluster-manager");
   const nodeMetadata = (config && config.nodeMetadata) || {};
 
   for (const [nodeName, nodeData] of Object.entries(cache)) {
-    // Get nodeUrl and other metadata from config
-    const meta = nodeMetadata[nodeName] || {};
+    // Get canonical metadata for this node
+    const meta = buildNodeMetadata(nodeMetadata[nodeName] || { name: nodeName });
     if (nodeData && nodeData.indices) {
       // Convert indices object to array format for validation
       const indicesArray = Array.isArray(nodeData.indices)
@@ -313,22 +315,12 @@ async function getCacheFiltered() {
       processedCache[nodeName] = {
         ...nodeData,
         indices: indicesArray,
-        nodeUrl: meta.nodeUrl,
-        host: meta.host,
-        port: meta.port,
-        transportPort: meta.transportPort,
-        cluster: meta.cluster,
-        roles: meta.roles,
+        ...meta,
       };
     } else {
       processedCache[nodeName] = {
         ...nodeData,
-        nodeUrl: meta.nodeUrl,
-        host: meta.host,
-        port: meta.port,
-        transportPort: meta.transportPort,
-        cluster: meta.cluster,
-        roles: meta.roles,
+        ...meta,
       };
     }
   }

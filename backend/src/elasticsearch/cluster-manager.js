@@ -5,6 +5,47 @@ const { execSync, spawn } = require("child_process");
 const { getConfig, setConfig } = require("../config");
 const yaml = require("yaml");
 
+
+/**
+ * Build canonical node metadata object from any node config or detection source.
+ * Ensures all required fields are present and consistent.
+ * @param {object} nodeConfig - Raw node config or detection result
+ * @returns {object} Canonical node metadata
+ */
+function buildNodeMetadata(nodeConfig) {
+  if (!nodeConfig) return {};
+  const {
+    name,
+    configPath,
+    servicePath,
+    dataPath,
+    logsPath,
+    cluster,
+    host,
+    port,
+    transportPort,
+    roles,
+    heapSize,
+    nodeUrl,
+  } = nodeConfig;
+  const url = nodeUrl || (host && port ? `http://${host}:${port}` : undefined);
+  return {
+    nodeUrl: url,
+    name: name || '',
+    configPath: configPath || '',
+    servicePath: servicePath || '',
+    dataPath: dataPath || '',
+    logsPath: logsPath || '',
+    cluster: cluster || 'trustquery-cluster',
+    host: host || 'localhost',
+    port: port !== undefined ? port : 9200,
+    transportPort: transportPort !== undefined ? transportPort : 9300,
+    roles: roles || { master: true, data: true, ingest: true },
+    heapSize: heapSize || '1g',
+  };
+}
+
+
 // Helper to get environment and config info
 function getEnvAndConfig() {
   const config = getConfig();
@@ -240,40 +281,29 @@ async function createNode(nodeConfig) {
 
     console.log(`✅ Created node configuration: ${name}`);
 
-    const nodeUrl = `http://${host}:${port}`;
-    const newNodeMetadata = {
-      [name]: {
-        nodeUrl,
-        name,
-        dataPath: finalDataPath,
-        logsPath: finalLogsPath,
-        cluster: clusterName, // Use 'cluster' for consistency with frontend and config.json
-        port,
-        transportPort,
-        configPath,
-        servicePath,
-        heapSize, // <-- Save heap size in metadata
-      },
-    };
-
+    // Build canonical metadata
+    const metadata = buildNodeMetadata({
+      nodeUrl: `http://${host}:${port}`,
+      name,
+      dataPath: finalDataPath,
+      logsPath: finalLogsPath,
+      cluster: clusterName,
+      port,
+      transportPort,
+      configPath,
+      servicePath,
+      heapSize,
+      host,
+      roles,
+    });
     // Save metadata to config (keyed by node name)
     const currentConfig = getConfig();
     const updatedMetadata = {
       ...currentConfig.nodeMetadata,
-      ...newNodeMetadata,
+      [name]: metadata,
     };
     setConfig("nodeMetadata", updatedMetadata);
-
-    return {
-      name,
-      nodeUrl,
-      configPath,
-      servicePath,
-      dataPath: finalDataPath,
-      logsPath: finalLogsPath,
-      port,
-      transportPort,
-    };
+    return metadata;
   } catch (error) {
     console.error(`❌ Failed to create node ${nodeConfig.name}:`, error);
     throw error;
@@ -1051,17 +1081,24 @@ function getNodeMetadata(nodeName) {
   const nodeMetadata = config.nodeMetadata || {};
   // Use node name as key
   if (nodeMetadata[nodeName]) {
-    return nodeMetadata[nodeName];
+    return buildNodeMetadata(nodeMetadata[nodeName]);
   }
-  // Return default paths using new organized structure if not in metadata
+  // Return canonical default structure if not in metadata
   const nodeBaseDir = path.join(env.baseElasticsearchPath, "nodes", nodeName);
   const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
-  return {
-    dataPath: path.join(nodeBaseDir, "data"),
-    logsPath: path.join(nodeBaseDir, "logs"),
+  return buildNodeMetadata({
+    name: nodeName,
     configPath: path.join(nodeBaseDir, "config", "elasticsearch.yml"),
     servicePath: path.join(nodeBaseDir, "config", serviceFileName),
-  };
+    dataPath: path.join(nodeBaseDir, "data"),
+    logsPath: path.join(nodeBaseDir, "logs"),
+    cluster: env.config.elasticsearchConfig?.cluster || 'trustquery-cluster',
+    host: 'localhost',
+    port: 9200,
+    transportPort: 9300,
+    roles: { master: true, data: true, ingest: true },
+    heapSize: '1g',
+  });
 }
 
 /**
@@ -2118,9 +2155,8 @@ async function verifyNodeMetadata() {
             dataPath = flatConfig["path.data"] || path.join(nodeBaseDir, "data");
             logsPath = flatConfig["path.logs"] || path.join(nodeBaseDir, "logs");
             // Add to nodeMetadata with all relevant fields
-            const nodeUrl = `http://${host}:${port}`;
-            const newMeta = {
-              nodeUrl,
+            const newMeta = buildNodeMetadata({
+              nodeUrl: `http://${host}:${port}`,
               name: nodeName,
               configPath,
               servicePath,
@@ -2132,7 +2168,7 @@ async function verifyNodeMetadata() {
               transportPort,
               roles,
               heapSize,
-            };
+            });
             nodeMetadata[nodeName] = newMeta;
             meta = newMeta;
             metadataChanged = true;
@@ -2174,7 +2210,6 @@ async function verifyNodeMetadata() {
     }
     if (metadataChanged) {
       await setConfig("nodeMetadata", nodeMetadata);
-      console.log(`🗑️ Removed metadata for nodes: ${removedNodes.join(", ")}`);
     }
     return { removedNodes, nodesNeedingUserPaths };
   } catch (error) {
@@ -2248,4 +2283,5 @@ module.exports = {
   copyDirectory,
   verifyNodeMetadata,
   getNodeHeapSize,
+  buildNodeMetadata
 };

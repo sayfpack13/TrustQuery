@@ -11,9 +11,10 @@ const singleNodeClients = {}; // Cache for single-node clients
 function initializeElasticsearchClients() {
   // Always resolve node names to URLs for all client initializations
   const nodeNames = getConfig("elasticsearchNodes");
+  const { buildNodeMetadata } = require("./cluster-manager");
   const nodeMetadata = getConfig("nodeMetadata") || {};
   const nodeUrls = (nodeNames || [])
-    .map((name) => nodeMetadata[name]?.nodeUrl)
+    .map((name) => buildNodeMetadata(nodeMetadata[name] || { name })?.nodeUrl)
     .filter(Boolean);
   if (nodeUrls.length > 0) {
     es = new Client({ nodes: nodeUrls });
@@ -54,7 +55,7 @@ function initializeElasticsearchClients() {
   }
   // Write client - connects to specific write node
   const writeNodeName = getConfig("writeNode");
-  const writeNodeMetadata = nodeMetadata?.[writeNodeName];
+  const writeNodeMetadata = buildNodeMetadata(nodeMetadata?.[writeNodeName] || { name: writeNodeName });
   if (writeNodeMetadata && writeNodeMetadata.nodeUrl) {
     esWrite = new Client({ node: writeNodeMetadata.nodeUrl });
     console.log(
@@ -81,7 +82,8 @@ function initializeElasticsearchClients() {
 function getSingleNodeClient(nodeUrl) {
   // If a node name is passed, resolve to URL
   const nodeMetadata = getConfig("nodeMetadata") || {};
-  const url = nodeMetadata[nodeUrl]?.nodeUrl || nodeUrl;
+  const { buildNodeMetadata } = require("./cluster-manager");
+  const url = buildNodeMetadata(nodeMetadata[nodeUrl] || { name: nodeUrl })?.nodeUrl || nodeUrl;
   if (singleNodeClients[url]) {
     return singleNodeClients[url];
   }
