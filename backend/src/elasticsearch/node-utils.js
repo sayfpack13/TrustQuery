@@ -8,8 +8,27 @@ async function isNodeRunning(nodeName) {
   const nodeMetadata = getConfig("nodeMetadata") || {};
   const metadata = nodeMetadata[nodeName];
   if (!metadata) return false;
-  const host = metadata.host || "localhost";
-  const port = metadata.port || 9200;
+  // Always prefer host/port if available, else parse nodeUrl
+  let host = null;
+  let port = null;
+  if (metadata.host && metadata.port) {
+    host = metadata.host;
+    port = metadata.port;
+  } else if (metadata.nodeUrl) {
+    try {
+      const urlObj = new URL(metadata.nodeUrl);
+      host = urlObj.hostname;
+      port = parseInt(urlObj.port) || 9200;
+    } catch (e) {
+      host = "localhost";
+      port = 9200;
+    }
+  } else {
+    host = "localhost";
+    port = 9200;
+  }
+  // Log the host/port being checked
+  console.log(`[isNodeRunning] Checking node '${nodeName}' at ${host}:${port}`);
   // First, check if the port is open
   const portOpen = await isPortOpen(host, port, 1000);
   if (!portOpen) return false;

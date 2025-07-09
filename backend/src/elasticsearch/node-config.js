@@ -37,7 +37,7 @@ function generateNodeConfig(nodeConfig) {
 # Generated automatically by TrustQuery
 
 # Cluster settings
-cluster.name: ${nodeConfig.clusterName || "trustquery-cluster"}
+cluster.name: ${nodeConfig.cluster || "trustquery-cluster"}
 node.name: ${nodeConfig.name}
 
 # Network settings

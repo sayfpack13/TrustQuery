@@ -152,13 +152,12 @@ export default function NodeDetailsModal({
 
     try {
       if (node.isRunning) {
-        // For running nodes, fetch live data first, then update cache
-        await fetchLiveNodeIndices(false);
-
-        // Trigger a centralized cache refresh
+        // Trigger a centralized cache refresh for all nodes
         if (onRefreshNodes) {
           await onRefreshNodes(true);
         }
+        // After cache refresh, fetch live indices for this node
+        await fetchLiveNodeIndices(false);
       } else {
         // For offline nodes, just update from cached data
         fetchCachedNodeIndices();
@@ -370,6 +369,7 @@ export default function NodeDetailsModal({
   }
 
   const renderContent = () => {
+    const isStarting = node.isStarting || node.status === "starting" || node.cacheStatus === "starting";
     switch (activeTab) {
       case "overview":
         return (
@@ -384,13 +384,22 @@ export default function NodeDetailsModal({
                 <div className="flex items-center justify-between">
                   <span className="text-neutral-300">Status:</span>
                   <div className="flex items-center space-x-2">
-                    <div
-                      className={`w-3 h-3 rounded-full ${node.isRunning ? "bg-green-500" : "bg-red-500"
-                        }`}
-                    ></div>
-                    <span className="text-white font-medium">
-                      {node.isRunning ? "Running" : "Stopped"}
-                    </span>
+                    {isStarting ? (
+                      <>
+                        <FontAwesomeIcon icon={faCircleNotch} spin className="text-blue-400 text-xs mr-1" />
+                        <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div>
+                        <span className="text-white font-medium">Starting</span>
+                      </>
+                    ) : (
+                      <>
+                        <div
+                          className={`w-3 h-3 rounded-full ${node.isRunning ? "bg-green-500" : "bg-red-500"}`}
+                        ></div>
+                        <span className="text-white font-medium">
+                          {node.isRunning ? "Running" : "Stopped"}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 

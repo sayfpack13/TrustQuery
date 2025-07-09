@@ -70,7 +70,7 @@ export default function AdminDashboard({ onLogout }) {
       try {
         await Promise.all([
           fetchAllTasks(),
-          clusterManagement.fetchLocalNodes(),
+          clusterManagement.fetchClusters(), // Fetch clusters on mount
         ]);
         // Check first time use and setup completion from backend
         const status = await axiosClient.get("/api/setup-wizard/status");
@@ -93,21 +93,15 @@ export default function AdminDashboard({ onLogout }) {
       }
     };
     initializeDashboard();
-  }, [fetchAllTasks]);
+  }, [fetchAllTasks, clusterManagement.fetchClusters]);
 
   // Fetch additional data when cluster tab is active (only if data is stale)
   useEffect(() => {
-    // Only fetch cluster data if we don't have any nodes loaded yet
-    // This prevents unnecessary API calls when switching between tabs
-    if (
-      (activeTab === "cluster" || activeTab === "files") &&
-      !clusterManagement.clusterLoading &&
-      (!clusterManagement.localNodes ||
-        clusterManagement.localNodes.length === 0)
-    ) {
+    if (activeTab === "cluster" || activeTab === "files") {
       clusterManagement.fetchLocalNodes();
     }
-  }, [activeTab]); // Remove clusterManagement.fetchLocalNodes from dependency array to prevent loops
+    // eslint-disable-next-line
+  }, [activeTab, clusterManagement.fetchLocalNodes]);
 
   // (REMOVED) Hide setup banner if nodes are configured
 
@@ -125,9 +119,7 @@ export default function AdminDashboard({ onLogout }) {
 
     try {
       // Fetch latest node details before editing
-      const latestNodeDetails = await clusterManagement.getNodeDetails(
-        node.name
-      );
+      const latestNodeDetails = await clusterManagement.fetchLocalNodes(node.name); // Use fetchLocalNodes directly
       setNodeToEdit(latestNodeDetails);
       setShowLocalNodeManager(true);
     } catch (error) {
@@ -245,7 +237,7 @@ export default function AdminDashboard({ onLogout }) {
                       ? "border-primary text-primary"
                       : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
                   } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
-                  disabled={!setupCompleted || isAnyTaskRunning}
+                  disabled={!setupCompleted}
                 >
                   {isAnyTaskRunning && (
                     <FontAwesomeIcon
@@ -264,7 +256,7 @@ export default function AdminDashboard({ onLogout }) {
                       ? "border-primary text-primary"
                       : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
                   } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
-                  disabled={!setupCompleted || isAnyTaskRunning}
+                  disabled={!setupCompleted}
                 >
                   {isAnyTaskRunning && (
                     <FontAwesomeIcon
@@ -281,7 +273,7 @@ export default function AdminDashboard({ onLogout }) {
                       ? "border-primary text-primary"
                       : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
                   } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
-                  disabled={!setupCompleted || isAnyTaskRunning}
+                  disabled={!setupCompleted}
                 >
                   {isAnyTaskRunning && (
                     <FontAwesomeIcon
@@ -299,7 +291,7 @@ export default function AdminDashboard({ onLogout }) {
                       ? "border-primary text-primary"
                       : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
                   } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
-                  disabled={!setupCompleted || isAnyTaskRunning}
+                  disabled={!setupCompleted}
                 >
                   {isAnyTaskRunning && (
                     <FontAwesomeIcon
@@ -359,6 +351,8 @@ export default function AdminDashboard({ onLogout }) {
                   deleteCluster={clusterManagement.deleteCluster}
                   fetchAllTasks={fetchAllTasks}
                   tasksList={tasksList}
+                  selectedCluster={clusterManagement.selectedCluster}
+                  setSelectedCluster={clusterManagement.setSelectedCluster}
                 />
               )}
 
@@ -424,9 +418,9 @@ export default function AdminDashboard({ onLogout }) {
                     </label>
                     <input
                       type="url"
-                      value={clusterManagement.newNodeUrl}
+                      value={clusterManagement.enhancedNodesData.newNodeUrl} // Use enhancedNodesData
                       onChange={(e) =>
-                        clusterManagement.setNewNodeUrl(e.target.value)
+                        clusterManagement.enhancedNodesData.setNewNodeUrl(e.target.value)
                       }
                       placeholder="http://localhost:9200"
                       className="w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -451,13 +445,13 @@ export default function AdminDashboard({ onLogout }) {
                       onClick={async () => {
                         if (setupCompleted) {
                           setIsAddingNode && setIsAddingNode(true);
-                          await clusterManagement.handleAddNode();
+                          await clusterManagement.enhancedNodesData.handleAddNode(); // Use enhancedNodesData
                           setShowAddNodeModal(false);
                           setIsAddingNode && setIsAddingNode(false);
                         }
                       }}
                       disabled={
-                        !clusterManagement.newNodeUrl.trim() ||
+                        !clusterManagement.enhancedNodesData.newNodeUrl.trim() ||
                         !setupCompleted ||
                         (typeof isAddingNode !== "undefined" && isAddingNode)
                       }
@@ -491,8 +485,8 @@ export default function AdminDashboard({ onLogout }) {
             show={showNodeDetailsModal && setupCompleted}
             onClose={handleCloseNodeDetails}
             node={selectedNodeForDetails}
-            enhancedNodesData={clusterManagement.enhancedNodesData || {}}
-            onRefreshNodes={clusterManagement.fetchLocalNodes}
+            enhancedNodesData={clusterManagement.enhancedNodesData || {}} // Use enhancedNodesData
+            onRefreshNodes={clusterManagement.fetchLocalNodes} // Use fetchLocalNodes
             disabled={!setupCompleted}
           />
 
@@ -504,7 +498,7 @@ export default function AdminDashboard({ onLogout }) {
               onComplete={() => {
                 setShowSetupWizard(false);
                 setSetupCompleted(true); // Instantly unlock dashboard after /initialize
-                clusterManagement.fetchLocalNodes(); // Refresh nodes after setup
+                clusterManagement.fetchClusters(); // Refresh clusters after setup
                 showNotification(
                   "success",
                   "Cluster setup completed successfully!",

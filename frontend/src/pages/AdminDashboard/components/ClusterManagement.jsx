@@ -53,6 +53,8 @@ export default function ClusterManagement({
   deleteCluster,
   fetchAllTasks,
   tasksList = [], // <-- add default
+  selectedCluster,
+  setSelectedCluster
 }) {
   // Use the enhanced data from the hook instead of local state
   const enhancedNodesData = enhancedNodesDataProp || {};
@@ -65,7 +67,7 @@ export default function ClusterManagement({
   const [deletingNodeName, setDeletingNodeName] = useState(null); // Track which node is being deleted
 
   // Add state for cluster filtering
-  const [selectedCluster, setSelectedCluster] = useState("all");
+  // const [selectedCluster, setSelectedCluster] = useState("all"); // REMOVED
 
   // Keep selectedCluster in sync with clustersList (array of objects)
   useEffect(() => {
@@ -76,7 +78,7 @@ export default function ClusterManagement({
     ) {
       setSelectedCluster("all");
     }
-  }, [clustersList, selectedCluster]);
+  }, [clustersList, selectedCluster, setSelectedCluster]);
 
   // Add state for cluster management
   const [showCreateClusterModal, setShowCreateClusterModal] = useState(false);
@@ -191,13 +193,17 @@ export default function ClusterManagement({
     return ["all", ...clustersList.map((c) => c.name)];
   };
 
-  // Add a function to filter nodes by cluster
-  const getFilteredNodes = () => {
-    if (selectedCluster === "all") {
-      return localNodes;
-    }
-    return localNodes.filter((node) => node.cluster === selectedCluster);
-  };
+  // Remove this useEffect to prevent fetchLocalNodes loop
+  // useEffect(() => {
+  //   if (selectedCluster === "all") {
+  //     fetchLocalNodes(false, null);
+  //   } else {
+  //     fetchLocalNodes(false, selectedCluster);
+  //   }
+  // }, [selectedCluster, fetchLocalNodes]);
+
+  // No need to filter nodes in the UI anymore, just use localNodes
+  const getFilteredNodes = () => localNodes;
 
   // Handle creating a new cluster
   const handleCreateCluster = async () => {
@@ -1092,12 +1098,15 @@ export default function ClusterManagement({
                       ? enhancedData.indices.length
                       : 0;
                     const nodeRoles = formatNodeRoles(node.roles);
+                    const isStarting = node.isStarting || node.status === "starting" || node.cacheStatus === "starting";
 
                     return (
                       <div
                         key={node.name}
                         className={`bg-neutral-800 rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 ease-in-out border-2 ${
-                          node.isRunning
+                          isStarting
+                            ? "border-blue-500"
+                            : node.isRunning
                             ? indicesCount > 0
                               ? "border-green-500"
                               : "border-yellow-500"
@@ -1116,14 +1125,18 @@ export default function ClusterManagement({
                                 {/* Health indicator badge */}
                                 <div
                                   className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-neutral-800 ${
-                                    node.isRunning
+                                    isStarting
+                                      ? "bg-blue-500 animate-pulse"
+                                      : node.isRunning
                                       ? indicesCount > 0
                                         ? "bg-green-500"
                                         : "bg-yellow-500"
                                       : "bg-red-500"
                                   }`}
                                   title={
-                                    node.isRunning
+                                    isStarting
+                                      ? "Node is starting..."
+                                      : node.isRunning
                                       ? indicesCount > 0
                                         ? "Healthy - Running with data"
                                         : "Warning - Running but no indices"
@@ -1164,16 +1177,24 @@ export default function ClusterManagement({
                           <div className="mb-4 pb-4 border-b border-neutral-700">
                             <div className="flex justify-between items-center">
                               <div className="flex items-center space-x-2">
-                                <FontAwesomeIcon
-                                  icon={faCircle}
-                                  className={`${
-                                    node.isRunning
-                                      ? "text-green-500"
-                                      : "text-red-500"
-                                  } text-xs`}
-                                />
+                                {isStarting ? (
+                                  <FontAwesomeIcon icon={faSpinner} spin className="text-blue-400 text-xs mr-1" />
+                                ) : (
+                                  <FontAwesomeIcon
+                                    icon={faCircle}
+                                    className={`${
+                                      node.isRunning
+                                        ? "text-green-500"
+                                        : "text-red-500"
+                                    } text-xs`}
+                                  />
+                                )}
                                 <span className="text-sm font-semibold text-white">
-                                  {node.isRunning ? "Running" : "Stopped"}
+                                  {isStarting
+                                    ? "Starting"
+                                    : node.isRunning
+                                    ? "Running"
+                                    : "Stopped"}
                                 </span>
                               </div>
                               {enhancedData.lastCacheUpdate && (
@@ -1363,9 +1384,22 @@ export default function ClusterManagement({
                           {/* Actions */}
                           <div className="mt-6 flex items-center justify-between space-x-2">
                             <div className="flex space-x-2">
-                              {node.isRunning ? (
+                              {isStarting ? (
                                 <button
-                                  onClick={() => handleStopLocalNode(node.name)}
+                                  disabled
+                                  className="bg-blue-600 text-white px-6 py-2 rounded-lg flex items-center space-x-2 opacity-70 cursor-not-allowed"
+                                >
+                                  <FontAwesomeIcon icon={faSpinner} spin className="mr-2" />
+                                  Starting...
+                                </button>
+                              ) : node.isRunning ? (
+                                <button
+                                  onClick={async () => {
+                                    await handleStopLocalNode(node.name);
+                                    // Always refresh node status after stop
+                                    await fetchLocalNodes();
+                                    if (typeof fetchAllTasks === 'function') fetchAllTasks();
+                                  }}
                                   disabled={isLoading}
                                   className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2 disabled:bg-neutral-600 disabled:cursor-not-allowed"
                                 >
@@ -1379,6 +1413,8 @@ export default function ClusterManagement({
                                 <button
                                   onClick={async () => {
                                     await handleStartLocalNode(node.name);
+                                    // Always refresh node status after start
+                                    await fetchLocalNodes();
                                     if (typeof fetchAllTasks === 'function') fetchAllTasks();
                                   }}
                                   disabled={isLoading || isNodeTaskRunning(node.name)}
