@@ -30,15 +30,18 @@ async function createNode(nodeConfig) {
     await fs.mkdir(dataDir, { recursive: true });
     await fs.mkdir(logsDir, { recursive: true });
 
-    // On Linux, ensure elasticsearch user owns the data and logs directories
+    // On Linux, ensure elasticsearch user owns the config, data, and logs directories
     if (process.platform === 'linux') {
       const { exec } = require('child_process');
       await new Promise((resolve, reject) => {
-        exec(`chown -R elasticsearch:elasticsearch "${dataDir}"`, (err) => {
+        exec(`chown -R elasticsearch:elasticsearch "${configDir}"`, (err) => {
           if (err) return reject(err);
-          exec(`chown -R elasticsearch:elasticsearch "${logsDir}"`, (err2) => {
+          exec(`chown -R elasticsearch:elasticsearch "${dataDir}"`, (err2) => {
             if (err2) return reject(err2);
-            resolve();
+            exec(`chown -R elasticsearch:elasticsearch "${logsDir}"`, (err3) => {
+              if (err3) return reject(err3);
+              resolve();
+            });
           });
         });
       });
