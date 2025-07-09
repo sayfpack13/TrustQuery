@@ -244,7 +244,17 @@ async function stopNode(nodeName) {
         if (fs.existsSync(pidFile)) {
           const pid = parseInt(fs.readFileSync(pidFile, "utf8"));
           try {
-            process.kill(pid);
+            if (process.platform === 'linux') {
+              const { execSync } = require('child_process');
+              try {
+                execSync(`sudo kill -9 ${pid}`);
+              } catch (killErr) {
+                console.error(`Failed to kill process with PID from pid file using sudo: ${pid}`, killErr);
+                throw killErr;
+              }
+            } else {
+              process.kill(pid);
+            }
             return { success: true, message: `Node ${nodeName} stopped successfully` };
           } catch (err) {
             console.error(`Failed to kill process with PID from pid file: ${pid}`, err);
@@ -270,7 +280,17 @@ async function stopNode(nodeName) {
           }
           if (pid && !isNaN(pid)) {
             try {
-              process.kill(pid);
+              if (process.platform === 'linux') {
+                const { execSync } = require('child_process');
+                try {
+                  execSync(`sudo kill -9 ${pid}`);
+                } catch (killErr) {
+                  console.error(`Failed to kill process found by port using sudo: ${pid}`, killErr);
+                  throw killErr;
+                }
+              } else {
+                process.kill(pid);
+              }
               return { success: true, message: `Node ${nodeName} stopped successfully (by port fallback)` };
             } catch (killErr) {
               console.error(`Failed to kill process found by port: ${pid}`, killErr);
