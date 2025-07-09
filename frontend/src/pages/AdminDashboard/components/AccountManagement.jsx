@@ -14,6 +14,7 @@ import {
   faFilter,
   faRefresh,
   faSpinner,
+  faSitemap,
 } from "@fortawesome/free-solid-svg-icons";
 import buttonStyles from "../../../components/ButtonStyles";
 
@@ -21,6 +22,7 @@ export default function AccountManagement({
   showNotification,
   isAnyTaskRunning,
   enhancedNodesData = {},
+  clustersList = [],
   disabled = false,
 }) {
   // Spinner for loading states
@@ -34,26 +36,48 @@ export default function AccountManagement({
   const [total, setTotal] = useState(0);
   const pageSize = 20;
 
-  // Node and index filtering state
+
+  // Cluster, node, and index filtering state
+  const [selectedCluster, setSelectedCluster] = useState("");
   const [selectedNode, setSelectedNode] = useState("");
-  // Use node+index pair for unique selection
   const [selectedNodeIndex, setSelectedNodeIndex] = useState(""); // format: nodeName::indexName
 
-  // Use enhancedNodesData prop to extract available nodes and indices
+
+  // Filter nodes by selected cluster
   const availableNodes = React.useMemo(() => {
+    if (selectedCluster) {
+      // Only show nodes that belong to the selected cluster
+      return Object.entries(enhancedNodesData)
+        .filter(([nodeName, nodeData]) => {
+          // Defensive: nodeData.cluster may be undefined/null
+          return (nodeData.cluster || "trustquery-cluster") === selectedCluster;
+        })
+        .map(([nodeName, nodeData]) => ({
+          name: nodeName,
+          url: nodeData.nodeUrl,
+          isRunning: nodeData.isRunning,
+          indices: nodeData.indices || [],
+          cluster: nodeData.cluster,
+        }));
+    }
+    // If no cluster selected, show all nodes
     return Object.entries(enhancedNodesData).map(([nodeName, nodeData]) => ({
       name: nodeName,
       url: nodeData.nodeUrl,
       isRunning: nodeData.isRunning,
       indices: nodeData.indices || [],
+      cluster: nodeData.cluster,
     }));
-  }, [enhancedNodesData]);
+  }, [enhancedNodesData, selectedCluster]);
 
-  // Build unique node+index pairs for selection
+  // Build unique node+index pairs for selection, filtered by cluster
   const availableNodeIndices = React.useMemo(() => {
     const all = [];
     Object.entries(enhancedNodesData).forEach(([nodeName, nodeData]) => {
-      if (nodeData.indices) {
+      if (
+        (!selectedCluster || nodeData.cluster === selectedCluster || (nodeData.cluster == null && selectedCluster === "trustquery-cluster")) &&
+        nodeData.indices
+      ) {
         nodeData.indices.forEach((index) => {
           all.push({
             nodeName,
@@ -64,7 +88,7 @@ export default function AccountManagement({
       }
     });
     return all;
-  }, [enhancedNodesData]);
+  }, [enhancedNodesData, selectedCluster]);
 
   // Password visibility state for the main table (per-row, overridden by global toggle)
   const [hiddenPasswords, setHiddenPasswords] = useState({});
@@ -97,7 +121,14 @@ export default function AccountManagement({
     try {
       setLoading(true);
 
-      // Check if any nodes are running before making the request
+      // If no nodes for selected cluster, render empty
+      if (selectedCluster && availableNodes.length === 0) {
+        setAccounts([]);
+        setTotal(0);
+        return;
+      }
+
+      // If no nodes are running, render empty
       if (!anyNodesRunning) {
         setAccounts([]);
         setTotal(0);
@@ -109,7 +140,14 @@ export default function AccountManagement({
         return;
       }
 
-      // Parse node+index selection
+      // If all nodes for this cluster have no indices, render empty
+      if (availableNodes.length > 0 && availableNodes.every(n => !n.indices || n.indices.length === 0)) {
+        setAccounts([]);
+        setTotal(0);
+        return;
+      }
+
+      // Parse cluster, node+index selection
       const params = { page, size: pageSize };
       let node = selectedNode;
       let index = "";
@@ -118,6 +156,7 @@ export default function AccountManagement({
         node = n;
         index = i;
       }
+      if (selectedCluster) params.cluster = selectedCluster;
 
       // Check if selected node is running before making the request
       if (node) {
@@ -186,6 +225,7 @@ export default function AccountManagement({
     selectedNodeIndex,
     availableNodes,
     anyNodesRunning,
+    selectedCluster
   ]);
 
   // Add refresh function
@@ -200,10 +240,15 @@ export default function AccountManagement({
   };
 
   useEffect(() => {
-    if (availableNodes.length > 0) {
-      fetchAccounts();
+    // If cluster has no nodes, or all nodes have no indices, clear accounts immediately
+    if ((selectedCluster && availableNodes.length === 0) ||
+        (availableNodes.length > 0 && availableNodes.every(n => !n.indices || n.indices.length === 0))) {
+      setAccounts([]);
+      setTotal(0);
+      return;
     }
-  }, [fetchAccounts, availableNodes]);
+    fetchAccounts();
+  }, [fetchAccounts, availableNodes, selectedCluster]);
 
   // Calculate total pages
   const totalPages = Math.ceil(total / pageSize);
@@ -599,6 +644,30 @@ export default function AccountManagement({
               <span className="text-white font-medium">Filter:</span>
             </div>
 
+            {/* Cluster Filter */}
+            <div className="flex items-center space-x-2">
+              <FontAwesomeIcon icon={faSitemap} className="text-purple-400" />
+              <label className="text-neutral-300">Cluster:</label>
+              <select
+                value={selectedCluster}
+                onChange={(e) => {
+                  setSelectedCluster(e.target.value);
+                  setSelectedNode("");
+                  setSelectedNodeIndex("");
+                }}
+                className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                disabled={disabled || loading || clustersList.length === 0}
+              >
+                <option value="">All Clusters</option>
+                {clustersList.map((cluster) => (
+                  <option key={cluster.name} value={cluster.name}>
+                    {cluster.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Node Filter */}
             <div className="flex items-center space-x-2">
               <FontAwesomeIcon icon={faServer} className="text-green-400" />
               <label className="text-neutral-300">Node:</label>
@@ -606,7 +675,7 @@ export default function AccountManagement({
                 value={selectedNode}
                 onChange={(e) => {
                   setSelectedNode(e.target.value);
-                  setSelectedNodeIndex(""); // Reset index selection when node changes
+                  setSelectedNodeIndex("");
                 }}
                 className="bg-neutral-600 border border-neutral-500 text-white rounded px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 disabled={disabled || loading || !anyNodesRunning}
@@ -625,6 +694,7 @@ export default function AccountManagement({
               </select>
             </div>
 
+            {/* Index Filter */}
             <div className="flex items-center space-x-2">
               <FontAwesomeIcon icon={faDatabase} className="text-blue-400" />
               <label className="text-neutral-300">Index:</label>

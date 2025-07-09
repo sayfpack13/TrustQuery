@@ -960,8 +960,7 @@ export default function NodeDetailsModal({
                           <button
                             onClick={() => handleDeleteClick(index)}
                             className={
-                              buttonStyles.delete +
-                              " p-1 rounded transition-colors flex items-center"
+                              buttonStyles.delete 
                             }
                             disabled={
                               !node.isRunning ||
@@ -981,11 +980,9 @@ export default function NodeDetailsModal({
                                       : "Delete index"
                             }
                           >
-                            {isDeletingIndex === index.index ? (
-                              <FontAwesomeIcon icon={faCircleNotch} spin />
-                            ) : (
-                              <FontAwesomeIcon icon={faTrash} />
-                            )}
+
+                              <FontAwesomeIcon icon={isDeletingIndex === index.index ? faCircleNotch : faTrash} spin={isDeletingIndex === index.index} />
+
                           </button>
                         </td>
                       </tr>

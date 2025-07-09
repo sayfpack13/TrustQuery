@@ -592,11 +592,27 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
   const from = (page - 1) * size;
   const requestedNode = req.query.node;
   const requestedIndex = req.query.index;
+  const requestedCluster = req.query.cluster;
   const { Client } = require("@elastic/elasticsearch");
 
   try {
-    const cachedIndices = await getCacheFiltered();
+    let cachedIndices = await getCacheFiltered();
     const config = getConfig();
+    // If cluster filter is provided, filter nodes to only those in the cluster
+    if (requestedCluster) {
+      cachedIndices = Object.fromEntries(
+        Object.entries(cachedIndices).filter(
+          ([nodeName, nodeData]) => {
+            // Try to get cluster from nodeData or from config.nodeMetadata
+            let cluster = nodeData.cluster;
+            if (!cluster && config.nodeMetadata && config.nodeMetadata[nodeName]) {
+              cluster = config.nodeMetadata[nodeName].cluster;
+            }
+            return cluster === requestedCluster;
+          }
+        )
+      );
+    }
 
     // Check if any nodes are running
     const runningNodes = Object.values(cachedIndices).filter(node => node.isRunning);
@@ -622,17 +638,11 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0,
         });
       }
-      
-      // Skip searchIndices check when requesting through admin interface
-      // This allows viewing any index through the Account Management page
-      
       // Specific index on specific node requested
-      // Try to find the node in the cache by name
       let nodeData = cachedIndices[requestedNode];
       let nodeCacheKey = requestedNode;
       const nodeMetadata = config.nodeMetadata || {};
       if (!nodeData) {
-        // Try to resolve node name from nodeMetadata (in case frontend sent URL or alias)
         const url = Object.keys(nodeMetadata).find((url) => nodeMetadata[url].name === requestedNode);
         if (url && cachedIndices[nodeMetadata[url].name]) {
           nodeData = cachedIndices[nodeMetadata[url].name];
@@ -642,20 +652,18 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           nodeCacheKey = url;
         }
       }
-      // Always inject nodeUrl from config if missing
       if (nodeData && !nodeData.nodeUrl && nodeMetadata[requestedNode] && nodeMetadata[requestedNode].nodeUrl) {
         nodeData.nodeUrl = nodeMetadata[requestedNode].nodeUrl;
       }
-
       if (
         !nodeData ||
         !nodeData.indices ||
         !Object.keys(
           Array.isArray(nodeData.indices)
             ? nodeData.indices.reduce((acc, idx) => {
-              acc[idx.index] = true;
-              return acc;
-            }, {})
+                acc[idx.index] = true;
+                return acc;
+              }, {})
             : nodeData.indices
         ).includes(requestedIndex)
       ) {
@@ -665,7 +673,6 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0,
         });
       }
-
       if (!nodeData.isRunning) {
         return res.status(503).json({
           error: `Node '${requestedNode}' is not running or not reachable`,
@@ -673,8 +680,6 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0,
         });
       }
-
-      // Build nodeUrl from config if not present in cache
       let nodeUrl = nodeData.nodeUrl;
       if (!nodeUrl && nodeMetadata[requestedNode] && nodeMetadata[requestedNode].nodeUrl) {
         nodeUrl = nodeMetadata[requestedNode].nodeUrl;
@@ -682,11 +687,8 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       if (!nodeUrl) {
         nodeUrl = `http://localhost:${nodeData.port || 9200}`;
       }
-
       searchIndex = requestedIndex;
       targetNodeUrl = nodeUrl;
-
-      // Create ES client for specific node
       es = new Client({ node: targetNodeUrl });
     } else if (requestedNode && !requestedIndex) {
       if (!cachedIndices[requestedNode] || !cachedIndices[requestedNode].isRunning) {
@@ -696,7 +698,6 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0,
         });
       }
-      // Specific node requested, but no specific index - search all indices on that node
       const nodeData = cachedIndices[requestedNode];
       if (!nodeData || !nodeData.nodeUrl) {
         return res.status(400).json({
@@ -705,7 +706,6 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0,
         });
       }
-
       if (!nodeData.indices || nodeData.indices.length === 0) {
         return res.json({
           results: [],
@@ -713,18 +713,10 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           message: `No indices found on node '${requestedNode}'`,
         });
       }
-
-      // Use all indices on the specified node, regardless of searchIndices configuration
-      // This allows viewing all indices through the Account Management page
-      
-      // Use all indices on the specified node
-      searchIndex = nodeData.indices.map((idx) => idx.index).join(","); // This is correct, as nodeData.indices is always an array of objects
+      searchIndex = nodeData.indices.map((idx) => idx.index).join(",");
       targetNodeUrl = nodeData.nodeUrl;
-
       es = new Client({ node: targetNodeUrl });
     } else if (!requestedNode && requestedIndex) {
-      // Specific index requested, but no specific node - use default ES client
-      // First check if the index exists on any node
       let indexExists = false;
       for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
         if (!nodeData.isRunning) continue;
@@ -733,7 +725,6 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           break;
         }
       }
-
       if (!indexExists) {
         return res.status(400).json({
           error: `Index '${requestedIndex}' not found on any configured node`,
@@ -741,86 +732,37 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0,
         });
       }
-
       searchIndex = requestedIndex;
       es = getCurrentES();
     } else {
-      // No specific node or index - use default search indices from config
-      const searchIndices = config.searchIndices || [];
-
-      if (searchIndices.length === 0) {
-        // If no search indices are configured, try to use all available indices from all running nodes
-        const allIndices = [];
-        let anyRunningNode = false;
-        
-        for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
-          if (nodeData.isRunning && nodeData.indices && nodeData.indices.length > 0) {
-            anyRunningNode = true;
-            const nodeClient = new Client({ node: nodeData.nodeUrl });
-            
-            // Add all indices from this running node
-            for (const indexInfo of nodeData.indices) {
-              allIndices.push({
-                node: nodeName,
-                index: indexInfo.index,
-                client: nodeClient
-              });
-            }
-          }
-        }
-        
-        if (allIndices.length > 0) {
-          // Use the first node's client for simplicity
-          es = allIndices[0].client;
-          searchIndex = allIndices.map(i => i.index).join(',');
-          console.log(`No search indices configured, using all available indices: ${searchIndex}`);
-        } else {
-          return res.json({
-            results: [],
-            total: 0,
-            message: anyRunningNode 
-              ? "No indices found on running nodes. Please create indices first."
-              : "No search indices configured. Please configure search indices in the Configuration tab.",
-          });
-        }
-      } else {
-        // Group indices by node for multi-node search
-        // If all indices are on the same node, use that node's ES client
-        const nodeGroups = {};
-        for (const entry of searchIndices) {
-          if (!cachedIndices[entry.node] || !cachedIndices[entry.node].isRunning) continue;
-          if (!nodeGroups[entry.node]) nodeGroups[entry.node] = [];
-          nodeGroups[entry.node].push(entry.index);
-        }
-
-        const nodeNames = Object.keys(nodeGroups);
-        if (nodeNames.length === 1) {
-          // All indices are on a single node, use that node's ES client
-          const nodeName = nodeNames[0];
-          const cachedIndices = await getCacheFiltered();
-          const nodeData = cachedIndices[nodeName];
-          if (!nodeData || !nodeData.nodeUrl) {
-            return res.status(400).json({
-              error: `Node '${nodeName}' not found or not configured`,
-              results: [],
-              total: 0,
+      // No specific node or index - use all available indices from all running nodes
+      const allIndices = [];
+      let anyRunningNode = false;
+      for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
+        if (nodeData.isRunning && nodeData.indices && nodeData.indices.length > 0) {
+          anyRunningNode = true;
+          const nodeClient = new Client({ node: nodeData.nodeUrl });
+          for (const indexInfo of nodeData.indices) {
+            allIndices.push({
+              node: nodeName,
+              index: indexInfo.index,
+              client: nodeClient
             });
           }
-          searchIndex = nodeGroups[nodeName].join(",");
-          targetNodeUrl = nodeData.nodeUrl;
-          es = new Client({ node: targetNodeUrl });
-        } else if (nodeNames.length > 1) {
-          // Indices are on multiple nodes, use default client
-          // This is not ideal but will work for simple cases
-          searchIndex = searchIndices.map((entry) => entry.index).join(",");
-          es = getCurrentES();
-        } else {
-          return res.json({
-            results: [],
-            total: 0,
-            message: "No running nodes with configured search indices found.",
-          });
         }
+      }
+      if (allIndices.length > 0) {
+        es = allIndices[0].client;
+        searchIndex = allIndices.map(i => i.index).join(',');
+        console.log(`No search indices configured, using all available indices: ${searchIndex}`);
+      } else {
+        return res.json({
+          results: [],
+          total: 0,
+          message: anyRunningNode
+            ? "No indices found on running nodes. Please create indices first."
+            : "No indices available.",
+        });
       }
     }
 

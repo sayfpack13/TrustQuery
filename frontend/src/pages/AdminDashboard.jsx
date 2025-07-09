@@ -362,6 +362,7 @@ export default function AdminDashboard({ onLogout }) {
                   showNotification={showNotification}
                   isAnyTaskRunning={isAnyTaskRunning}
                   enhancedNodesData={clusterManagement.enhancedNodesData}
+                  clustersList={clusterManagement.clustersList}
                   disabled={isAnyTaskRunning}
                 />
               )}
