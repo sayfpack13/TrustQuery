@@ -1381,50 +1381,6 @@ function getSelectedIndex() {
 async function setSelectedIndex(indexName) {
   await setConfig("selectedIndex", indexName);
 }
-
-// Helper function to create proper index mapping
-function createIndexMapping(shards = 1, replicas = 0) {
-  return {
-    settings: {
-      number_of_shards: shards,
-      number_of_replicas: replicas,
-      analysis: {
-        analyzer: {
-          autocomplete_analyzer: {
-            tokenizer: "autocomplete_tokenizer",
-            filter: ["lowercase"],
-          },
-        },
-        tokenizer: {
-          autocomplete_tokenizer: {
-            type: "edge_ngram",
-            min_gram: 2,
-            max_gram: 10,
-          },
-        },
-      },
-    },
-    mappings: {
-      properties: {
-        raw_line: {
-          type: "text",
-          fields: {
-            autocomplete: {
-              type: "text",
-              analyzer: "autocomplete_analyzer",
-            },
-          },
-        },
-      },
-    },
-  };
-}
-
-// Helper function to safely format index name
-function formatIndexName(name) {
-  return name.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
-}
-
 // ==================== ELASTICSEARCH MANAGEMENT ENDPOINTS ====================
 
 // GET all Elasticsearch indices with basic info
