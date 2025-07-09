@@ -60,10 +60,28 @@ function initializeElasticsearchClients() {
   esAvailable = true;
 }
 
-function getSingleNodeClient(nodeUrl) {
-  // If a node name is passed, resolve to URL
+function getSingleNodeClient(nodeOrUrl) {
+  // Always resolve to a full URL from metadata if a node name is passed
   const nodeMetadata = getConfig("nodeMetadata") || {};
-  const url = buildNodeMetadata(nodeMetadata[nodeUrl] || { name: nodeUrl })?.nodeUrl || nodeUrl;
+  let url = null;
+  if (nodeOrUrl.startsWith("http://") || nodeOrUrl.startsWith("https://")) {
+    url = nodeOrUrl;
+  } else if (nodeMetadata[nodeOrUrl]) {
+    // Build from metadata
+    const meta = nodeMetadata[nodeOrUrl];
+    if (meta.host && meta.port) {
+      url = `http://${meta.host}:${meta.port}`;
+    } else if (meta.nodeUrl) {
+      url = meta.nodeUrl;
+    } else {
+      url = `http://localhost:9200`;
+    }
+  } else {
+    // Try to build from node name as fallback
+    url = `http://localhost:9200`;
+  }
+  // Log the resolved URL and node name
+  console.log(`[getSingleNodeClient] Creating client for node '${nodeOrUrl}' resolved to URL: ${url}`);
   if (singleNodeClients[url]) {
     return singleNodeClients[url];
   }

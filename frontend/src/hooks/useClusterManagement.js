@@ -32,6 +32,9 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
   const [newNodeHeapSize, setNewNodeHeapSize] = useState('');
   const [systemMemoryInfo, setSystemMemoryInfo] = useState(null);
 
+  // Add selectedCluster state
+  const [selectedCluster, setSelectedCluster] = useState('all');
+
   // Use ref to store the notification function to avoid dependency changes
   const showNotificationRef = useRef(showNotification);
   useEffect(() => {
@@ -39,15 +42,19 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
   }, [showNotification]);
 
   // Fetch all locally managed node configurations
-  const fetchLocalNodes = useCallback(async (forceRefresh = false) => {
+  const fetchLocalNodes = useCallback(async (forceRefresh = false, cluster = null) => {
     setClusterLoading(true);
     try {
-      const url = forceRefresh 
-        ? '/api/admin/cluster-advanced/local-nodes?forceRefresh=true'
-        : '/api/admin/cluster-advanced/local-nodes';
+      let url = '/api/admin/cluster-advanced/local-nodes';
+      const params = [];
+      if (forceRefresh) params.push('forceRefresh=true');
+      if (cluster) params.push(`cluster=${encodeURIComponent(cluster)}`);
+      if (params.length > 0) url += `?${params.join('&')}`;
       const response = await axiosClient.get(url);
       setLocalNodes(response.data.nodes || []);
       setEnhancedNodesData(response.data.indicesByNodes || {});
+      // Debug log: print enhancedNodesData after refresh
+      console.log('EnhancedNodesData after refresh:', response.data.indicesByNodes || {});
     } catch (error) {
       showNotificationRef.current('error', 'Failed to fetch local node configuration', faExclamationTriangle);
     } finally {
@@ -250,6 +257,8 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
             const freshEnhancedData = response.data.indicesByNodes || {};
             setLocalNodes(freshNodes);
             setEnhancedNodesData(freshEnhancedData);
+            // Debug log: print enhancedNodesData after refresh
+            console.log('EnhancedNodesData after refresh:', freshEnhancedData);
             const targetNode = freshNodes.find(n => n.name === nodeName);
             if (targetNode?.isRunning) {
               showNotificationRef.current('success', `Node "${nodeName}" started successfully!`, faCheckCircle);
@@ -297,6 +306,8 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
             // Update state with fresh data
             setLocalNodes(freshNodes);
             setEnhancedNodesData(freshEnhancedData);
+            // Debug log: print enhancedNodesData after refresh
+            console.log('EnhancedNodesData after refresh:', freshEnhancedData);
             
             const targetNode = freshNodes.find(n => n.name === nodeName);
             
@@ -462,6 +473,8 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
     changeNodeCluster,
     resetNodeForm,
     moveNode,
-    copyNode
+    copyNode,
+    selectedCluster,
+    setSelectedCluster
   };
 };

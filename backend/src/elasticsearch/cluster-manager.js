@@ -23,12 +23,29 @@ async function createNode(nodeConfig) {
     // Create node directories
     const nodeBaseDir = path.join(env.baseElasticsearchPath, "nodes", nodeConfig.name);
     const configDir = path.join(nodeBaseDir, "config");
-    const dataDir = path.join(nodeBaseDir, "data");
-    const logsDir = path.join(nodeBaseDir, "logs");
+    const dataDir = nodeConfig.dataPath || path.join(nodeBaseDir, "data");
+    const logsDir = nodeConfig.logsPath || path.join(nodeBaseDir, "logs");
 
     await fs.mkdir(configDir, { recursive: true });
     await fs.mkdir(dataDir, { recursive: true });
     await fs.mkdir(logsDir, { recursive: true });
+
+    // On Linux, ensure elasticsearch user owns the config, data, and logs directories
+    if (process.platform === 'linux') {
+      const { exec } = require('child_process');
+      await new Promise((resolve, reject) => {
+        exec(`chown -R elasticsearch:elasticsearch "${configDir}"`, (err) => {
+          if (err) return reject(err);
+          exec(`chown -R elasticsearch:elasticsearch "${dataDir}"`, (err2) => {
+            if (err2) return reject(err2);
+            exec(`chown -R elasticsearch:elasticsearch "${logsDir}"`, (err3) => {
+              if (err3) return reject(err3);
+              resolve();
+            });
+          });
+        });
+      });
+    }
 
     // Generate configuration files
     const config = generateNodeConfig({

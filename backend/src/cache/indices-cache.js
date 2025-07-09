@@ -73,14 +73,24 @@ async function refreshClusterCache() {
 
   const newCache = {};
 
+
   for (const node of runningNodes) {
     const nodeName = node.name;
-    const host = node.host || "localhost";
-    const port = node.port || 9200;
-    const nodeUrl = `http://${host}:${port}`;
+    // Always build nodeUrl from host/port if available, else use node.nodeUrl, never default to 9200 unless truly no info
+    let nodeUrl = null;
+    if (node.host && node.port) {
+      nodeUrl = `http://${node.host}:${node.port}`;
+    } else if (node.nodeUrl) {
+      nodeUrl = node.nodeUrl;
+    } else {
+      // Only fallback if no host/port or nodeUrl at all
+      nodeUrl = `http://localhost:9200`;
+    }
 
     // Use improved isNodeRunning (port + HTTP check)
     const nodeActuallyRunning = await clusterManager.isNodeRunning(nodeName);
+    // Log which nodeUrl is being used for this node
+    console.log(`[indices-cache] Using nodeUrl for ${nodeName}: ${nodeUrl}`);
     if (nodeActuallyRunning) {
       // Node is online, fetch fresh data
       try {
@@ -88,30 +98,30 @@ async function refreshClusterCache() {
         if (!client) {
           throw new Error(`Failed to get client for ${nodeUrl}`);
         }
+        // Fetch all indices stats
         const response = await client.indices.stats({
           index: "_all",
           metric: ["docs", "store"],
         });
-        if (!response) {
-          throw new Error(
-            `No response received from Elasticsearch for node ${nodeName}`
-          );
+        const statsData = response.body || response;
+        // Fetch shard allocation for this node
+        const shardsResponse = await client.cat.shards({
+          format: "json",
+        });
+        // Build a set of indices that have at least one shard on this node
+        const indicesWithShards = new Set();
+        for (const shard of shardsResponse) {
+          if (shard.node === nodeName && shard.index) {
+            indicesWithShards.add(shard.index);
+          }
         }
         const indices = {};
-        const statsData = response.body || response;
         if (statsData && statsData.indices) {
-          for (const [indexName, indexStats] of Object.entries(
-            statsData.indices
-          )) {
-            if (
-              indexStats &&
-              indexStats.primaries &&
-              indexStats.primaries.docs &&
-              indexStats.primaries.store
-            ) {
+          for (const [indexName, indexStats] of Object.entries(statsData.indices)) {
+            if (indexStats && indexStats.primaries && indicesWithShards.has(indexName)) {
               indices[indexName] = {
-                "doc.count": indexStats.primaries.docs.count || 0,
-                "store.size": indexStats.primaries.store.size_in_bytes || 0,
+                "doc.count": (indexStats.primaries.docs && indexStats.primaries.docs.count) || 0,
+                "store.size": (indexStats.primaries.store && indexStats.primaries.store.size_in_bytes) || 0,
               };
             }
           }

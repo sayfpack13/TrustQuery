@@ -1013,70 +1013,233 @@ router.delete("/nodes/:nodeName", verifyJwt, async (req, res) => {
 // GET local nodes status with indices information
 router.get("/local-nodes", verifyJwt, async (req, res) => {
   try {
-    const { forceRefresh } = req.query;
-
-    // First get cluster status to see which nodes are running
+    const { forceRefresh, cluster } = req.query;
+    const fs = require("fs");
+    const path = require("path");
+    const yaml = require("yaml");
     const clusterStatus = await clusterManager.getClusterStatus();
 
-    // Smart refresh logic: always refresh running nodes for dashboard calls
-    let refreshedCache;
-    if (forceRefresh === "false") {
-      // Explicitly requested to skip refresh - use existing cache only
-      refreshedCache = await getCache();
-    } else {
-      // Default behavior or forceRefresh === 'true' - always refresh running nodes
-      // This ensures document counts and store sizes are always current
-      refreshedCache = await refreshClusterCache();
+    // Extra validation: filter nodes by reading elasticsearch.yml for each node
+    let filteredNodes = [];
+    for (const node of clusterStatus.nodes) {
+      let configCluster = node.cluster || "trustquery-cluster";
+      try {
+        if (node.configPath && fs.existsSync(node.configPath)) {
+          const configContent = fs.readFileSync(node.configPath, "utf8");
+          const parsed = yaml.parse(configContent);
+          if (parsed && parsed["cluster.name"]) {
+            configCluster = parsed["cluster.name"];
+          }
+        }
+      } catch (e) {
+        // Ignore and fallback to metadata
+      }
+      if (!cluster || configCluster === cluster) {
+        filteredNodes.push({ ...node, cluster: configCluster });
+      }
     }
 
-    // Enhance nodes with indices information from cache (no additional live fetching)
-    const enhancedNodes = clusterStatus.nodes.map((node) => {
-      const nodeUrl = `http://${node.host}:${node.port}`;
-      const cachedNodeData = refreshedCache[node.name] || {};
-
-      let indicesArray = [];
-
-      // Always use cached data since refreshClusterCache already fetched fresh data for running nodes
-      if (cachedNodeData.indices) {
-        indicesArray = Array.isArray(cachedNodeData.indices)
-          ? cachedNodeData.indices
-          : Object.entries(cachedNodeData.indices).map(
-              ([indexName, indexData]) => ({
-                index: indexName,
-                "doc.count": indexData["doc.count"] || 0,
-                "store.size": indexData["store.size"] || 0,
-                health: node.isRunning ? "green" : "yellow", // Indicate freshness
-                status: "open",
-                uuid: indexName,
-                creation: {
-                  date: {
-                    string: new Date().toISOString(),
-                  },
-                },
-              })
-            );
+    let refreshedCache = await getCache();
+    let liveIndicesByNode = {};
+    const { getSingleNodeClient } = require("../elasticsearch/client");
+    const { isPortOpen } = require("../elasticsearch/node-utils");
+    await Promise.all(filteredNodes.map(async (node) => {
+      let nodeUrl = node.nodeUrl;
+      if (!nodeUrl && node.host && node.port) {
+        nodeUrl = `http://${node.host}:${node.port}`;
       }
+      const port = node.port || (nodeUrl ? Number(nodeUrl.split(":").pop()) : 9200);
+      const host = node.host || (nodeUrl ? nodeUrl.split(":")[1].replace("//","") : "localhost");
+      const portOpen = await isPortOpen(host, port);
+      node.isRunning = false;
+      node.isStarting = false;
+      liveIndicesByNode[node.name] = [];
+      if (portOpen) {
+        // Try ES ping with retries and longer timeout
+        let pingSuccess = false;
+        const nodeClient = getSingleNodeClient(nodeUrl);
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            const pingPromise = nodeClient.ping();
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("ping timeout")), 2000));
+            await Promise.race([pingPromise, timeoutPromise]);
+            pingSuccess = true;
+            break;
+          } catch (err) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
+        if (pingSuccess) {
+          node.isRunning = true;
+          node.isStarting = false;
+          // Fetch live indices only if ping succeeds
+          try {
+            const indicesResponse = await nodeClient.cat.indices({
+              format: "json",
+              h: "index,status,health,doc.count,store.size,creation.date.string,uuid",
+              s: "index:asc",
+              bytes: "b"
+            });
+            const shardsResponse = await nodeClient.cat.shards({ format: "json" });
+            const indicesWithShards = new Set();
+            for (const shard of shardsResponse) {
+              if (shard.node === node.name && shard.index) {
+                indicesWithShards.add(shard.index);
+              }
+            }
+            const filteredIndices = indicesResponse.filter((index) => indicesWithShards.has(index.index));
+            // Get true doc count for each index
+            const indicesWithLiveCount = await Promise.all(filteredIndices.map(async (index) => {
+              let docCount = 0;
+              try {
+                const countResp = await nodeClient.count({ index: index.index });
+                docCount = typeof countResp.count === 'number' ? countResp.count : 0;
+              } catch (e) {
+                docCount = index["doc.count"] || 0;
+              }
+              // Parse store.size as bytes (support string or number)
+              let storeSize = 0;
+              if (index["store.size"]) {
+                const sizeStr = String(index["store.size"]).toLowerCase();
+                const sizeMatch = sizeStr.match(/([\d.]+)\s*(b|kb|mb|gb|tb)?/);
+                if (sizeMatch) {
+                  let value = parseFloat(sizeMatch[1]);
+                  let unit = sizeMatch[2] || 'b';
+                  const multipliers = { b: 1, kb: 1024, mb: 1024*1024, gb: 1024*1024*1024, tb: 1024*1024*1024*1024 };
+                  storeSize = value * (multipliers[unit] || 1);
+                  storeSize = Math.round(storeSize);
+                }
+              }
+              let creationDate = index["creation.date.string"] || null;
+              let creation = null;
+              if (creationDate) {
+                creation = { date: { string: creationDate } };
+              }
+              return {
+                index: index.index,
+                "doc.count": docCount,
+                "store.size": storeSize,
+                health: index.health,
+                status: index.status,
+                uuid: index.uuid,
+                creation,
+              };
+            }));
+            liveIndicesByNode[node.name] = indicesWithLiveCount;
+          } catch (err) {
+            // If fetching indices fails, just mark as running
+            liveIndicesByNode[node.name] = [];
+          }
+        } else {
+          node.isRunning = false;
+          node.isStarting = true;
+          liveIndicesByNode[node.name] = [];
+        }
+      } else {
+        node.isRunning = false;
+        node.isStarting = false;
+      }
+    }));
 
+    // In the /local-nodes endpoint, after fetching live indices for each node, ensure that if a node returns no indices, the indices array is empty and not merged or copied from any other node.
+    // This is already the case, but add an explicit check for clarity and safety.
+    const enhancedNodes = filteredNodes.map((node) => {
+      const nodeUrl = `http://${node.host}:${node.port}`;
+      let indicesArray = [];
+      if (node.isRunning && liveIndicesByNode[node.name]) {
+        indicesArray = Array.isArray(liveIndicesByNode[node.name]) ? liveIndicesByNode[node.name] : [];
+      } else {
+        const cachedNodeData = refreshedCache[node.name] || {};
+        if (cachedNodeData.indices) {
+          indicesArray = Array.isArray(cachedNodeData.indices)
+            ? cachedNodeData.indices.map((index) => {
+                let storeSize = 0;
+                if (index["store.size"] && typeof index["store.size"] === "string") {
+                  const parsed = parseInt(index["store.size"], 10);
+                  if (!isNaN(parsed)) storeSize = parsed;
+                } else if (typeof index["store.size"] === "number") {
+                  storeSize = index["store.size"];
+                }
+                let creation = index.creation;
+                if (!creation && index["creation.date.string"]) {
+                  creation = { date: { string: index["creation.date.string"] } };
+                }
+                return {
+                  index: index.index,
+                  "doc.count": index["doc.count"] || 0,
+                  "store.size": storeSize,
+                  health: index.health || (node.isRunning ? "green" : "yellow"),
+                  status: index.status || "open",
+                  uuid: index.uuid || index.index,
+                  creation,
+                };
+              })
+            : Object.entries(cachedNodeData.indices).map(
+                ([indexName, indexData]) => {
+                  let storeSize = 0;
+                  if (indexData["store.size"] && typeof indexData["store.size"] === "string") {
+                    const parsed = parseInt(indexData["store.size"], 10);
+                    if (!isNaN(parsed)) storeSize = parsed;
+                  } else if (typeof indexData["store.size"] === "number") {
+                    storeSize = indexData["store.size"];
+                  }
+                  let creation = indexData.creation;
+                  if (!creation && indexData["creation.date.string"]) {
+                    creation = { date: { string: indexData["creation.date.string"] } };
+                  }
+                  return {
+                    index: indexName,
+                    "doc.count": indexData["doc.count"] || 0,
+                    "store.size": storeSize,
+                    health: node.isRunning ? "green" : "yellow",
+                    status: "open",
+                    uuid: indexName,
+                    creation,
+                  };
+                }
+              );
+        }
+      }
+      if (!indicesArray || !Array.isArray(indicesArray)) indicesArray = [];
+      // Always set status based on isRunning for consistency
+      if (node.isStarting) {
+        node.status = "starting";
+      } else if (node.isRunning) {
+        node.status = "running";
+      } else {
+        node.status = "stopped";
+      }
+      let cacheStatus = "cached";
+      if (node.isRunning) {
+        cacheStatus = "live";
+      } else if (node.isStarting) {
+        cacheStatus = "starting";
+      }
       return {
         ...node,
         nodeUrl,
         indices: indicesArray,
-        lastCacheUpdate: cachedNodeData.last_updated || null,
-        cacheStatus: node.isRunning ? "live" : "cached",
+        lastCacheUpdate: (refreshedCache[node.name] && refreshedCache[node.name].last_updated) || null,
+        cacheStatus,
+        status: node.status,
       };
     });
 
-    // Create indicesByNodes format for compatibility
     const indicesByNodes = {};
     enhancedNodes.forEach((node) => {
       indicesByNodes[node.name] = {
         nodeUrl: node.nodeUrl,
         isRunning: node.isRunning,
-        indices: node.indices, // This is now guaranteed to be an array
+        isStarting: node.isStarting,
+        indices: node.indices,
         timestamp: node.lastCacheUpdate,
-        error: refreshedCache[node.name]?.error || null,
+        error: (refreshedCache[node.name] && refreshedCache[node.name].error) || null,
       };
     });
+
+    if (forceRefresh !== "false") {
+      refreshClusterCache().catch(() => {});
+    }
 
     res.json({
       ...clusterStatus,
@@ -1170,18 +1333,68 @@ router.get("/:nodeName/indices", verifyJwt, async (req, res) => {
     const { getSingleNodeClient } = require("../elasticsearch/client");
     const nodeClient = getSingleNodeClient(nodeUrl);
 
+    // Fetch all indices visible to the node
     const indicesResponse = await nodeClient.cat.indices({
       format: "json",
       h: "index,status,health,doc.count,store.size,creation.date.string,uuid",
       s: "index:asc",
     });
-
-    const formattedIndices = indicesResponse.map((index) => ({
-      ...index,
-      "doc.count": index["doc.count"] || 0,
+    // Fetch all shards for this node
+    const shardsResponse = await nodeClient.cat.shards({
+      format: "json",
+    });
+    // Build a set of indices that have at least one shard on this node
+    const indicesWithShards = new Set();
+    // The node name in the cluster may be different from the config name, so get the actual node name from config
+    const actualNodeName = nodeConfig.node && nodeConfig.node.name ? nodeConfig.node.name : nodeName;
+    for (const shard of shardsResponse) {
+      if (shard.node === actualNodeName && shard.index) {
+        indicesWithShards.add(shard.index);
+      }
+    }
+    // Only include indices that have a shard on this node
+    const filteredIndices = indicesResponse.filter((index) => indicesWithShards.has(index.index));
+    // For each index, get true doc count and parse store.size as bytes
+    const indicesWithStats = await Promise.all(filteredIndices.map(async (index) => {
+      // Get true doc count
+      let docCount = 0;
+      try {
+        const countResp = await nodeClient.count({ index: index.index });
+        docCount = typeof countResp.count === 'number' ? countResp.count : 0;
+      } catch (e) {
+        docCount = index["doc.count"] || 0;
+      }
+      // Parse store.size as bytes
+      let storeSize = 0;
+      if (index["store.size"]) {
+        const sizeStr = String(index["store.size"]).toLowerCase();
+        const sizeMatch = sizeStr.match(/([\d.]+)\s*(b|kb|mb|gb|tb)?/);
+        if (sizeMatch) {
+          let value = parseFloat(sizeMatch[1]);
+          let unit = sizeMatch[2] || 'b';
+          const multipliers = { b: 1, kb: 1024, mb: 1024*1024, gb: 1024*1024*1024, tb: 1024*1024*1024*1024 };
+          storeSize = value * (multipliers[unit] || 1);
+          storeSize = Math.round(storeSize);
+        }
+      }
+      // Normalize creation date
+      let creationDate = index["creation.date.string"] || null;
+      let creation = null;
+      if (creationDate) {
+        creation = { date: { string: creationDate } };
+      }
+      return {
+        index: index.index,
+        "doc.count": docCount,
+        "store.size": storeSize,
+        health: index.health,
+        status: index.status,
+        uuid: index.uuid,
+        creation,
+      };
     }));
 
-    res.json(formattedIndices);
+    res.json(indicesWithStats);
   } catch (error) {
     console.error(`Error fetching indices for node ${nodeName}:`, error);
     res
@@ -1209,26 +1422,70 @@ router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
     const { getSingleNodeClient } = require("../elasticsearch/client");
     const nodeClient = getSingleNodeClient(nodeUrl);
 
-    await nodeClient.indices.create({
-      index: indexName,
-      wait_for_active_shards: "1",
-      body: {
-        settings: {
-          "index.routing.allocation.require.custom_id": nodeName,
-          number_of_shards: shards || 1,
-          number_of_replicas: replicas || 0,
+    // Check if index already exists in this node's cluster
+    let indexExists = false;
+    try {
+      const existsResp = await nodeClient.indices.exists({ index: indexName, timeout: "2s" });
+      indexExists = existsResp.body === true || existsResp === true;
+    } catch (e) {
+      // If error is not 404, treat as exists = false
+      indexExists = false;
+    }
+    if (indexExists) {
+      return res.status(409).json({
+        error: `Index '${indexName}' already exists in this node's cluster. Index names must be unique per cluster.`,
+        reason: "index_exists_in_cluster"
+      });
+    }
+
+    // Try to create the index with a timeout and catch connection errors
+    try {
+      await nodeClient.indices.create({
+        index: indexName,
+        wait_for_active_shards: "1",
+        timeout: "5s",
+        body: {
+          settings: {
+            "index.routing.allocation.require.custom_id": nodeName,
+            number_of_shards: shards || 1,
+            number_of_replicas: replicas || 0,
+          },
         },
-      },
-    });
+      });
+    } catch (err) {
+      if (err && err.message && err.message.includes("resource_already_exists_exception")) {
+        return res.status(409).json({
+          error: `Index '${indexName}' already exists in this node's cluster. Index names must be unique per cluster.`,
+          reason: "index_exists_in_cluster",
+          details: err.message
+        });
+      }
+      if (err && err.message && err.message.includes("Request timed out")) {
+        return res.status(504).json({
+          error: `Node '${nodeName}' did not respond in time. Is it running?`,
+          reason: "node_timeout",
+          details: err.message
+        });
+      }
+      return res.status(500).json({
+        error: `Failed to create index on node '${nodeName}'.`,
+        details: err.message
+      });
+    }
 
     // Force immediate refresh on the created index to ensure it's visible
     try {
-      await nodeClient.indices.refresh({ index: indexName });
+      await nodeClient.indices.refresh({ index: indexName, timeout: "3s" });
     } catch (refreshError) {
       console.warn(
         `Warning: Could not refresh index ${indexName}:`,
         refreshError.message
       );
+      // If refresh times out, still return success but with a warning
+      return res.status(201).json({
+        message: `Index '${indexName}' created on node '${nodeName}', but refresh timed out.`,
+        warning: refreshError.message
+      });
     }
 
     // Small delay to ensure Elasticsearch propagates the index state
@@ -1244,16 +1501,12 @@ router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
       );
     }
 
-    res
-      .status(201)
-      .json({
-        message: `Index '${indexName}' created successfully on node '${nodeName}'.`,
-      });
+    res.status(201).json({
+      message: `Index '${indexName}' created successfully on node '${nodeName}'.`,
+    });
   } catch (error) {
     console.error(`Error creating index on node ${nodeName}:`, error);
-    res
-      .status(500)
-      .json({ error: "Failed to create index.", details: error.message });
+    res.status(500).json({ error: "Failed to create index.", details: error.message });
   }
 });
 
