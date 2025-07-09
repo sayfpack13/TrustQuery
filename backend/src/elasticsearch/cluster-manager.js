@@ -23,8 +23,8 @@ async function createNode(nodeConfig) {
     // Create node directories
     const nodeBaseDir = path.join(env.baseElasticsearchPath, "nodes", nodeConfig.name);
     const configDir = path.join(nodeBaseDir, "config");
-    const dataDir = path.join(nodeBaseDir, "data");
-    const logsDir = path.join(nodeBaseDir, "logs");
+    const dataDir = nodeConfig.dataPath || path.join(nodeBaseDir, "data");
+    const logsDir = nodeConfig.logsPath || path.join(nodeBaseDir, "logs");
 
     await fs.mkdir(configDir, { recursive: true });
     await fs.mkdir(dataDir, { recursive: true });
