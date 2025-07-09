@@ -170,7 +170,34 @@ async function removeNodeFiles(nodeName, preserveData = false) {
 
     // Remove node directory
     if (!preserveData) {
-      await fs.rm(nodeBaseDir, { recursive: true, force: true });
+      try {
+        await fs.rm(nodeBaseDir, { recursive: true, force: true });
+      } catch (err) {
+        if (process.platform === 'linux') {
+          const { exec } = require('child_process');
+          await new Promise((resolve, reject) => {
+            exec(`sudo rm -rf "${nodeBaseDir}"`, (error) => {
+              if (error) return reject(error);
+              resolve();
+            });
+          });
+        } else {
+          throw err;
+        }
+      }
+      // Double-check: if still exists on Linux, try sudo rm -rf
+      if (process.platform === 'linux') {
+        const fsSync = require('fs');
+        if (fsSync.existsSync(nodeBaseDir)) {
+          const { exec } = require('child_process');
+          await new Promise((resolve, reject) => {
+            exec(`sudo rm -rf "${nodeBaseDir}"`, (error) => {
+              if (error) return reject(error);
+              resolve();
+            });
+          });
+        }
+      }
     } else {
       // If preserving data, only remove config files
       const configDir = path.join(nodeBaseDir, "config");
