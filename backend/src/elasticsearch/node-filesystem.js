@@ -197,6 +197,26 @@ async function removeNodeFiles(nodeName, preserveData = false) {
             });
           });
         }
+        // Also check and clean up parent directory if empty
+        const parentDir = path.dirname(nodeBaseDir);
+        if (fsSync.existsSync(parentDir)) {
+          try {
+            const files = fsSync.readdirSync(parentDir);
+            if (files.length === 0) {
+              await new Promise((resolve, reject) => {
+                exec(`sudo rm -rf "${parentDir}"`, (error) => {
+                  if (error) {
+                    console.error(`Failed to remove empty parent directory: ${parentDir}`, error);
+                    return reject(error);
+                  }
+                  resolve();
+                });
+              });
+            }
+          } catch (err) {
+            console.error(`Error checking or removing parent directory: ${parentDir}`, err);
+          }
+        }
       }
     } else {
       // If preserving data, only remove config files
