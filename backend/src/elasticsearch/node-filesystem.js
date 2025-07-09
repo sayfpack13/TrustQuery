@@ -170,6 +170,7 @@ async function removeNodeFiles(nodeName, preserveData = false) {
 
     // Remove node directory
     if (!preserveData) {
+      // Delete node base directory as before
       try {
         await fs.rm(nodeBaseDir, { recursive: true, force: true });
       } catch (err) {
@@ -215,6 +216,44 @@ async function removeNodeFiles(nodeName, preserveData = false) {
             }
           } catch (err) {
             console.error(`Error checking or removing parent directory: ${parentDir}`, err);
+          }
+        }
+      }
+      // Now also delete custom dataPath and logsPath if they are not subfolders of nodeBaseDir
+      const pathsToDelete = [];
+      if (metadata.dataPath && !metadata.dataPath.startsWith(nodeBaseDir)) {
+        pathsToDelete.push(metadata.dataPath);
+      }
+      if (metadata.logsPath && !metadata.logsPath.startsWith(nodeBaseDir)) {
+        pathsToDelete.push(metadata.logsPath);
+      }
+      for (const customPath of pathsToDelete) {
+        try {
+          await fs.rm(customPath, { recursive: true, force: true });
+        } catch (err) {
+          if (process.platform === 'linux') {
+            const { exec } = require('child_process');
+            await new Promise((resolve, reject) => {
+              exec(`sudo rm -rf "${customPath}"`, (error) => {
+                if (error) return reject(error);
+                resolve();
+              });
+            });
+          } else {
+            throw err;
+          }
+        }
+        // Double-check: if still exists on Linux, try sudo rm -rf
+        if (process.platform === 'linux') {
+          const fsSync = require('fs');
+          if (fsSync.existsSync(customPath)) {
+            const { exec } = require('child_process');
+            await new Promise((resolve, reject) => {
+              exec(`sudo rm -rf "${customPath}"`, (error) => {
+                if (error) return reject(error);
+                resolve();
+              });
+            });
           }
         }
       }
