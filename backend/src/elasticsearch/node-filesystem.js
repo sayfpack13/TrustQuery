@@ -198,26 +198,6 @@ async function removeNodeFiles(nodeName, preserveData = false) {
             });
           });
         }
-        // Also check and clean up parent directory if empty
-        const parentDir = path.dirname(nodeBaseDir);
-        if (fsSync.existsSync(parentDir)) {
-          try {
-            const files = fsSync.readdirSync(parentDir);
-            if (files.length === 0) {
-              await new Promise((resolve, reject) => {
-                exec(`sudo rm -rf "${parentDir}"`, (error) => {
-                  if (error) {
-                    console.error(`Failed to remove empty parent directory: ${parentDir}`, error);
-                    return reject(error);
-                  }
-                  resolve();
-                });
-              });
-            }
-          } catch (err) {
-            console.error(`Error checking or removing parent directory: ${parentDir}`, err);
-          }
-        }
       }
       // Now also delete custom dataPath and logsPath if they are not subfolders of nodeBaseDir
       const pathsToDelete = [];
@@ -255,6 +235,29 @@ async function removeNodeFiles(nodeName, preserveData = false) {
               });
             });
           }
+        }
+        // After deleting customPath, try to delete its parent (node-named folder) if empty
+        const parentDir = path.dirname(customPath);
+        try {
+          const fsSync = require('fs');
+          if (fsSync.existsSync(parentDir)) {
+            const files = fsSync.readdirSync(parentDir);
+            if (files.length === 0) {
+              if (process.platform === 'linux') {
+                const { exec } = require('child_process');
+                await new Promise((resolve, reject) => {
+                  exec(`sudo rm -rf "${parentDir}"`, (error) => {
+                    if (error) return reject(error);
+                    resolve();
+                  });
+                });
+              } else {
+                await fs.rm(parentDir, { recursive: true, force: true });
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`Error checking or removing node-named parent directory: ${parentDir}`, err);
         }
       }
     } else {
