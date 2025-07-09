@@ -1810,39 +1810,37 @@ app.get("/api/search", async (req, res) => {
 
     // Prepare client instances (reuse clients for the same node)
     const clientsCache = {};
-    let esAvailable = false;
+    // let esAvailable = false; // Already declared above, remove duplicate
     const { Client } = require("@elastic/elasticsearch");
     
-    // Prepare search requests for each index
+    // Cross-node, cross-index search: fetch from all, merge, sort, and paginate in memory (shallow pagination only)
+    let allResults = [];
+    let totalCount = 0;
+    let searchedIndices = [];
+    let esAvailable = false;
+
+    // Fetch up to MAX_RESULTS from each index/node (shallow, not deep pagination)
     const searchPromises = indicesToSearch.map(async (entry) => {
       if (!entry.node || !entry.index) return null;
-      
-      // Get or create client for this node
       let nodeUrl = nodeMetadata[entry.node]?.nodeUrl;
       if (!nodeUrl && entry.node.startsWith("http")) nodeUrl = entry.node;
       if (!nodeUrl) nodeUrl = `http://localhost:9200`;
-      
-      // Reuse client if we already created one for this node
       if (!clientsCache[nodeUrl]) {
-        clientsCache[nodeUrl] = new Client({ 
+        clientsCache[nodeUrl] = new Client({
           node: nodeUrl,
-          // Add performance optimizations
           compression: true,
           sniffOnStart: false,
           sniffOnConnectionFault: false,
           maxRetries: 1,
-          requestTimeout: 10000 // 10 second timeout
+          requestTimeout: 10000
         });
       }
-      
       const es = clientsCache[nodeUrl];
-      
       try {
-        // Use wildcard for case-insensitive substring search on raw_line (requires mapping with lowercase filter)
         const response = await es.search({
           index: entry.index,
           track_total_hits: true,
-          size: pageSize, // cap per index
+          size: MAX_RESULTS, // fetch up to MAX_RESULTS per index
           body: {
             _source: ["raw_line"],
             query: {
@@ -1850,7 +1848,7 @@ app.get("/api/search", async (req, res) => {
                 should: [
                   { term: { "raw_line.keyword": q } },
                   { match: { "raw_line": { query: q, operator: "and" } } },
-                  { wildcard: { "raw_line": `*${q.toLowerCase()}*` } } // Case-insensitive if mapping uses lowercase filter
+                  { wildcard: { "raw_line": `*${q.toLowerCase()}*` } }
                 ],
                 minimum_should_match: 1,
               },
@@ -1859,7 +1857,6 @@ app.get("/api/search", async (req, res) => {
           timeout: "5s"
         });
         esAvailable = true;
-        // Handle both object and number formats for hits.total
         let totalHits = 0;
         if (typeof response.hits.total === 'object' && response.hits.total !== null) {
           totalHits = response.hits.total.value;
@@ -1868,7 +1865,6 @@ app.get("/api/search", async (req, res) => {
         } else {
           totalHits = response.hits.hits.length;
         }
-        // Process results
         const indexResults = response.hits.hits.map((hit) => {
           const parsedAccount = parser.parseLineForDisplay(hit._source.raw_line);
           if (isAdmin) {
@@ -1889,7 +1885,6 @@ app.get("/api/search", async (req, res) => {
             };
           }
         });
-        // Return results for this index
         return {
           results: indexResults,
           total: totalHits,
@@ -1901,23 +1896,21 @@ app.get("/api/search", async (req, res) => {
         return null;
       }
     });
-    
-    // Execute all search requests in parallel
+
     const searchResponses = await Promise.all(searchPromises);
-    
-    // Process results from all indices
-    const combinedResults = [];
-    let totalCount = 0;
-    const searchedIndices = [];
-    
-    // Filter out null results and combine
     searchResponses.filter(Boolean).forEach(result => {
       if (result && result.results) {
-        combinedResults.push(...result.results);
+        allResults.push(...result.results);
         totalCount += result.total || 0;
         searchedIndices.push({ node: result.node, index: result.index });
       }
     });
+
+    // Sort all results by id (or customize as needed)
+    allResults.sort((a, b) => a.id.localeCompare(b.id));
+
+    // Paginate in memory (shallow only)
+    const paginatedResults = allResults.slice(from, from + pageSize);
     
     if (!esAvailable) {
       return res.json({
@@ -1929,13 +1922,7 @@ app.get("/api/search", async (req, res) => {
       });
     }
     
-    // Sort results by relevance (for public search, sort by id for consistency)
-    combinedResults.sort((a, b) => {
-      return a.id.localeCompare(b.id);
-    });
-
-    // Remove the MAX_RESULTS enforcement, just use the paginated results as before
-    const paginatedResults = combinedResults.slice(from, Math.min(from + pageSize, MAX_RESULTS));
+    // No need to sort or slice combinedResults anymore, handled by ES
 
     // Calculate execution time
     const executionTime = Date.now() - startTime;
