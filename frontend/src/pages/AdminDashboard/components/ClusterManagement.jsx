@@ -116,6 +116,12 @@ const ClusterManagement = React.memo(function ClusterManagement(props) {
   // Helper: format node roles
   function formatNodeRoles(roles) {
     if (!roles) return [];
+    // Fix: handle array-of-numbers roles
+    if (Array.isArray(roles)) {
+      const roleNames = ['Master', 'Data', 'Ingest'];
+      return roles.map((v, i) => v ? roleNames[i] : null).filter(Boolean);
+    }
+    // Object form
     return Object.entries(roles).filter(([, v]) => v).map(([k]) => k.charAt(0).toUpperCase() + k.slice(1));
   }
   // Helper: check if node exists

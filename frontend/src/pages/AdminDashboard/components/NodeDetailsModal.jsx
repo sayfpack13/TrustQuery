@@ -278,16 +278,36 @@ const NodeDetailsModal = React.memo(function NodeDetailsModal({
                 <div className="flex items-center justify-between">
                   <span className="text-neutral-300">Roles:</span>
                   <div className="flex flex-wrap gap-1 justify-end">
-                    {Object.entries(node.roles || {})
-                      .filter(([, enabled]) => enabled)
-                      .map(([role]) => (
-                        <span
-                          key={role}
-                          className="bg-blue-600 text-white text-xs px-2 py-1 rounded"
-                        >
-                          {role}
-                        </span>
-                      ))}
+                    {(() => {
+                      // If roles is an array of numbers, map to names
+                      const roleMap = ["master", "data", "ingest"];
+                      if (Array.isArray(node.roles)) {
+                        return node.roles
+                          .map((v, i) => v ? roleMap[i] : null)
+                          .filter(Boolean)
+                          .map((role) => (
+                            <span
+                              key={role}
+                              className="bg-blue-600 text-white text-xs px-2 py-1 rounded"
+                            >
+                              {role}
+                            </span>
+                          ));
+                      } else if (typeof node.roles === 'object' && node.roles !== null) {
+                        return Object.entries(node.roles)
+                          .filter(([, enabled]) => enabled)
+                          .map(([role]) => (
+                            <span
+                              key={role}
+                              className="bg-blue-600 text-white text-xs px-2 py-1 rounded"
+                            >
+                              {role}
+                            </span>
+                          ));
+                      } else {
+                        return null;
+                      }
+                    })()}
                   </div>
                 </div>
               </div>

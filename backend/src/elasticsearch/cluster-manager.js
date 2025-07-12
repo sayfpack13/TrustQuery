@@ -10,6 +10,7 @@ const { startNode, stopNode, isNodeRunning } = require("./node-process");
 const { removeNodeFiles } = require("./node-filesystem");
 const { buildNodeMetadata, getNodeMetadata, listNodes, repairAndVerifyNodeMetadata } = require("./node-metadata");
 const { getClusterStatus, initialize } = require("./cluster-status");
+const { copyDirectory } = require("./node-filesystem");
 
 /**
  * Create a new Elasticsearch node

@@ -294,11 +294,19 @@ const LocalNodeManager = ({
       setNewNodeDataPath(nodeToEdit.dataPath); // Use exact path, no default
       setNewNodeLogsPath(nodeToEdit.logsPath); // Use exact path, no default
       setNewNodeHeapSize(nodeToEdit.heapSize || '1g');
-      setNewNodeRoles(nodeToEdit.roles || {
-        master: true,
-        data: true,
-        ingest: true,
-      });
+      // --- Fix: Convert roles array to object if needed ---
+      let roles = nodeToEdit.roles;
+      if (Array.isArray(roles)) {
+        // Assume [master, data, ingest] order
+        roles = {
+          master: !!roles[0],
+          data: !!roles[1],
+          ingest: !!roles[2],
+        };
+      } else if (!roles || typeof roles !== 'object') {
+        roles = { master: true, data: true, ingest: true };
+      }
+      setNewNodeRoles(roles);
     } else if (mode === 'create') {
       // Reset form for create mode with default paths
       const defaultName = '';
