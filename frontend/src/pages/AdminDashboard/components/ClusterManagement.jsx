@@ -31,7 +31,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
-function ClusterManagement(props) {
+const ClusterManagement = React.memo(function ClusterManagement(props) {
   // Use props instead of useClusterManagement
   const {
     localNodes,
@@ -1495,7 +1495,7 @@ function ClusterManagement(props) {
       )}
     </>
   );
-}
+});
   
 export default ClusterManagement;
   

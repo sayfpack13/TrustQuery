@@ -18,7 +18,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import buttonStyles from "../../../components/ButtonStyles";
 
-export default function AccountManagement({
+const AccountManagement = React.memo(function AccountManagement({
   showNotification,
   isAnyTaskRunning,
   enhancedNodesData = {},
@@ -1007,4 +1007,6 @@ export default function AccountManagement({
       )}
     </>
   );
-}
+});
+
+export default AccountManagement;

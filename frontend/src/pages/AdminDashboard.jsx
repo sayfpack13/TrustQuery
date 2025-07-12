@@ -1,5 +1,5 @@
 // === frontend/src/pages/AdminDashboard.jsx ===
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import axiosClient from "../api/axiosClient";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -33,23 +33,43 @@ function usePrevious(value) {
   return ref.current;
 }
 
-// Poll node status after task completion
-function pollNodeStatus(nodeName, desiredStatus, clusterManagement, maxAttempts = 10, interval = 2000) {
+// Improved polling: track polling per node, and stop polling if a node task is running
+const nodePollingRefs = {};
+function pollNodeStatus(nodeName, desiredStatus, clusterManagement, tasksList, maxAttempts = 10, interval = 2000) {
+  if (nodePollingRefs[nodeName]) return; // Already polling for this node
   let attempts = 0;
+  let stopped = false;
+  nodePollingRefs[nodeName] = true;
   const poll = async () => {
     attempts++;
+    // If a task is running for this node, stop polling
+    const taskRunning = tasksList.some(
+      (task) => task.nodeName === nodeName && !task.completed && task.status !== 'error'
+    );
+    if (taskRunning) {
+      stopped = true;
+      delete nodePollingRefs[nodeName];
+      return;
+    }
     await clusterManagement.fetchLocalNodes(true);
     const node = clusterManagement.localNodes.find(n => n.name === nodeName);
     if (node && node.status === desiredStatus) {
       // Node reached desired status, stop polling
+      stopped = true;
+      delete nodePollingRefs[nodeName];
       return;
     }
-    if (attempts < maxAttempts) {
+    if (attempts < maxAttempts && !stopped) {
       setTimeout(poll, interval);
+    } else {
+      delete nodePollingRefs[nodeName];
     }
   };
   poll();
 }
+
+// Debounce node refreshes triggered by task completion
+const nodeRefreshDebounceRef = { timer: null, nodes: new Set() };
 
 export default function AdminDashboard() {
   // Track setup completion
@@ -220,6 +240,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!prevTasksList) return;
+    let nodesToRefresh = new Set();
     tasksList.forEach((task) => {
       const prevTask = prevTasksList.find((t) => t.taskId === task.taskId);
       if (
@@ -231,10 +252,21 @@ export default function AdminDashboard() {
       ) {
         // Determine desired status
         const desiredStatus = task.type === 'Start Node' ? 'running' : 'stopped';
-        pollNodeStatus(task.nodeName, desiredStatus, clusterManagementRef.current);
+        pollNodeStatus(task.nodeName, desiredStatus, clusterManagementRef.current, tasksList);
+        nodesToRefresh.add(task.nodeName);
       }
     });
-  }, [tasksList, prevTasksList]);
+    if (nodesToRefresh.size > 0) {
+      // Merge with any nodes already queued for refresh
+      nodesToRefresh.forEach(n => nodeRefreshDebounceRef.nodes.add(n));
+      if (nodeRefreshDebounceRef.timer) clearTimeout(nodeRefreshDebounceRef.timer);
+      nodeRefreshDebounceRef.timer = setTimeout(() => {
+        // For now, still call global fetchLocalNodes (could be optimized to fetch only affected nodes if backend supports)
+        clusterManagement.fetchLocalNodes(true);
+        nodeRefreshDebounceRef.nodes.clear();
+      }, 500);
+    }
+  }, [tasksList, prevTasksList, clusterManagement]);
 
   const handleRefreshNodesAndModal = async (force = false) => {
     await clusterManagement.fetchLocalNodes(force);
@@ -259,6 +291,77 @@ export default function AdminDashboard() {
       }
     }
   };
+
+  // Memoize props for children to avoid unnecessary re-renders
+  const clusterManagementProps = useMemo(() => ({
+    localNodes: clusterManagement.localNodes,
+    enhancedNodesData: clusterManagement.enhancedNodesData,
+    clusterLoading: clusterManagement.clusterLoading,
+    nodeActionLoading: clusterManagement.nodeActionLoading,
+    fetchLocalNodes: clusterManagement.fetchLocalNodes,
+    handleDeleteLocalNode: clusterManagement.handleDeleteLocalNode,
+    handleStartLocalNode: clusterManagement.handleStartLocalNode,
+    handleStopLocalNode: clusterManagement.handleStopLocalNode,
+    clustersList: clusterManagement.clustersList,
+    clustersLoading: clusterManagement.clustersLoading,
+    clusterActionLoading: clusterManagement.clusterActionLoading,
+    fetchClusters: clusterManagement.fetchClusters,
+    updateCluster: clusterManagement.updateCluster,
+    deleteCluster: clusterManagement.deleteCluster,
+    createCluster: clusterManagement.createCluster,
+    selectedCluster: clusterManagement.selectedCluster,
+    setSelectedCluster: clusterManagement.setSelectedCluster,
+    tasksList,
+    showNotification,
+    fetchAllTasks,
+    setShowLocalNodeManager: handleOpenCreateNode,
+    onEditNode: handleEditNode,
+    onOpenNodeDetails: handleOpenNodeDetails,
+    isAnyTaskRunning
+  }), [
+    clusterManagement.localNodes,
+    clusterManagement.enhancedNodesData,
+    clusterManagement.clusterLoading,
+    clusterManagement.nodeActionLoading,
+    clusterManagement.fetchLocalNodes,
+    clusterManagement.handleDeleteLocalNode,
+    clusterManagement.handleStartLocalNode,
+    clusterManagement.handleStopLocalNode,
+    clusterManagement.clustersList,
+    clusterManagement.clustersLoading,
+    clusterManagement.clusterActionLoading,
+    clusterManagement.fetchClusters,
+    clusterManagement.updateCluster,
+    clusterManagement.deleteCluster,
+    clusterManagement.createCluster,
+    clusterManagement.selectedCluster,
+    clusterManagement.setSelectedCluster,
+    tasksList,
+    showNotification,
+    fetchAllTasks,
+    handleOpenCreateNode,
+    handleEditNode,
+    handleOpenNodeDetails,
+    isAnyTaskRunning
+  ]);
+
+  const filesManagementProps = useMemo(() => ({
+    showNotification,
+    isAnyTaskRunning,
+    setTasksList,
+    setCurrentRunningTaskId,
+    availableNodes: clusterManagement.localNodes,
+    enhancedNodesData: clusterManagement.enhancedNodesData,
+    disabled: isAnyTaskRunning
+  }), [showNotification, isAnyTaskRunning, setTasksList, setCurrentRunningTaskId, clusterManagement.localNodes, clusterManagement.enhancedNodesData]);
+
+  const accountManagementProps = useMemo(() => ({
+    showNotification,
+    isAnyTaskRunning,
+    enhancedNodesData: clusterManagement.enhancedNodesData,
+    clustersList: clusterManagement.clustersList,
+    disabled: isAnyTaskRunning
+  }), [showNotification, isAnyTaskRunning, clusterManagement.enhancedNodesData, clusterManagement.clustersList]);
 
   return (
     <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans relative">
@@ -391,56 +494,17 @@ export default function AdminDashboard() {
             <div className="mt-8">
               {/* Files Management Tab */}
               {activeTab === "files" && (
-                <FilesManagement
-                  showNotification={showNotification}
-                  isAnyTaskRunning={isAnyTaskRunning}
-                  setTasksList={setTasksList}
-                  setCurrentRunningTaskId={setCurrentRunningTaskId}
-                  availableNodes={clusterManagement.localNodes}
-                  enhancedNodesData={clusterManagement.enhancedNodesData}
-                  disabled={isAnyTaskRunning}
-                />
+                <FilesManagement {...filesManagementProps} />
               )}
 
               {/* Cluster Management Tab */}
               {activeTab === "cluster" && (
-                <ClusterManagement
-                  localNodes={clusterManagement.localNodes}
-                  enhancedNodesData={clusterManagement.enhancedNodesData}
-                  clusterLoading={clusterManagement.clusterLoading}
-                  nodeActionLoading={clusterManagement.nodeActionLoading}
-                  fetchLocalNodes={clusterManagement.fetchLocalNodes}
-                  handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
-                  handleStartLocalNode={clusterManagement.handleStartLocalNode}
-                  handleStopLocalNode={clusterManagement.handleStopLocalNode}
-                  clustersList={clusterManagement.clustersList}
-                  clustersLoading={clusterManagement.clustersLoading}
-                  clusterActionLoading={clusterManagement.clusterActionLoading}
-                  fetchClusters={clusterManagement.fetchClusters}
-                  updateCluster={clusterManagement.updateCluster}
-                  deleteCluster={clusterManagement.deleteCluster}
-                  createCluster={clusterManagement.createCluster}
-                  selectedCluster={clusterManagement.selectedCluster}
-                  setSelectedCluster={clusterManagement.setSelectedCluster}
-                  tasksList={tasksList}
-                  showNotification={showNotification}
-                  fetchAllTasks={fetchAllTasks}
-                  setShowLocalNodeManager={handleOpenCreateNode}
-                  onEditNode={handleEditNode}
-                  onOpenNodeDetails={handleOpenNodeDetails}
-                  isAnyTaskRunning={isAnyTaskRunning}
-                />
+                <ClusterManagement {...clusterManagementProps} />
               )}
 
               {/* Account Management Tab */}
               {activeTab === "accounts" && (
-                <AccountManagement
-                  showNotification={showNotification}
-                  isAnyTaskRunning={isAnyTaskRunning}
-                  enhancedNodesData={clusterManagement.enhancedNodesData}
-                  clustersList={clusterManagement.clustersList}
-                  disabled={isAnyTaskRunning}
-                />
+                <AccountManagement {...accountManagementProps} />
               )}
 
               {/* Configuration Tab */}

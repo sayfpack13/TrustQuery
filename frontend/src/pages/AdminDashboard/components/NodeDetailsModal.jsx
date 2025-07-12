@@ -17,7 +17,7 @@ import axiosClient from "../../../api/axiosClient";
 import { formatBytes } from "../../../utils/format";
 import buttonStyles from "../../../components/ButtonStyles";
 
-export default function NodeDetailsModal({
+const NodeDetailsModal = React.memo(function NodeDetailsModal({
   show,
   onClose,
   node,
@@ -514,7 +514,7 @@ export default function NodeDetailsModal({
                         value={newIndexName}
                         onChange={e => setNewIndexName(e.target.value)}
                         disabled={isCreatingIndex}
-                        placeholder="e.g. accounts_2024"
+                        placeholder="e.g. accounts"
                         autoFocus
                       />
                     </div>
@@ -842,4 +842,6 @@ export default function NodeDetailsModal({
       )}
     </>
   );
-}
+});
+
+export default NodeDetailsModal;

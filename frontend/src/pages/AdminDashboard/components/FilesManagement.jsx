@@ -24,7 +24,7 @@ import {
 import { formatBytes } from "../../../utils/format";
 import buttonStyles from "../../../components/ButtonStyles";
 
-export default function FilesManagement({
+const FilesManagement = React.memo(function FilesManagement({
   showNotification,
   isAnyTaskRunning,
   setTasksList = () => {}, // Default to no-op if not provided
@@ -855,4 +855,6 @@ export default function FilesManagement({
       )}
     </>
   );
-}
+});
+
+export default FilesManagement;
