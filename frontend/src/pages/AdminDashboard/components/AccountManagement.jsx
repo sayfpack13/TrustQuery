@@ -839,7 +839,7 @@ const AccountManagement = React.memo(function AccountManagement({
                           className="text-green-400"
                         />
                         <span>
-                          {account._source?.node || account.node || "Unknown"}
+                          {account._source?.node || account.node || account._node || "Unknown"}
                         </span>
                       </div>
                     </td>

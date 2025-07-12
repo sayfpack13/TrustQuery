@@ -843,7 +843,7 @@ className={buttonStyles.create}
                   disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
                     (mode === 'edit' && nodeToEdit?.status !== 'stopped')
-                      ? 'cursor-not-allowed opacity-70 border-neutral-600'
+                      ? 'cursor-not-allowed opacity-70 border-neutral-600' 
                       : 'focus:ring-2 border-neutral-700 focus:ring-blue-500'
                   }`}
                   title={mode === 'edit' ? "Path editing disabled - use Move Node or Copy Node buttons instead" : undefined}
@@ -874,7 +874,7 @@ className={buttonStyles.create}
                   disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
                     (mode === 'edit' && nodeToEdit?.status !== 'stopped')
-                      ? 'cursor-not-allowed opacity-70 border-neutral-600'
+                      ? 'cursor-not-allowed opacity-70 border-neutral-600' 
                       : 'focus:ring-2 border-neutral-700 focus:ring-blue-500'
                   }`}
                   title={mode === 'edit' ? "Path editing disabled - use Move Node or Copy Node buttons instead" : undefined}

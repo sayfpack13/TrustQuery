@@ -805,7 +805,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
             username: "Unknown",
             password: "Unknown",
             _index: hit._index,
-            _node: requestedNode || null,
+            node: requestedNode || null,
           };
         }
 
@@ -817,7 +817,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           username,
           password,
           _index: hit._index,
-          _node: requestedNode || null,
+          node: requestedNode || null,
         };
       });
 

@@ -295,14 +295,14 @@ const NodeDetailsModal = React.memo(function NodeDetailsModal({
                           ));
                       } else if (typeof node.roles === 'object' && node.roles !== null) {
                         return Object.entries(node.roles)
-                          .filter(([, enabled]) => enabled)
-                          .map(([role]) => (
-                            <span
-                              key={role}
-                              className="bg-blue-600 text-white text-xs px-2 py-1 rounded"
-                            >
-                              {role}
-                            </span>
+                      .filter(([, enabled]) => enabled)
+                      .map(([role]) => (
+                        <span
+                          key={role}
+                          className="bg-blue-600 text-white text-xs px-2 py-1 rounded"
+                        >
+                          {role}
+                        </span>
                           ));
                       } else {
                         return null;
