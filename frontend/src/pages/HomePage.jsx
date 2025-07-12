@@ -24,7 +24,7 @@ export default function HomePage() {
   const [searchWarning, setSearchWarning] = useState("");
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(20);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
   const [totalResults, setTotalResults] = useState(0); // State for total collected data
   const [totalCollectedData, setTotalCollectedData] = useState(0);
   const [searchedIndicesForTotal, setSearchedIndicesForTotal] = useState([]);
@@ -306,6 +306,15 @@ export default function HomePage() {
     return pages;
   };
 
+  // Add max results selection
+  const maxResultsOptions = [20, 50, 100, 500, 1000];
+
+  // Add handler for max results change
+  const handleMaxResultsChange = (e) => {
+    setItemsPerPage(Number(e.target.value));
+    setCurrentPage(1); // Reset to first page on change
+  };
+
   return (
     <div
       className={`min-h-screen bg-background px-4 sm:px-6 lg:px-8 font-sans transition-all duration-700 ease-in-out relative overflow-hidden
@@ -319,6 +328,20 @@ export default function HomePage() {
         zIndex: 1,
       }}
     >
+      {/* Max results selection */}
+      <div className="flex justify-center items-center mb-4">
+        <label htmlFor="max-results-select" className="mr-2 font-medium text-text">Max results per page:</label>
+        <select
+          id="max-results-select"
+          value={itemsPerPage}
+          onChange={handleMaxResultsChange}
+          className="border border-border rounded px-2 py-1 bg-background text-text focus:outline-none focus:ring-2 focus:ring-primary"
+        >
+          {maxResultsOptions.map((opt) => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
+      </div>
       {/* Animated Earth Globe with controlled Z-index and opacity */}
       <div
         style={{
