@@ -176,8 +176,8 @@ async function startNode(nodeName, progressCallback = () => {}) {
     for (let i = 0; i < 120; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Update progress every 10 seconds
-      if (i % 10 === 0) {
+      // Update progress every 3 seconds
+      if (i % 3 === 0) {
         const progressValue = Math.min(40 + Math.floor(i / 2), 95);
         progressCallback({ 
           progress: progressValue, 

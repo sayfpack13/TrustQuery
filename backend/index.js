@@ -1782,22 +1782,41 @@ app.get("/api/search", async (req, res) => {
     const pageSize = Math.min(parseInt(size || GLOBAL_LIMIT), GLOBAL_LIMIT);
     const from = (parseInt(page) - 1) * pageSize;
     
+    // Use indices-by-nodes cache to filter online nodes/indices
+    const { getCacheFiltered } = require("./src/cache/indices-cache");
+    const indicesByNodes = await getCacheFiltered();
+    // Only include nodes with status 'running'
+    const runningNodes = Object.entries(indicesByNodes)
+      .filter(([nodeName, nodeData]) => nodeData.status === "running")
+      .map(([nodeName, nodeData]) => nodeName);
     // Always treat searchIndices as array of {node,index}
     const indicesToSearch = Array.isArray(searchIndices) && typeof searchIndices[0] === "object"
-      ? searchIndices
-      : searchIndices.map((idx) => ({ node: "default", index: idx }));
-
+        ? searchIndices
+        : searchIndices.map((idx) => ({ node: "default", index: idx }));
+    // Filter indicesToSearch to only include those on running nodes and present in cache
+    const filteredNodeIndexPairs = indicesToSearch.filter(({ node, index }) => {
+      if (!node || !index) return false;
+      if (!runningNodes.includes(node)) return false;
+      const nodeIndices = indicesByNodes[node]?.indices || [];
+      return nodeIndices.some(i => i.index === index);
+    });
+    if (filteredNodeIndexPairs.length === 0) {
+      return res.json({
+        results: [],
+        total: 0,
+        searchIndices: [],
+        message: "No online nodes or indices available for search.",
+      });
+    }
     // Prepare client instances (reuse clients for the same node)
     const clientsCache = {};
     const { Client } = require("@elastic/elasticsearch");
     let allResults = [];
     let searchedIndices = [];
     let esAvailable = false;
-
     // Group by node+index to avoid merging same-named indices across nodes
-    const nodeIndexPairs = indicesToSearch.map(entry => ({ node: entry.node, index: entry.index }));
+    const nodeIndexPairs = filteredNodeIndexPairs.map(entry => ({ node: entry.node, index: entry.index }));
     const perNodeLimit = Math.ceil((GLOBAL_LIMIT * 2) / nodeIndexPairs.length); // 2x buffer for sorting
-
     const searchPromises = nodeIndexPairs.map(async ({ node, index }) => {
       if (!node || !index) return null;
       let nodeUrl = nodeMetadata[node]?.nodeUrl;
@@ -1867,7 +1886,6 @@ app.get("/api/search", async (req, res) => {
         return null;
       }
     });
-
     const searchResponses = await Promise.all(searchPromises);
     let totalCount = 0;
     searchResponses.filter(Boolean).forEach(result => {
@@ -1877,13 +1895,10 @@ app.get("/api/search", async (req, res) => {
         searchedIndices.push({ node: result.node, index: result.index });
       }
     });
-
     // Sort all results by id (or customize as needed)
     allResults.sort((a, b) => a.id.localeCompare(b.id));
-
     // Paginate in memory (shallow only, but never exceed GLOBAL_LIMIT)
     const paginatedResults = allResults.slice(from, from + pageSize);
-    
     if (!esAvailable) {
       return res.json({
         results: [],
@@ -1893,7 +1908,6 @@ app.get("/api/search", async (req, res) => {
         time_ms: Date.now() - startTime
       });
     }
-
     const executionTime = Date.now() - startTime;
     res.json({
       results: paginatedResults,

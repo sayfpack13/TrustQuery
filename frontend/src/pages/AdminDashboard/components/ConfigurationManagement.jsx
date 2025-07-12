@@ -21,6 +21,7 @@ export default function ConfigurationManagement({
   showNotification,
   enhancedNodesData = {},
   setShowSetupWizard,
+  onRefreshIndices,
 }) {
   const [config, setConfig] = useState({});
   const [isLoading, setIsLoading] = useState(true);
@@ -42,6 +43,9 @@ export default function ConfigurationManagement({
   const [searchIndices, setSearchIndices] = useState([]);
   const [isLoadingIndices, setIsLoadingIndices] = useState(false);
   const [indicesError, setIndicesError] = useState(null);
+
+  // Add local loading state for refresh
+  const [isRefreshingIndices, setIsRefreshingIndices] = useState(false);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -158,6 +162,28 @@ export default function ConfigurationManagement({
     }
   };
 
+  // Handler for refresh button
+  const handleRefreshIndices = async () => {
+    if (!onRefreshIndices) return;
+    setIsRefreshingIndices(true);
+    try {
+      await onRefreshIndices(true); // force refresh
+      showNotification(
+        "success",
+        "Indices refreshed successfully!",
+        faCheckCircle
+      );
+    } catch (err) {
+      showNotification(
+        "error",
+        err?.message || "Failed to refresh indices",
+        faTimes
+      );
+    } finally {
+      setIsRefreshingIndices(false);
+    }
+  };
+
   return (
     <section className="mb-12 p-6 bg-neutral-800 rounded-lg shadow-xl border border-neutral-700">
       <h2 className="text-3xl font-semibold text-white mb-6 flex items-center">
@@ -205,6 +231,24 @@ export default function ConfigurationManagement({
                 />
                 Multi-Index Search Configuration
               </h3>
+              <button
+                onClick={handleRefreshIndices}
+                className={buttonStyles.primary}
+                disabled={isRefreshingIndices || isLoading}
+                title="Refresh indices from all nodes"
+              >
+                {isRefreshingIndices ? (
+                  <>
+                    <FontAwesomeIcon icon={faSpinner} spin className="mr-2" />
+                    Refreshing...
+                  </>
+                ) : (
+                  <>
+                    <FontAwesomeIcon icon={faCircleNotch} className="mr-2" />
+                    Refresh
+                  </>
+                )}
+              </button>
             </div>
 
             <p className="text-neutral-300 mb-4">

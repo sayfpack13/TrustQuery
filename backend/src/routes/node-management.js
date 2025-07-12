@@ -959,10 +959,19 @@ router.post("/nodes/repair-and-verify", verifyJwt, async (req, res) => {
 router.get("/local-nodes", verifyJwt, async (req, res) => {
   try {
     const { listNodes } = require("../elasticsearch/node-metadata");
-    const { getCacheFiltered } = require("../cache/indices-cache");
+    const { getCacheFiltered, refreshClusterCache } = require("../cache/indices-cache");
+    const forceRefresh = req.query.forceRefresh === "true";
+    if (forceRefresh) {
+      await refreshClusterCache();
+    }
     const nodes = await listNodes();
     const indicesByNodes = await getCacheFiltered();
-    res.json({ nodes, indicesByNodes });
+    // Attach indices (with health) to each node in the nodes array
+    const nodesWithIndices = nodes.map(node => {
+      const nodeIndices = indicesByNodes[node.name]?.indices || [];
+      return { ...node, indices: nodeIndices };
+    });
+    res.json({ nodes: nodesWithIndices, indicesByNodes });
   } catch (error) {
     console.error("Error fetching local nodes or indices cache:", error);
     res.status(500).json({ error: "Failed to fetch local nodes or indices cache" });

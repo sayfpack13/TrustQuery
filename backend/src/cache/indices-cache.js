@@ -129,6 +129,21 @@ async function refreshClusterCache() {
         const shardsResponse = await client.cat.shards({
           format: "json",
         });
+        // Fetch index health for all indices on this node
+        let healthByIndex = {};
+        try {
+          const catIndices = await client.cat.indices({
+            format: "json",
+            h: "index,health",
+          });
+          for (const idx of catIndices) {
+            if (idx.index && idx.health) {
+              healthByIndex[idx.index] = idx.health;
+            }
+          }
+        } catch (e) {
+          console.warn(`[indices-cache] Could not fetch index health for node ${nodeName}:`, e.message);
+        }
         // Build a set of indices that have at least one shard on this node
         const indicesWithShards = new Set();
         for (const shard of shardsResponse) {
@@ -143,6 +158,7 @@ async function refreshClusterCache() {
               indices[indexName] = {
                 "doc.count": (indexStats.primaries.docs && indexStats.primaries.docs.count) || 0,
                 "store.size": (indexStats.primaries.store && indexStats.primaries.store.size_in_bytes) || 0,
+                health: healthByIndex[indexName] || "unknown",
               };
             }
           }
@@ -292,6 +308,7 @@ async function getCacheFiltered() {
             index: indexName,
             "doc.count": indexData["doc.count"] || 0,
             "store.size": indexData["store.size"] || 0,
+            health: indexData.health || "unknown",
           }));
 
       processedCache[nodeName] = {

@@ -250,7 +250,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
       let attempts = 0;
       let found = false;
       while (attempts < 10) {
-        await fetchLocalNodes(true);
+        await fetchLocalNodes(true); // Only here use forceRefresh
         const node = localNodes.find((n) => n.name === nodeName);
         if (node && node.status === "running") {
           found = true;
@@ -284,7 +284,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
       let attempts = 0;
       let found = false;
       while (attempts < 10) {
-        await fetchLocalNodes(true);
+        await fetchLocalNodes(true); // Only here use forceRefresh
         const node = localNodes.find((n) => n.name === nodeName);
         if (node && node.status === "stopped") {
           found = true;

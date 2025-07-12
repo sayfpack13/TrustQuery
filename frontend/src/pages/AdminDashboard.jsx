@@ -143,7 +143,7 @@ export default function AdminDashboard() {
   // Fetch additional data when cluster tab is active
   useEffect(() => {
     if (activeTab === "cluster" || activeTab === "files") {
-      clusterManagement.fetchLocalNodes();
+      clusterManagement.fetchLocalNodes(); // No force refresh for background/tab change
     }
     // Only depend on activeTab to prevent infinite API calls
   }, [activeTab]);
@@ -243,12 +243,15 @@ export default function AdminDashboard() {
     let nodesToRefresh = new Set();
     tasksList.forEach((task) => {
       const prevTask = prevTasksList.find((t) => t.taskId === task.taskId);
+      // Only trigger polling/refresh if this task was not completed before, but is now completed, and is a node start/stop
       if (
         prevTask &&
         prevTask.status !== 'completed' &&
         task.status === 'completed' &&
         (task.type === 'Start Node' || task.type === 'Stop Node') &&
-        task.nodeName
+        task.nodeName &&
+        // Only trigger if not already polling for this node
+        !nodePollingRefs[task.nodeName]
       ) {
         // Determine desired status
         const desiredStatus = task.type === 'Start Node' ? 'running' : 'stopped';
@@ -261,8 +264,7 @@ export default function AdminDashboard() {
       nodesToRefresh.forEach(n => nodeRefreshDebounceRef.nodes.add(n));
       if (nodeRefreshDebounceRef.timer) clearTimeout(nodeRefreshDebounceRef.timer);
       nodeRefreshDebounceRef.timer = setTimeout(() => {
-        // For now, still call global fetchLocalNodes (could be optimized to fetch only affected nodes if backend supports)
-        clusterManagement.fetchLocalNodes(true);
+        clusterManagement.fetchLocalNodes(true); // Only here use force refresh
         nodeRefreshDebounceRef.nodes.clear();
       }, 500);
     }
@@ -513,6 +515,7 @@ export default function AdminDashboard() {
                   showNotification={showNotification}
                   enhancedNodesData={clusterManagement.enhancedNodesData}
                   setShowSetupWizard={setShowSetupWizard}
+                  onRefreshIndices={clusterManagement.fetchLocalNodes}
                 />
               )}
             </div>
