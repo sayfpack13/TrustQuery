@@ -830,12 +830,12 @@ className={buttonStyles.create}
                 <input
                   type="text"
                   value={newNodeDataPath}
-                  onChange={mode === 'create' ? (e) => setNewNodeDataPath(e.target.value) : undefined}
+                  onChange={(e) => setNewNodeDataPath(e.target.value)}
                   placeholder={backendBasePath ? `${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}node-name${backendBasePath.includes('\\') ? '\\' : '/'}data` : 'C:\\elasticsearch\\nodes\\node-name\\data'}
-                  disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
+                  disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
-                    mode === 'edit' 
-                      ? 'cursor-not-allowed opacity-70 border-neutral-600' 
+                    (mode === 'edit' && nodeToEdit?.status !== 'stopped')
+                      ? 'cursor-not-allowed opacity-70 border-neutral-600'
                       : 'focus:ring-2 border-neutral-700 focus:ring-blue-500'
                   }`}
                   title={mode === 'edit' ? "Path editing disabled - use Move Node or Copy Node buttons instead" : undefined}
@@ -861,12 +861,12 @@ className={buttonStyles.create}
                 <input
                   type="text"
                   value={newNodeLogsPath}
-                  onChange={mode === 'create' ? (e) => setNewNodeLogsPath(e.target.value) : undefined}
+                  onChange={(e) => setNewNodeLogsPath(e.target.value)}
                   placeholder={backendBasePath ? `${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}node-name${backendBasePath.includes('\\') ? '\\' : '/'}logs` : 'C:\\elasticsearch\\nodes\\node-name\\logs'}
-                  disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
+                  disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
-                    mode === 'edit' 
-                      ? 'cursor-not-allowed opacity-70 border-neutral-600' 
+                    (mode === 'edit' && nodeToEdit?.status !== 'stopped')
+                      ? 'cursor-not-allowed opacity-70 border-neutral-600'
                       : 'focus:ring-2 border-neutral-700 focus:ring-blue-500'
                   }`}
                   title={mode === 'edit' ? "Path editing disabled - use Move Node or Copy Node buttons instead" : undefined}
@@ -1010,9 +1010,10 @@ className={buttonStyles.create}
                   port: parseInt(newNodePort),
                   transportPort: parseInt(newNodeTransportPort),
                   cluster: newNodeCluster,
+                  dataPath: newNodeDataPath,
+                  logsPath: newNodeLogsPath,
                   roles: newNodeRoles,
                   heapSize: newNodeHeapSize
-                  // Explicitly omit dataPath and logsPath in edit mode
                 };
                 
                 // Always validate before updating (single source of truth)

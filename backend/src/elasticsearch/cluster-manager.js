@@ -184,6 +184,17 @@ async function updateNode(nodeName, updates, options = {}) {
       configObj["transport.port"] = updates.transportPort;
       configChanged = true;
     }
+    // Update dataPath and logsPath in config if provided
+    if (typeof updates.dataPath !== "undefined") {
+      configObj["path.data"] = updates.dataPath;
+      newDataPath = updates.dataPath;
+      configChanged = true;
+    }
+    if (typeof updates.logsPath !== "undefined") {
+      configObj["path.logs"] = updates.logsPath;
+      newLogsPath = updates.logsPath;
+      configChanged = true;
+    }
 
     // Write updated config if needed
     if (configChanged) {
