@@ -49,14 +49,97 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
   try {
     const env = getEnvAndConfig();
     const metadata = getNodeMetadata(nodeName);
-    
     if (!metadata) {
       throw new Error(`Node "${nodeName}" not found`);
     }
 
-    // Create new paths
-    const newNodeBaseDir = path.join(newBasePath, "nodes", nodeName);
-    const newPaths = {
+    // Determine current node base directory
+    const currentNodeBaseDir = path.dirname(path.dirname(metadata.configPath));
+    const newNodeBaseDir = newBasePath; // Do NOT append nodeName
+    const newNodeName = path.basename(newNodeBaseDir);
+
+    // If the new path is the same as the current, do nothing
+    if (path.resolve(currentNodeBaseDir) === path.resolve(newNodeBaseDir)) {
+      return {
+        configPath: path.join(newNodeBaseDir, "config", "elasticsearch.yml"),
+        servicePath: path.join(
+          newNodeBaseDir,
+          "config",
+          env.isWindows ? "start-node.bat" : "start-node.sh"
+        ),
+        dataPath: path.join(newNodeBaseDir, "data"),
+        logsPath: path.join(newNodeBaseDir, "logs"),
+      };
+    }
+
+    // Create newPath if it doesn't exist
+    await fs.mkdir(newNodeBaseDir, { recursive: true });
+
+    // Move all contents from currentNodeBaseDir into newNodeBaseDir
+    const entries = await fs.readdir(currentNodeBaseDir);
+    for (const entry of entries) {
+      const srcPath = path.join(currentNodeBaseDir, entry);
+      const destPath = path.join(newNodeBaseDir, entry);
+      try {
+        await fs.rename(srcPath, destPath);
+      } catch (err) {
+        // If cross-device error, fallback to copy+delete
+        if (err.code === 'EXDEV') {
+          await copyDirectory(srcPath, destPath);
+          if (!preserveData) {
+            await fs.rm(srcPath, { recursive: true, force: true });
+          }
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    // Remove the old (now empty) node directory
+    try {
+      await fs.rmdir(currentNodeBaseDir);
+    } catch (e) {
+      // Ignore if not empty or already removed
+    }
+
+    // Update node.name, path.data, and path.logs in config file
+    const configPath = path.join(newNodeBaseDir, "config", "elasticsearch.yml");
+    try {
+      const yaml = require("yaml");
+      let configContent = await fs.readFile(configPath, "utf8");
+      let configObj = yaml.parse(configContent);
+      let changed = false;
+      // Update node.name
+      if (configObj["node.name"] !== newNodeName) {
+        configObj["node.name"] = newNodeName;
+        changed = true;
+      }
+      // Update path.data if it was inside the old node dir
+      if (configObj["path.data"]) {
+        const oldDataPath = configObj["path.data"];
+        if (oldDataPath.startsWith(currentNodeBaseDir + path.sep) || oldDataPath === path.join(currentNodeBaseDir, "data")) {
+          configObj["path.data"] = path.join(newNodeBaseDir, path.relative(currentNodeBaseDir, oldDataPath));
+          changed = true;
+        }
+      }
+      // Update path.logs if it was inside the old node dir
+      if (configObj["path.logs"]) {
+        const oldLogsPath = configObj["path.logs"];
+        if (oldLogsPath.startsWith(currentNodeBaseDir + path.sep) || oldLogsPath === path.join(currentNodeBaseDir, "logs")) {
+          configObj["path.logs"] = path.join(newNodeBaseDir, path.relative(currentNodeBaseDir, oldLogsPath));
+          changed = true;
+        }
+      }
+      if (changed) {
+        configContent = yaml.stringify(configObj);
+        await fs.writeFile(configPath, configContent, "utf8");
+      }
+    } catch (e) {
+      // If config file missing or invalid, ignore
+    }
+
+    // Return new paths
+    return {
       configPath: path.join(newNodeBaseDir, "config", "elasticsearch.yml"),
       servicePath: path.join(
         newNodeBaseDir,
@@ -66,20 +149,6 @@ async function moveNode(nodeName, newBasePath, preserveData = true) {
       dataPath: path.join(newNodeBaseDir, "data"),
       logsPath: path.join(newNodeBaseDir, "logs"),
     };
-
-    // Create directories
-    await fs.mkdir(path.dirname(newPaths.configPath), { recursive: true });
-    await fs.mkdir(newPaths.dataPath, { recursive: true });
-    await fs.mkdir(newPaths.logsPath, { recursive: true });
-
-    // Copy files
-    if (preserveData) {
-      await copyDirectory(metadata.dataPath, newPaths.dataPath);
-      await copyDirectory(metadata.logsPath, newPaths.logsPath);
-    }
-
-    // Return new paths
-    return newPaths;
   } catch (error) {
     console.error(`Error moving node ${nodeName}:`, error);
     throw error;
@@ -99,7 +168,13 @@ async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = fal
     }
 
     // Create new paths
-    const newNodeBaseDir = path.join(newBasePath, "nodes", newNodeName);
+    let newNodeBaseDir = newBasePath;
+    if (!newBasePath.endsWith(path.sep + newNodeName) && !newBasePath.endsWith('/' + newNodeName) && !newBasePath.endsWith('\\' + newNodeName)) {
+      const baseName = path.basename(newBasePath);
+      if (baseName !== newNodeName) {
+        newNodeBaseDir = path.join(newBasePath, newNodeName);
+      }
+    }
     const newPaths = {
       configPath: path.join(newNodeBaseDir, "config", "elasticsearch.yml"),
       servicePath: path.join(

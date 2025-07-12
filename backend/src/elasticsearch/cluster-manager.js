@@ -7,7 +7,7 @@ const yaml = require("yaml");
 
 const { getEnvAndConfig, generateNodeConfig, generateJVMOptions, generateLog4j2Config, generateServiceScript, formatNodeRoles, getNodeConfig, getNodeConfigContent } = require("./node-config");
 const { startNode, stopNode, isNodeRunning } = require("./node-process");
-const { moveNode, copyNode, removeNodeFiles } = require("./node-filesystem");
+const { removeNodeFiles } = require("./node-filesystem");
 const { buildNodeMetadata, getNodeMetadata, listNodes, verifyNodeMetadata } = require("./node-metadata");
 const { getClusterStatus, initialize } = require("./cluster-status");
 
@@ -347,20 +347,9 @@ async function validateNodeConfig(nodeConfig, originalName) {
     }
     
     // Check if the ports are available on the system
-    async function isPortAvailable(port) {
-      return new Promise((resolve) => {
-        const server = net.createServer();
-        server.once("error", () => resolve(false));
-        server.once("listening", () => {
-          server.close(() => resolve(true));
-        });
-        server.listen(port, "0.0.0.0");
-      });
-    }
-
     if (thisPort && typeof thisPort === "number") {
-      const available = await isPortAvailable(thisPort);
-      if (!available) {
+      const httpPortAvailable = await isPortAvailable(thisPort);
+      if (!httpPortAvailable) {
         conflicts.push({
           type: 'http_port',
           message: `HTTP port ${thisPort} is not available on this system`
@@ -369,8 +358,8 @@ async function validateNodeConfig(nodeConfig, originalName) {
       }
     }
     if (thisTransportPort && typeof thisTransportPort === "number") {
-      const available = await isPortAvailable(thisTransportPort);
-      if (!available) {
+      const transportPortAvailable = await isPortAvailable(thisTransportPort);
+      if (!transportPortAvailable) {
         conflicts.push({
           type: 'transport_port',
           message: `Transport port ${thisTransportPort} is not available on this system`
@@ -414,6 +403,156 @@ async function validateNodeConfig(nodeConfig, originalName) {
       suggestions: {}
     };
   }
+}
+
+// Helper to check if a port is available
+async function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const net = require("net");
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "0.0.0.0");
+  });
+}
+
+// Add this helper to find the next available port
+async function findNextAvailablePort(startPort, usedPorts) {
+  let port = startPort;
+  while (usedPorts.has(port) || !(await isPortAvailable(port))) {
+    port++;
+  }
+  return port;
+}
+
+// Exported copyNode function (single definition)
+async function copyNode(sourceNodeName, newNodeName, newBasePath, copyData = false) {
+  try {
+    const env = getEnvAndConfig();
+    const sourceMetadata = getNodeMetadata(sourceNodeName);
+    if (!sourceMetadata) {
+      throw new Error(`Source node "${sourceNodeName}" not found`);
+    }
+
+    // Gather all used ports
+    const { getConfig } = require("../config");
+    const nodeMetadata = getConfig("nodeMetadata") || {};
+    const usedHttpPorts = new Set();
+    const usedTransportPorts = new Set();
+    for (const meta of Object.values(nodeMetadata)) {
+      if (meta.port) usedHttpPorts.add(meta.port);
+      if (meta.transportPort) usedTransportPorts.add(meta.transportPort);
+    }
+
+    // Find next available ports
+    const startHttpPort = (sourceMetadata.port && typeof sourceMetadata.port === "number") ? sourceMetadata.port + 1 : 9200;
+    const startTransportPort = (sourceMetadata.transportPort && typeof sourceMetadata.transportPort === "number") ? sourceMetadata.transportPort + 1 : 9300;
+    const httpPort = await findNextAvailablePort(startHttpPort, usedHttpPorts);
+    usedHttpPorts.add(httpPort);
+    const transportPort = await findNextAvailablePort(startTransportPort, usedTransportPorts);
+
+    // Create new paths (avoid double node folder)
+    let newNodeBaseDir = newBasePath;
+    if (!newBasePath.endsWith(path.sep + newNodeName) && !newBasePath.endsWith('/' + newNodeName) && !newBasePath.endsWith('\\' + newNodeName)) {
+      const baseName = require('path').basename(newBasePath);
+      if (baseName !== newNodeName) {
+        newNodeBaseDir = path.join(newBasePath, newNodeName);
+      }
+    }
+    const newPaths = {
+      configPath: path.join(newNodeBaseDir, "config", "elasticsearch.yml"),
+      servicePath: path.join(
+        newNodeBaseDir,
+        "config",
+        env.isWindows ? "start-node.bat" : "start-node.sh"
+      ),
+      dataPath: path.join(newNodeBaseDir, "data"),
+      logsPath: path.join(newNodeBaseDir, "logs"),
+    };
+
+    // Create directories
+    await fs.mkdir(path.dirname(newPaths.configPath), { recursive: true });
+    await fs.mkdir(newPaths.dataPath, { recursive: true });
+    await fs.mkdir(newPaths.logsPath, { recursive: true });
+
+    // Copy files
+    if (copyData) {
+      await copyDirectory(sourceMetadata.dataPath, newPaths.dataPath);
+      await copyDirectory(sourceMetadata.logsPath, newPaths.logsPath);
+    }
+
+    // Generate config for the new node
+    const { generateNodeConfig, generateJVMOptions, generateLog4j2Config, generateServiceScript } = require("./node-config");
+    const config = generateNodeConfig({
+      ...sourceMetadata,
+      name: newNodeName,
+      dataPath: newPaths.dataPath,
+      logsPath: newPaths.logsPath,
+      port: httpPort,
+      transportPort: transportPort,
+    });
+    await fs.writeFile(newPaths.configPath, config);
+
+    // JVM options
+    const jvmOptions = generateJVMOptions(sourceMetadata.heapSize || "1g");
+    const jvmPath = path.join(path.dirname(newPaths.configPath), "jvm.options");
+    await fs.writeFile(jvmPath, jvmOptions);
+
+    // log4j2.properties
+    const log4j2Config = generateLog4j2Config(newPaths.logsPath);
+    const log4j2Path = path.join(path.dirname(newPaths.configPath), "log4j2.properties");
+    await fs.writeFile(log4j2Path, log4j2Config);
+
+    // Service script
+    const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
+    const servicePath = path.join(path.dirname(newPaths.configPath), serviceFileName);
+    const serviceContent = generateServiceScript(
+      newNodeName,
+      path.dirname(newPaths.configPath),
+      httpPort,
+      env
+    );
+    await fs.writeFile(servicePath, serviceContent);
+    if (!env.isWindows) {
+      await fs.chmod(servicePath, "755");
+    }
+
+    // Return new node metadata
+    return {
+      name: newNodeName,
+      configPath: newPaths.configPath,
+      servicePath,
+      dataPath: newPaths.dataPath,
+      logsPath: newPaths.logsPath,
+      cluster: sourceMetadata.cluster,
+      host: sourceMetadata.host || "localhost",
+      port: httpPort,
+      transportPort: transportPort,
+      roles: sourceMetadata.roles,
+      heapSize: sourceMetadata.heapSize,
+      nodeUrl: `http://${sourceMetadata.host || "localhost"}:${httpPort}`,
+    };
+  } catch (error) {
+    console.error(`Error copying node ${sourceNodeName}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Move a node to a new base path
+ */
+async function moveNode(nodeName, newBasePath, preserveData = true) {
+  // If newBasePath is absolute, use it as the final node directory (do not append nodeName)
+  let finalBasePath = newBasePath;
+  const baseName = path.basename(newBasePath);
+  if (path.isAbsolute(newBasePath)) {
+    finalBasePath = newBasePath;
+  } else if (baseName !== nodeName) {
+    finalBasePath = path.join(newBasePath, nodeName);
+  }
+  return await require("./node-filesystem").moveNode(nodeName, finalBasePath, preserveData);
 }
 
 // --- EXPORT AS FUNCTIONAL MODULE ---
