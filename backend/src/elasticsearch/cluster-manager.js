@@ -8,7 +8,7 @@ const yaml = require("yaml");
 const { getEnvAndConfig, generateNodeConfig, generateJVMOptions, generateLog4j2Config, generateServiceScript, formatNodeRoles, getNodeConfig, getNodeConfigContent } = require("./node-config");
 const { startNode, stopNode, isNodeRunning } = require("./node-process");
 const { removeNodeFiles } = require("./node-filesystem");
-const { buildNodeMetadata, getNodeMetadata, listNodes, verifyNodeMetadata } = require("./node-metadata");
+const { buildNodeMetadata, getNodeMetadata, listNodes, repairAndVerifyNodeMetadata } = require("./node-metadata");
 const { getClusterStatus, initialize } = require("./cluster-status");
 
 /**
@@ -171,6 +171,20 @@ async function updateNode(nodeName, updates, options = {}) {
       configChanged = true;
     }
 
+    // Update host, port, and transportPort in config if provided
+    if (typeof updates.host !== "undefined") {
+      configObj["network.host"] = updates.host;
+      configChanged = true;
+    }
+    if (typeof updates.port !== "undefined") {
+      configObj["http.port"] = updates.port;
+      configChanged = true;
+    }
+    if (typeof updates.transportPort !== "undefined") {
+      configObj["transport.port"] = updates.transportPort;
+      configChanged = true;
+    }
+
     // Write updated config if needed
     if (configChanged) {
       const newConfigContent = yaml.stringify(configObj);
@@ -187,6 +201,11 @@ async function updateNode(nodeName, updates, options = {}) {
       dataPath: newDataPath,
       logsPath: newLogsPath,
     };
+
+    // Ensure heapSize is set in updatedConfig if provided
+    if (typeof updates.heapSize !== "undefined") {
+      updatedConfig.heapSize = updates.heapSize;
+    }
 
     // Update nodeMetadata and elasticsearchNodes
     const nodeMetadata = getConfig("nodeMetadata") || {};
@@ -570,7 +589,7 @@ module.exports = {
   buildNodeMetadata,
   getNodeMetadata,
   listNodes,
-  verifyNodeMetadata,
+  repairAndVerifyNodeMetadata,
   getNodeConfig,
   getNodeConfigContent,
   removeNode,

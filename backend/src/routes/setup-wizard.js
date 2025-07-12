@@ -544,7 +544,7 @@ router.post('/initialize', verifyJwt, async (req, res) => {
 
     // After setup, verify and sync node metadata
     try {
-      await clusterManager.verifyNodeMetadata();
+      await clusterManager.repairAndVerifyNodeMetadata();
     } catch (metaError) {
       console.warn('Warning: Failed to verify node metadata after setup:', metaError.message);
     }

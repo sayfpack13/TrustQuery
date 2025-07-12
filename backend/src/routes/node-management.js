@@ -295,7 +295,7 @@ router.get("/nodes/:nodeName", verifyJwt, async (req, res) => {
     let pathsOk = nodeMeta && (await nodePathsExist(nodeMeta));
     if (!pathsOk) {
       // Try to auto-heal: verifyNodeMetadata, reload config from disk, try again
-      await clusterManager.verifyNodeMetadata();
+      await clusterManager.repairAndVerifyNodeMetadata();
       // Force reload config from disk
       const { loadConfig, getConfig, setConfig } = require("../config");
       await loadConfig();
@@ -930,7 +930,7 @@ router.post("/nodes/repair-and-verify", verifyJwt, async (req, res) => {
     // --- Step 2: Verify and repair node metadata ---
     let verifyResult = {};
     try {
-      verifyResult = await clusterManager.verifyNodeMetadata();
+      verifyResult = await clusterManager.repairAndVerifyNodeMetadata();
     } catch (error) {
       console.error("[nodes/repair-and-verify] Error verifying node metadata:", error);
       verifyResult = { error: error.message };

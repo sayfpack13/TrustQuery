@@ -78,7 +78,7 @@ async function initializeServer() {
 
   // Verify and clean up node metadata
   const clusterManager = require("./src/elasticsearch/cluster-manager");
-  await clusterManager.verifyNodeMetadata();
+  await clusterManager.repairAndVerifyNodeMetadata();
 
   // Initial cache refresh
   try {
