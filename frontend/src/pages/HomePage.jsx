@@ -29,6 +29,7 @@ export default function HomePage() {
   const [totalCollectedData, setTotalCollectedData] = useState(0);
   const [searchedIndicesForTotal, setSearchedIndicesForTotal] = useState([]);
   const [searchMessage, setSearchMessage] = useState("");
+  const [maxTotalResults, setMaxTotalResults] = useState(1000); // New state for max total results
 
   // Sound hooks
 
@@ -43,8 +44,8 @@ export default function HomePage() {
   const globeEl = useRef(); // State for arcs data (for animated paths/attacks)
 
   const [arcsData, setArcsData] = useState([]); // Ref to keep track of arc IDs for unique keys and lifecycle management
-
-  const arcIdCounter = useRef(0); // Effect for globe auto-rotation, and dynamic arc generation/lifecycle
+  const arcIdCounter = useRef(0);
+  const MAX_ARCS = 30; // Limit the number of arcs for performance
 
   useEffect(() => {
     const globe = globeEl.current;
@@ -54,52 +55,69 @@ export default function HomePage() {
       globe.controls().enableZoom = false;
       globe.controls().enableRotate = false;
       globe.controls().enablePan = false;
-    } // Interval to add new arcs incrementally
+    }
 
+    let animationActive = true;
+    const handleVisibilityChange = () => {
+      animationActive = !document.hidden;
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Interval to add new arcs incrementally
     const addArcInterval = setInterval(() => {
-      const NUM_NEW_ARCS_PER_BATCH = 3; // Add a few new arcs at a time
+      if (!animationActive) return;
+      const NUM_NEW_ARCS_PER_BATCH = 2; // Fewer arcs per batch
       const newArcsBatch = [];
       for (let i = 0; i < NUM_NEW_ARCS_PER_BATCH; i++) {
         const startLat = (Math.random() - 0.5) * 180;
         const startLng = (Math.random() - 0.5) * 360;
         const endLat = (Math.random() - 0.5) * 180;
-        const endLng = (Math.random() - 0.5) * 360; // Generate a random bright color for the arc's base
-
+        const endLng = (Math.random() - 0.5) * 360;
         const r = Math.floor(Math.random() * 255);
         const g = Math.floor(Math.random() * 255);
         const b = Math.floor(Math.random() * 255);
-
-        arcIdCounter.current += 1; // Increment ID for unique key
-
+        arcIdCounter.current += 1;
         newArcsBatch.push({
-          id: arcIdCounter.current, // Unique ID for React keys and tracking
+          id: arcIdCounter.current,
           startLat,
           startLng,
           endLat,
           endLng,
-          baseR: r, // Store base RGB components
+          baseR: r,
           baseG: g,
           baseB: b,
-          birthTime: Date.now(), // Timestamp when this arc was created
-          lifetime: 3000 + Math.random() * 2000, // Arc lives for 3 to 5 seconds
+          birthTime: Date.now(),
+          lifetime: 3500 + Math.random() * 2000, // Slightly longer, but fewer arcs
         });
       }
-      setArcsData((prevArcs) => [...prevArcs, ...newArcsBatch]);
-    }, 2000); // Interval to update and clean up arcs (for fade out effect and removal)
+      setArcsData((prevArcs) => {
+        const nextArcs = [...prevArcs, ...newArcsBatch];
+        return nextArcs.slice(-MAX_ARCS);
+      });
+    }, 2500); // Slightly slower interval
 
-    const updateArcsInterval = setInterval(() => {
+    // Use requestAnimationFrame for arc cleanup
+    let rafId;
+    const cleanupArcs = () => {
+      if (!animationActive) {
+        rafId = requestAnimationFrame(cleanupArcs);
+        return;
+      }
       setArcsData((prevArcs) => {
         const currentTime = Date.now();
         return prevArcs.filter((arc) => {
-          const timeElapsed = currentTime - arc.birthTime; // Keep arcs that are still within their lifetime
+          const timeElapsed = currentTime - arc.birthTime;
           return timeElapsed < arc.lifetime;
         });
       });
-    }, 300); // Check and filter arcs frequently (e.g., every 100ms) // Cleanup function: clear intervals and stop auto-rotate on component unmount
+      rafId = requestAnimationFrame(cleanupArcs);
+    };
+    rafId = requestAnimationFrame(cleanupArcs);
 
     return () => {
       clearInterval(addArcInterval);
-      clearInterval(updateArcsInterval);
+      if (rafId) cancelAnimationFrame(rafId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (globe) {
         globe.controls().autoRotate = false;
       }
@@ -149,7 +167,7 @@ export default function HomePage() {
       // Build the search URL
       let searchUrl = `/api/search?q=${encodeURIComponent(
         queryToFetch
-      )}&page=${pageToFetch}&size=${itemsPerPage}`;
+      )}&page=${pageToFetch}&size=${itemsPerPage}&max=${maxTotalResults}`; // Add max param
 
       const res = await fetch(searchUrl, {
         headers: headers,
@@ -308,10 +326,16 @@ export default function HomePage() {
 
   // Add max results selection
   const maxResultsOptions = [20, 50, 100, 500, 1000];
+  const maxTotalResultsOptions = [100, 500, 1000, 5000, 10000]; // New options for max total
 
   // Add handler for max results change
   const handleMaxResultsChange = (e) => {
     setItemsPerPage(Number(e.target.value));
+    setCurrentPage(1); // Reset to first page on change
+  };
+  // Handler for max total results change
+  const handleMaxTotalResultsChange = (e) => {
+    setMaxTotalResults(Number(e.target.value));
     setCurrentPage(1); // Reset to first page on change
   };
 
@@ -328,20 +352,7 @@ export default function HomePage() {
         zIndex: 1,
       }}
     >
-      {/* Max results selection */}
-      <div className="flex justify-center items-center mb-4">
-        <label htmlFor="max-results-select" className="mr-2 font-medium text-text">Max results per page:</label>
-        <select
-          id="max-results-select"
-          value={itemsPerPage}
-          onChange={handleMaxResultsChange}
-          className="border border-border rounded px-2 py-1 bg-background text-text focus:outline-none focus:ring-2 focus:ring-primary"
-        >
-          {maxResultsOptions.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
-          ))}
-        </select>
-      </div>
+      {/* Dropdowns moved inside search bar container */}
       {/* Animated Earth Globe with controlled Z-index and opacity */}
       <div
         style={{
@@ -433,6 +444,37 @@ export default function HomePage() {
           >
             Search
           </button>
+        </div>
+        {/* Dropdowns below search bar */}
+        <div className="flex flex-col sm:flex-row justify-center items-center mt-2 mb-4 gap-4">
+          <div className="flex flex-col items-start">
+            <label htmlFor="max-total-results-select" className="text-xs font-medium text-muted mb-1">Max total results to fetch</label>
+            <select
+              id="max-total-results-select"
+              value={maxTotalResults}
+              onChange={handleMaxTotalResultsChange}
+              className="border border-border rounded px-2 py-1 bg-background text-text focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+              title="Max total results to fetch"
+            >
+              {maxTotalResultsOptions.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col items-start">
+            <label htmlFor="max-results-select" className="text-xs font-medium text-muted mb-1">Results per page</label>
+            <select
+              id="max-results-select"
+              value={itemsPerPage}
+              onChange={handleMaxResultsChange}
+              className="border border-border rounded px-2 py-1 bg-background text-text focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+              title="Results per page"
+            >
+              {maxResultsOptions.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
         </div>
         {status && (
           <p

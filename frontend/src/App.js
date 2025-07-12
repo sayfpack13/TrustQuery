@@ -58,10 +58,9 @@ export default function App() {
   const [showPersistentTerminator, setShowPersistentTerminator] =
     useState(false);
 
-  const { audioRef: startupAudioRef, playSound: playStartupSound } = useSound(
-    "/sounds/startup.mp3"
-  );
-  const terminatorAudioRef = useRef(null);
+  const { audioRef: startupAudioRef, playSound: playStartupSound } = useSound("/sounds/startup.mp3");
+  const { audioRef: terminatorAudioRef, playSound: playTerminatorSound } = useSound("/sounds/terminator.mp3");
+  const [audioError, setAudioError] = useState(null);
 
   useEffect(() => {
     const tokenValidation = async () => {
@@ -110,25 +109,20 @@ export default function App() {
   };
 
   const startApplicationTransition = () => {
-    setOverlayAnimatingOut(true);
-    setHasUserInteracted(true);
     setOverlayAnimatingOut(false);
+    setHasUserInteracted(true);
   };
 
   const handleFirstInteraction = () => {
     if (!hasUserInteracted && !overlayAnimatingOut) {
       const lastTerminatorTime = localStorage.getItem("lastTerminatorTime");
       const currentTime = new Date().getTime();
-      const twelveHoursInMillis = 12 * 60 * 60 * 1000; // 12 hours in milliseconds
-
+      const twelveHoursInMillis = 12 * 60 * 60 * 1000;
       // Show Terminator if it hasn't been shown in the last 12 hours
-      if (
-        !lastTerminatorTime ||
-        currentTime - lastTerminatorTime > twelveHoursInMillis
-      ) {
+      if (!lastTerminatorTime || currentTime - lastTerminatorTime > twelveHoursInMillis) {
         localStorage.setItem("lastTerminatorTime", currentTime.toString());
-        terminatorAudioRef.current?.play();
-        setShowPersistentTerminator(true); // Show the GIF immediately
+        playTerminatorSound();
+        setShowPersistentTerminator(true);
         startApplicationTransition();
       } else {
         playStartupSound();
@@ -139,12 +133,8 @@ export default function App() {
 
   return (
     <>
-      <audio ref={startupAudioRef} src="/sounds/startup.mp3" preload="auto" />
-      <audio
-        ref={terminatorAudioRef}
-        src="/sounds/terminator.mp3"
-        preload="auto"
-      />
+      <audio ref={startupAudioRef} src="/sounds/startup.mp3" preload="auto" onError={() => setAudioError("Failed to load startup sound.")} />
+      <audio ref={terminatorAudioRef} src="/sounds/terminator.mp3" preload="auto" onError={() => setAudioError("Failed to load terminator sound.")} />
 
       {/* The old terminatorEffect JSX is removed */}
 
@@ -239,6 +229,11 @@ export default function App() {
           alt="Walking Terminator"
           className="fixed bottom-0 right-0 w-[40rem] h-auto z-50 pointer-events-none animate-walk-across"
         />
+      )}
+      {audioError && (
+        <div className="fixed top-0 left-0 w-full bg-red-600 text-white text-center py-2 z-50">
+          {audioError}
+        </div>
       )}
     </>
   );

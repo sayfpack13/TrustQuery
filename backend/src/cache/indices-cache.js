@@ -60,7 +60,7 @@ async function refreshClusterCache() {
         let healthByIndex = {};
         try {
           const catIndices = await client.cat.indices({
-            format: "json",
+          format: "json",
             h: "index,health",
           });
           for (const idx of catIndices) {
@@ -93,7 +93,7 @@ async function refreshClusterCache() {
     }
   }
   await setConfig("nodeMetadata", nodeMetadata);
-}
+  }
 
 // Remove node from nodeMetadata (for node deletion)
 async function removeNodeFromCache(nodeName) {
