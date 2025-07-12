@@ -90,7 +90,12 @@ async function listNodes() {
   const nodeMetadata = getConfig("nodeMetadata") || {};
   for (const [name, metadata] of Object.entries(nodeMetadata)) {
     const nodeInfo = buildNodeMetadata(metadata);
-    nodeInfo.status = (await isNodeRunning(name)) ? "running" : "stopped";
+    // Use in-progress status if present, else check running
+    let status = metadata.status;
+    if (status !== "starting" && status !== "stopping") {
+      status = (await isNodeRunning(name)) ? "running" : "stopped";
+    }
+    nodeInfo.status = status;
     nodes.set(name, nodeInfo);
   }
 

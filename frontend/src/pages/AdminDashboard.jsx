@@ -81,6 +81,7 @@ export default function AdminDashboard() {
   const [nodeToEdit, setNodeToEdit] = useState(null);
   const [showNodeDetailsModal, setShowNodeDetailsModal] = useState(false);
   const [nodeDetailsModalNode, setNodeDetailsModalNode] = useState(null);
+  const [nodeDetailsModalData, setNodeDetailsModalData] = useState({ stats: null, indices: null, config: null, loading: false, error: null });
 
   // === Loading state tracking ===
   const [isInitializing, setIsInitializing] = useState(true);
@@ -142,9 +143,54 @@ export default function AdminDashboard() {
   };
 
   // Handler to open NodeDetailsModal
-  const handleOpenNodeDetails = (node) => {
-    setNodeDetailsModalNode(node);
+  const handleOpenNodeDetails = async (node) => {
     setShowNodeDetailsModal(true);
+    setNodeDetailsModalNode(node);
+    // If node is running, fetch live data
+    if (node.status === 'running') {
+      setNodeDetailsModalData({ stats: null, indices: null, config: null, loading: true, error: null, fromCache: false });
+      try {
+        const token = localStorage.getItem("token");
+        const [statsRes, indicesRes, configRes] = await Promise.all([
+          axiosClient.get(`/api/admin/node-management/nodes/${node.name}/stats`, { headers: { Authorization: `Bearer ${token}` } }),
+          axiosClient.get(`/api/admin/node-management/${node.name}/indices`, { headers: { Authorization: `Bearer ${token}` } }),
+          axiosClient.get(`/api/admin/node-management/${node.name}/config`, { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        setNodeDetailsModalData({
+          stats: statsRes.data,
+          indices: indicesRes.data,
+          config: configRes.data,
+          loading: false,
+          error: null,
+          fromCache: false,
+        });
+      } catch (error) {
+        setNodeDetailsModalData({ stats: null, indices: null, config: null, loading: false, error: error.message || "Failed to fetch node details", fromCache: false });
+      }
+    } else {
+      // Use cached data
+      const cached = clusterManagement.enhancedNodesData[node.name] || {};
+      // Generate config string from metadata
+      const meta = {
+        name: node.name,
+        cluster: node.cluster || 'trustquery-cluster',
+        host: node.host || 'localhost',
+        port: node.port || 9200,
+        transportPort: node.transportPort || 9300,
+        dataPath: node.dataPath || '',
+        logsPath: node.logsPath || '',
+        roles: node.roles || { master: true, data: true, ingest: true },
+      };
+      const configString = `# Elasticsearch Configuration for ${meta.name}\n# Generated from metadata (node is offline)\n\n# Cluster settings\ncluster.name: ${meta.cluster}\nnode.name: ${meta.name}\n\n# Network settings\nnetwork.host: ${meta.host}\nhttp.port: ${meta.port}\ntransport.port: ${meta.transportPort}\n\n# Path settings\npath.data: ${meta.dataPath}\npath.logs: ${meta.logsPath}\n\n# Node roles\nnode.roles: [${Object.entries(meta.roles).filter(([, v]) => v).map(([k]) => k).join(', ')}]\n\n# Custom attribute for shard allocation\nnode.attr.custom_id: ${meta.name}\n\n# Discovery settings\ndiscovery.type: single-node\n\n# Memory settings\nbootstrap.memory_lock: false\n\n# Security settings (basic)\nxpack.security.enabled: false\nxpack.security.transport.ssl.enabled: false\nxpack.security.http.ssl.enabled: false\n`;
+      setNodeDetailsModalData({
+        stats: null, // Optionally use cached stats if available
+        indices: cached.indices || [],
+        config: configString,
+        loading: false,
+        error: null,
+        fromCache: true,
+      });
+    }
   };
 
   // Handler to close NodeDetailsModal
@@ -189,6 +235,30 @@ export default function AdminDashboard() {
       }
     });
   }, [tasksList, prevTasksList]);
+
+  const handleRefreshNodesAndModal = async (force = false) => {
+    await clusterManagement.fetchLocalNodes(force);
+    if (showNodeDetailsModal && nodeDetailsModalNode) {
+      setNodeDetailsModalData({ stats: null, indices: null, config: null, loading: true, error: null });
+      try {
+        const token = localStorage.getItem("token");
+        const [statsRes, indicesRes, configRes] = await Promise.all([
+          axiosClient.get(`/api/admin/node-management/nodes/${nodeDetailsModalNode.name}/stats`, { headers: { Authorization: `Bearer ${token}` } }),
+          axiosClient.get(`/api/admin/node-management/${nodeDetailsModalNode.name}/indices`, { headers: { Authorization: `Bearer ${token}` } }),
+          axiosClient.get(`/api/admin/node-management/${nodeDetailsModalNode.name}/config`, { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        setNodeDetailsModalData({
+          stats: statsRes.data,
+          indices: indicesRes.data,
+          config: configRes.data,
+          loading: false,
+          error: null,
+        });
+      } catch (error) {
+        setNodeDetailsModalData({ stats: null, indices: null, config: null, loading: false, error: error.message || "Failed to fetch node details" });
+      }
+    }
+  };
 
   return (
     <div className="bg-neutral-900 text-neutral-100 min-h-screen p-8 font-sans relative">
@@ -335,12 +405,30 @@ export default function AdminDashboard() {
               {/* Cluster Management Tab */}
               {activeTab === "cluster" && (
                 <ClusterManagement
-                  {...clusterManagement}
+                  localNodes={clusterManagement.localNodes}
+                  enhancedNodesData={clusterManagement.enhancedNodesData}
+                  clusterLoading={clusterManagement.clusterLoading}
+                  nodeActionLoading={clusterManagement.nodeActionLoading}
+                  fetchLocalNodes={clusterManagement.fetchLocalNodes}
+                  handleDeleteLocalNode={clusterManagement.handleDeleteLocalNode}
+                  handleStartLocalNode={clusterManagement.handleStartLocalNode}
+                  handleStopLocalNode={clusterManagement.handleStopLocalNode}
+                  clustersList={clusterManagement.clustersList}
+                  clustersLoading={clusterManagement.clustersLoading}
+                  clusterActionLoading={clusterManagement.clusterActionLoading}
+                  fetchClusters={clusterManagement.fetchClusters}
+                  updateCluster={clusterManagement.updateCluster}
+                  deleteCluster={clusterManagement.deleteCluster}
+                  createCluster={clusterManagement.createCluster}
+                  selectedCluster={clusterManagement.selectedCluster}
+                  setSelectedCluster={clusterManagement.setSelectedCluster}
+                  tasksList={tasksList}
                   showNotification={showNotification}
                   fetchAllTasks={fetchAllTasks}
                   setShowLocalNodeManager={handleOpenCreateNode}
                   onEditNode={handleEditNode}
                   onOpenNodeDetails={handleOpenNodeDetails}
+                  isAnyTaskRunning={isAnyTaskRunning}
                 />
               )}
 
@@ -385,8 +473,14 @@ export default function AdminDashboard() {
               show={showNodeDetailsModal}
               onClose={handleCloseNodeDetails}
               node={nodeDetailsModalNode}
+              stats={nodeDetailsModalData.stats}
+              indices={nodeDetailsModalData.indices}
+              configContent={nodeDetailsModalData.config}
+              loading={nodeDetailsModalData.loading}
+              error={nodeDetailsModalData.error}
+              fromCache={nodeDetailsModalData.fromCache}
               enhancedNodesData={clusterManagement.enhancedNodesData}
-              onRefreshNodes={clusterManagement.fetchLocalNodes}
+              onRefreshNodes={handleRefreshNodesAndModal}
             />
           )}
 

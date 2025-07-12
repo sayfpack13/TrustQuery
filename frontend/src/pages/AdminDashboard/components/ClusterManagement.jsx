@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import { useClusterManagement } from "../../../hooks/useClusterManagement";
 import axiosClient from '../../../api/axiosClient';
 // Removed: import { toast } from 'react-toastify';
 import buttonStyles from '../../../components/ButtonStyles';
@@ -33,8 +32,7 @@ import {
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 function ClusterManagement(props) {
-  // ...existing logic and hooks...
-  // Connect to cluster management hook
+  // Use props instead of useClusterManagement
   const {
     localNodes,
     enhancedNodesData,
@@ -52,8 +50,11 @@ function ClusterManagement(props) {
     deleteCluster,
     createCluster,
     selectedCluster,
-    setSelectedCluster
-  } = useClusterManagement(props.showNotification, props.fetchAllTasks);
+    setSelectedCluster,
+    tasksList,
+    showNotification,
+    fetchAllTasks
+  } = props;
 
   // Add missing state for newClusterName
   const [newClusterName, setNewClusterName] = useState("");
@@ -76,13 +77,13 @@ function ClusterManagement(props) {
     try {
       const response = await axiosClient.post("/api/admin/node-management/nodes/repair-and-verify");
       if (response.data && !response.data.error) {
-        if (props.showNotification) props.showNotification("success", "All nodes repaired and metadata verified.");
+        if (showNotification) showNotification("success", "All nodes repaired and metadata verified.");
         await fetchLocalNodes();
       } else {
-        if (props.showNotification) props.showNotification("error", "Repair/Verify failed: " + (response.data?.error || "Unknown error"));
+        if (showNotification) showNotification("error", "Repair/Verify failed: " + (response.data?.error || "Unknown error"));
       }
     } catch (error) {
-      if (props.showNotification) props.showNotification("error", "Error repairing/verifying nodes: " + (error.message || "Unknown error"));
+      if (showNotification) showNotification("error", "Error repairing/verifying nodes: " + (error.message || "Unknown error"));
     } finally {
       setIsRepairingAndVerifying(false);
     }
@@ -202,7 +203,7 @@ function ClusterManagement(props) {
     
     // Validate that target cluster is selected if nodes need to be moved
     if (clusterToDelete.nodeCount > 0 && !targetClusterForMove) {
-      props.showNotification('error', 'Please select a target cluster for the nodes', faExclamationTriangle);
+      showNotification('error', 'Please select a target cluster for the nodes', faExclamationTriangle);
       return;
     }
     
@@ -212,7 +213,7 @@ function ClusterManagement(props) {
       setClusterToDelete(null);
       setTargetClusterForMove('');
       fetchClusters();
-      props.showNotification('success', `Cluster "${clusterToDelete.name}" deleted successfully`, faCheck);
+      showNotification('success', `Cluster "${clusterToDelete.name}" deleted successfully`, faCheck);
     } catch (error) {
       // Error is already handled in the deleteCluster function
       // Just keep the modal open
@@ -225,6 +226,34 @@ function ClusterManagement(props) {
     setShowCreateClusterModal(false);
     setNewClusterName('');
     fetchClusters();
+  }
+
+  // Add at the top of the component function:
+  // Accept isAnyTaskRunning and tasksList as props
+  function ClusterManagement(props) {
+    // ...existing logic and hooks...
+    // Remove nodeActionLoading and isNodeTaskRunning if only local
+    // Add helper to check if a node has an active start task in tasksList
+    function isNodeStartTaskActive(nodeName) {
+      return (props.tasksList || []).some(
+        (task) =>
+          !task.completed &&
+          task.status !== "error" &&
+          task.type === "Start Node" &&
+          task.nodeName === nodeName
+      );
+    }
+  }
+
+  // Add this helper function inside the component, before rendering:
+  function isNodeActionTaskActive(nodeName, actionType) {
+    return tasksList && tasksList.some(
+      (task) =>
+        task.nodeName === nodeName &&
+        task.type === actionType &&
+        !task.completed &&
+        task.status !== "error"
+    );
   }
 
   return (
@@ -1339,7 +1368,7 @@ function ClusterManagement(props) {
                                     if (!exists) return;
                                     await handleStopLocalNode(node.name);
                                     await fetchLocalNodes();
-                                    if (typeof props.fetchAllTasks === 'function') props.fetchAllTasks();
+                                    if (typeof fetchAllTasks === 'function') fetchAllTasks();
                                   }}
                                   disabled={isLoading || !exists}
                                   className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2 disabled:bg-neutral-600 disabled:cursor-not-allowed"
@@ -1356,12 +1385,12 @@ function ClusterManagement(props) {
                                     if (!exists) return;
                                     await handleStartLocalNode(node.name);
                                     await fetchLocalNodes();
-                                    if (typeof props.fetchAllTasks === 'function') props.fetchAllTasks();
+                                    if (typeof fetchAllTasks === 'function') fetchAllTasks();
                                   }}
-                                  disabled={isLoading || isNodeTaskRunning(node.name) || !exists}
+                                  disabled={isLoading || !exists}
                                   className={buttonStyles.create}
                                 >
-                                  {(isLoading || isNodeTaskRunning(node.name)) ? (
+                                  {(isLoading || isNodeActionTaskActive(node.name, "Start Node")) ? (
                                     <FontAwesomeIcon icon={faSpinner} spin />
                                   ) : (
                                     "Start"
