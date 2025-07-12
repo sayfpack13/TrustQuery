@@ -1764,7 +1764,6 @@ app.get("/api/search", async (req, res) => {
     const isAdmin = isAdminRequest(req);
     const startTime = Date.now();
     
-    // If no search indices are configured, return empty results
     if (searchIndices.length === 0) {
       return res.json({
         results: [],
@@ -1778,33 +1777,31 @@ app.get("/api/search", async (req, res) => {
       return res.status(400).json({ error: "Search query is required" });
     }
 
-    // Calculate pagination parameters
-    const MAX_RESULTS = 10000;
-    const pageSize = Math.min(parseInt(size || 10000), MAX_RESULTS);
+    // Hard global limit for total results
+    const GLOBAL_LIMIT = 100;
+    const pageSize = Math.min(parseInt(size || GLOBAL_LIMIT), GLOBAL_LIMIT);
     const from = (parseInt(page) - 1) * pageSize;
     
-    // Support both old (string) and new ({node,index}) formats
-    const indicesToSearch =
-      Array.isArray(searchIndices) && typeof searchIndices[0] === "object"
-        ? searchIndices
-        : searchIndices.map((idx) => ({ node: "default", index: idx }));
+    // Always treat searchIndices as array of {node,index}
+    const indicesToSearch = Array.isArray(searchIndices) && typeof searchIndices[0] === "object"
+      ? searchIndices
+      : searchIndices.map((idx) => ({ node: "default", index: idx }));
 
     // Prepare client instances (reuse clients for the same node)
     const clientsCache = {};
-    // let esAvailable = false; // Already declared above, remove duplicate
     const { Client } = require("@elastic/elasticsearch");
-    
-    // Cross-node, cross-index search: fetch from all, merge, sort, and paginate in memory (shallow pagination only)
     let allResults = [];
-    let totalCount = 0;
     let searchedIndices = [];
     let esAvailable = false;
 
-    // Fetch up to MAX_RESULTS from each index/node (shallow, not deep pagination)
-    const searchPromises = indicesToSearch.map(async (entry) => {
-      if (!entry.node || !entry.index) return null;
-      let nodeUrl = nodeMetadata[entry.node]?.nodeUrl;
-      if (!nodeUrl && entry.node.startsWith("http")) nodeUrl = entry.node;
+    // Group by node+index to avoid merging same-named indices across nodes
+    const nodeIndexPairs = indicesToSearch.map(entry => ({ node: entry.node, index: entry.index }));
+    const perNodeLimit = Math.ceil((GLOBAL_LIMIT * 2) / nodeIndexPairs.length); // 2x buffer for sorting
+
+    const searchPromises = nodeIndexPairs.map(async ({ node, index }) => {
+      if (!node || !index) return null;
+      let nodeUrl = nodeMetadata[node]?.nodeUrl;
+      if (!nodeUrl && node.startsWith("http")) nodeUrl = node;
       if (!nodeUrl) nodeUrl = `http://localhost:9200`;
       if (!clientsCache[nodeUrl]) {
         clientsCache[nodeUrl] = new Client({
@@ -1819,11 +1816,12 @@ app.get("/api/search", async (req, res) => {
       const es = clientsCache[nodeUrl];
       try {
         const response = await es.search({
-          index: entry.index,
+          index,
           track_total_hits: true,
-          size: MAX_RESULTS, // fetch up to MAX_RESULTS per index
+          size: perNodeLimit,
           body: {
             _source: ["raw_line"],
+            sort: ["_doc"], // Fast, avoids fielddata error on _id
             query: {
               bool: {
                 should: [
@@ -1838,14 +1836,6 @@ app.get("/api/search", async (req, res) => {
           timeout: "5s"
         });
         esAvailable = true;
-        let totalHits = 0;
-        if (typeof response.hits.total === 'object' && response.hits.total !== null) {
-          totalHits = response.hits.total.value;
-        } else if (typeof response.hits.total === 'number') {
-          totalHits = response.hits.total;
-        } else {
-          totalHits = response.hits.hits.length;
-        }
         const indexResults = response.hits.hits.map((hit) => {
           const parsedAccount = parser.parseLineForDisplay(hit._source.raw_line);
           if (isAdmin) {
@@ -1854,7 +1844,7 @@ app.get("/api/search", async (req, res) => {
               ...parsedAccount,
               raw_line: hit._source.raw_line,
               _index: hit._index,
-              _node: entry.node
+              node,
             };
           } else {
             const maskedAccount = applyMaskingForPublicSearch(parsedAccount, config);
@@ -1862,23 +1852,24 @@ app.get("/api/search", async (req, res) => {
               id: hit._id,
               ...maskedAccount,
               _index: hit._index,
-              _node: entry.node
+              node,
             };
           }
         });
         return {
           results: indexResults,
-          total: totalHits,
-          index: entry.index,
-          node: entry.node
+          total: response.hits.total && response.hits.total.value ? response.hits.total.value : 0,
+          index,
+          node
         };
       } catch (indexError) {
-        console.error(`Error searching ${entry.node}/${entry.index}:`, indexError.message);
+        console.error(`Error searching ${node}/${index}:`, indexError.message);
         return null;
       }
     });
 
     const searchResponses = await Promise.all(searchPromises);
+    let totalCount = 0;
     searchResponses.filter(Boolean).forEach(result => {
       if (result && result.results) {
         allResults.push(...result.results);
@@ -1890,7 +1881,7 @@ app.get("/api/search", async (req, res) => {
     // Sort all results by id (or customize as needed)
     allResults.sort((a, b) => a.id.localeCompare(b.id));
 
-    // Paginate in memory (shallow only)
+    // Paginate in memory (shallow only, but never exceed GLOBAL_LIMIT)
     const paginatedResults = allResults.slice(from, from + pageSize);
     
     if (!esAvailable) {
@@ -1902,21 +1893,16 @@ app.get("/api/search", async (req, res) => {
         time_ms: Date.now() - startTime
       });
     }
-    
-    // No need to sort or slice combinedResults anymore, handled by ES
 
-    // Calculate execution time
     const executionTime = Date.now() - startTime;
-    console.log(`Search for "${q}" completed in ${executionTime}ms, found ${totalCount} results`);
-
     res.json({
       results: paginatedResults,
-      total: Math.min(totalCount, MAX_RESULTS),
+      total: Math.min(totalCount, GLOBAL_LIMIT),
       searchIndices: searchedIndices,
       page: parseInt(page),
       size: pageSize,
       time_ms: executionTime,
-      warning: totalCount > MAX_RESULTS ? `Result set truncated to ${MAX_RESULTS} for performance.` : undefined
+      warning: totalCount > GLOBAL_LIMIT ? `Result set truncated to ${GLOBAL_LIMIT} for performance.` : undefined
     });
   } catch (error) {
     console.error("Error performing search:", error);
