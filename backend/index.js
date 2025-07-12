@@ -1756,7 +1756,7 @@ function isAdminRequest(req) {
 // GET search endpoint (public endpoint)
 app.get("/api/search", async (req, res) => {
   try {
-    const { q, page = 1, size } = req.query;
+    const { q, page = 1, size, max } = req.query;
     const config = getConfig();
     const nodeMetadata = config.nodeMetadata || {};
     const isAdmin = isAdminRequest(req);
@@ -1767,7 +1767,6 @@ app.get("/api/search", async (req, res) => {
     }
 
     // Remove per-node and global result limits for full merge
-    const perNodeLimit = 10000; // Large enough to get all results from each node
     // For logging
     const searchLog = [];
     // Helper to check if 'raw_line.keyword' exists in mapping
@@ -1808,6 +1807,11 @@ app.get("/api/search", async (req, res) => {
         message: "No online nodes or indices available for search.",
       });
     }
+    // Calculate per-node max size
+    let maxTotal = (max && !isNaN(parseInt(max))) ? parseInt(max) : 10000;
+    const uniqueNodes = [...new Set(runningNodeIndexPairs.map(pair => pair.node))];
+    const numNodes = uniqueNodes.length || 1;
+    const perNodeLimit = Math.max(1, Math.ceil(maxTotal / numNodes));
     // For logging
     const searchPromises = runningNodeIndexPairs.map(async ({ node, index }) => {
       if (!node || !index) return null;
@@ -1840,12 +1844,10 @@ app.get("/api/search", async (req, res) => {
             { match: { "raw_line": { query: q, operator: "and" } } }
           ];
         }
-        // Determine size for unlimited results
-        let searchSize = 10000;
+        // Determine per-node size limit
+        let searchSize = perNodeLimit;
         if (size === 'all') {
           searchSize = 100000000; // effectively unlimited, but ES may cap
-        } else if (size && !isNaN(parseInt(size))) {
-          searchSize = parseInt(size);
         }
         const response = await es.search({
           index,
@@ -1913,15 +1915,17 @@ app.get("/api/search", async (req, res) => {
     console.log("[SEARCH LOG]", searchLog);
     // Sort all results by id (or customize as needed)
     allResults.sort((a, b) => a.id.localeCompare(b.id));
+    // Limit total results to 'max' before paginating
+    const limitedResults = allResults.slice(0, maxTotal);
     // Paginate in memory (shallow only)
     let pageSize;
     if (size === 'all') {
-      pageSize = allResults.length;
+      pageSize = limitedResults.length;
     } else {
       pageSize = parseInt(size) || 10;
     }
     const from = (parseInt(page) - 1) * pageSize;
-    const paginatedResults = allResults.slice(from, from + pageSize);
+    const paginatedResults = limitedResults.slice(from, from + pageSize);
     if (!esAvailable) {
       return res.json({
         results: [],
@@ -1944,10 +1948,10 @@ app.get("/api/search", async (req, res) => {
       });
     }
     // If there are results in total, but this page is empty (e.g., page out of range)
-    if (paginatedResults.length === 0 && allResults.length > 0) {
+    if (paginatedResults.length === 0 && limitedResults.length > 0) {
       return res.json({
         results: [],
-        total: allResults.length,
+        total: limitedResults.length,
         searchIndices: searchedIndices,
         page: parseInt(page),
         size: pageSize,
@@ -1957,7 +1961,7 @@ app.get("/api/search", async (req, res) => {
     const executionTime = Date.now() - startTime;
     res.json({
       results: paginatedResults,
-      total: allResults.length,
+      total: limitedResults.length,
       searchIndices: searchedIndices,
       page: parseInt(page),
       size: pageSize,
