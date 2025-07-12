@@ -959,19 +959,23 @@ router.post("/nodes/repair-and-verify", verifyJwt, async (req, res) => {
 router.get("/local-nodes", verifyJwt, async (req, res) => {
   try {
     const { listNodes } = require("../elasticsearch/node-metadata");
-    const { getCacheFiltered, refreshClusterCache } = require("../cache/indices-cache");
+    const { getConfig } = require("../config");
     const forceRefresh = req.query.forceRefresh === "true";
     if (forceRefresh) {
+      const { refreshClusterCache } = require("../cache/indices-cache");
       await refreshClusterCache();
     }
-    const nodes = await listNodes();
-    const indicesByNodes = await getCacheFiltered();
-    // Attach indices (with health) to each node in the nodes array
-    const nodesWithIndices = nodes.map(node => {
-      const nodeIndices = indicesByNodes[node.name]?.indices || [];
-      return { ...node, indices: nodeIndices };
-    });
-    res.json({ nodes: nodesWithIndices, indicesByNodes });
+    // Use nodeMetadata as the single source of truth
+    const config = getConfig();
+    const nodeMetadata = config.nodeMetadata || {};
+    // nodes array for UI
+    const nodes = Object.values(nodeMetadata);
+    // indicesByNodes for backward compatibility (same as nodeMetadata keyed by name)
+    const indicesByNodes = {};
+    for (const [nodeName, meta] of Object.entries(nodeMetadata)) {
+      indicesByNodes[nodeName] = meta;
+    }
+    res.json({ nodes, indicesByNodes });
   } catch (error) {
     console.error("Error fetching local nodes or indices cache:", error);
     res.status(500).json({ error: "Failed to fetch local nodes or indices cache" });

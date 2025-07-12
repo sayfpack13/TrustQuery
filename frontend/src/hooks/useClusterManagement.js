@@ -71,6 +71,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
       if (params.length > 0) url += `?${params.join('&')}`;
       const response = await axiosClient.get(url);
       setLocalNodes(response.data.nodes || []);
+      // Use nodeMetadata/indicesByNodes as enhancedNodesData
       setEnhancedNodesData(response.data.indicesByNodes || {});
     } catch (error) {
       showNotificationRef.current('error', 'Failed to fetch local node configuration', faExclamationTriangle);

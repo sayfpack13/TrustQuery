@@ -3,12 +3,13 @@ const { getConfig } = require("../config");
 
 /**
  * Check if a node is running and ready (TCP port + HTTP check)
+ * @param {string} nodeName
+ * @param {object} [opts] - { fastMode: boolean } if true, only check port
  */
-async function isNodeRunning(nodeName) {
+async function isNodeRunning(nodeName, opts = {}) {
   const nodeMetadata = getConfig("nodeMetadata") || {};
   const metadata = nodeMetadata[nodeName];
   if (!metadata) return false;
-  // Always prefer host/port if available, else parse nodeUrl
   let host = null;
   let port = null;
   if (metadata.host && metadata.port) {
@@ -27,20 +28,19 @@ async function isNodeRunning(nodeName) {
     host = "localhost";
     port = 9200;
   }
-  // Log the host/port being checked
-  console.log(`[isNodeRunning] Checking node '${nodeName}' at ${host}:${port}`);
   // First, check if the port is open
-  const portOpen = await isPortOpen(host, port, 1000);
+  const portOpen = await isPortOpen(host, port, 300);
   if (!portOpen) return false;
-  // Next, check if the Elasticsearch HTTP endpoint responds
+  if (opts.fastMode) return true;
+  // Next, check if the Elasticsearch HTTP endpoint responds (HEAD, short timeout)
   try {
     const url = `http://${host}:${port}/`;
-    const res = await fetch(url, { timeout: 1000 });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300);
+    const res = await fetch(url, { method: "HEAD", signal: controller.signal });
+    clearTimeout(timeout);
     if (res.status === 200) {
-      const body = await res.json();
-      if (body && body.version) {
-        return true;
-      }
+      return true;
     }
     return false;
   } catch (e) {

@@ -1691,7 +1691,6 @@ app.get("/api/total-accounts", async (req, res) => {
     let anySuccess = false;
 
     // Only count indices on running nodes
-    const cachedIndices = await getCacheFiltered();
     for (const entry of searchIndices) {
       let nodeName, indexName;
       if (typeof entry === "object" && entry.node && entry.index) {
@@ -1702,7 +1701,7 @@ app.get("/api/total-accounts", async (req, res) => {
         nodeName = null;
         indexName = entry;
       }
-      if (nodeName && (!cachedIndices[nodeName] || cachedIndices[nodeName].status !== 'running')) {
+      if (nodeName && (!nodeMetadata[nodeName] || nodeMetadata[nodeName].status !== 'running')) {
         continue; // skip non-running nodes
       }
       let es = null;
@@ -1781,23 +1780,20 @@ app.get("/api/search", async (req, res) => {
     const GLOBAL_LIMIT = 100;
     const pageSize = Math.min(parseInt(size || GLOBAL_LIMIT), GLOBAL_LIMIT);
     const from = (parseInt(page) - 1) * pageSize;
-    
-    // Use indices-by-nodes cache to filter online nodes/indices
-    const { getCacheFiltered } = require("./src/cache/indices-cache");
-    const indicesByNodes = await getCacheFiltered();
+    // Use nodeMetadata to filter online nodes/indices
     // Only include nodes with status 'running'
-    const runningNodes = Object.entries(indicesByNodes)
+    const runningNodes = Object.entries(nodeMetadata)
       .filter(([nodeName, nodeData]) => nodeData.status === "running")
       .map(([nodeName, nodeData]) => nodeName);
     // Always treat searchIndices as array of {node,index}
     const indicesToSearch = Array.isArray(searchIndices) && typeof searchIndices[0] === "object"
         ? searchIndices
         : searchIndices.map((idx) => ({ node: "default", index: idx }));
-    // Filter indicesToSearch to only include those on running nodes and present in cache
+    // Filter indicesToSearch to only include those on running nodes and present in nodeMetadata
     const filteredNodeIndexPairs = indicesToSearch.filter(({ node, index }) => {
       if (!node || !index) return false;
       if (!runningNodes.includes(node)) return false;
-      const nodeIndices = indicesByNodes[node]?.indices || [];
+      const nodeIndices = nodeMetadata[node]?.indices || [];
       return nodeIndices.some(i => i.index === index);
     });
     if (filteredNodeIndexPairs.length === 0) {
