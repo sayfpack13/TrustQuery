@@ -302,23 +302,23 @@ export default function ConfigurationManagement({
                               </h4>
                               <div
                                 className={`flex items-center space-x-2 px-2 py-1 rounded ${
-                                  nodeData.isRunning
+                                  nodeData.status === 'running'
                                     ? "bg-green-600"
                                     : "bg-red-600"
                                 }`}
                               >
                                 <div
                                   className={`w-2 h-2 rounded-full ${
-                                    nodeData.isRunning
+                                    nodeData.status === 'running'
                                       ? "bg-green-200"
                                       : "bg-red-200"
                                   }`}
                                 ></div>
                                 <span className="text-white text-sm">
-                                  {nodeData.isRunning ? "Running" : "Stopped"}
+                                  {nodeData.status === 'running' ? "Running" : "Stopped"}
                                 </span>
                               </div>
-                              {nodeData.isRunning && nodeData.indices && (
+                              {nodeData.status === 'running' && nodeData.indices && (
                                 <span className="text-sm text-neutral-400">
                                   {
                                     nodeData.indices.filter((idx) =>
@@ -353,7 +353,7 @@ export default function ConfigurationManagement({
                             <div className="flex items-center justify-between mb-3 pb-3 border-b border-neutral-600">
                               <span className="text-sm text-neutral-300">
                                 {nodeData.indices.length} indices on this node
-                                {!nodeData.isRunning && (
+                                {nodeData.status !== 'running' && (
                                   <span className="ml-2 text-amber-400">
                                     (from cache - node stopped)
                                   </span>
@@ -471,7 +471,7 @@ export default function ConfigurationManagement({
                               })}
                             </div>
                           </div>
-                        ) : !nodeData.isRunning ? (
+                        ) : nodeData.status !== 'running' ? (
                           <div className="p-4 text-center text-neutral-500">
                             <FontAwesomeIcon
                               icon={faExclamationTriangle}

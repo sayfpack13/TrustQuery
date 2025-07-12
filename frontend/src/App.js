@@ -218,7 +218,7 @@ export default function App() {
                 path="/admin"
                 element={
                   token ? (
-                    <AdminDashboard onLogout={handleLogout} />
+                    <AdminDashboard  />
                   ) : (
                     <Navigate to="/admin/login" replace />
                   )

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faServer, 
@@ -10,7 +10,6 @@ import {
   faInfoCircle,
   faCog,
   faExclamationTriangle,
-  faCheckCircle,
   faSpinner,
   faCopy,
   faArrowRight,
@@ -32,7 +31,6 @@ const LocalNodeManager = ({
   disabled = false,
   showNotification
 }) => {
-  const [showAdvanced, setShowAdvanced] = useState(true);
   const [newClusterName, setNewClusterName] = useState('');
   const [showNewCluster, setShowNewCluster] = useState(false);
   
@@ -89,6 +87,116 @@ const LocalNodeManager = ({
     copyNode
   } = clusterManagement;
 
+
+  // Place validateNodeConfiguration here, before any useEffect or code that uses it
+  const validateNodeConfiguration = useCallback(async (nodeConfig) => {
+    // When editing, we need to pass the original node name to the validation function
+    const requestBody = mode === 'edit' 
+      ? { nodeConfig: nodeConfig, originalName: nodeToEdit?.name } 
+      : { nodeConfig: nodeConfig };
+
+    // Create a unique key for this configuration
+    const configKey = JSON.stringify({
+      name: nodeConfig.name,
+      host: nodeConfig.host,
+      port: nodeConfig.port,
+      transportPort: nodeConfig.transportPort,
+      cluster: nodeConfig.cluster,
+      dataPath: nodeConfig.dataPath,
+      logsPath: nodeConfig.logsPath,
+      heapSize: nodeConfig.heapSize,
+      mode: mode
+    });
+    
+    // Skip if we're already validating
+    if (isValidating) {
+      return false;
+    }
+    
+    // Skip if this exact configuration was just validated successfully
+    if (lastValidatedConfig === configKey) {
+      return true;
+    }
+
+    // Validate heap size format
+    const heapSizePattern = /^[0-9]+[kmgt]$/i;
+    if (nodeConfig.heapSize && !heapSizePattern.test(nodeConfig.heapSize)) {
+      setValidationErrors([{
+        type: 'heap_size',
+        message: 'Invalid heap size format. Use format like "1g", "2048m", etc.'
+      }]);
+      setShowValidationErrors(true);
+      return false;
+    }
+
+    // Convert heap size to GB for validation
+    if (nodeConfig.heapSize && systemMemoryInfo) {
+      const heapSizeNumber = parseInt(nodeConfig.heapSize);
+      const heapSizeUnit = nodeConfig.heapSize.slice(-1).toLowerCase();
+      let heapSizeGB;
+      switch (heapSizeUnit) {
+        case 'g':
+          heapSizeGB = heapSizeNumber;
+          break;
+        case 'm':
+          heapSizeGB = heapSizeNumber / 1024;
+          break;
+        case 'k':
+          heapSizeGB = heapSizeNumber / (1024 * 1024);
+          break;
+        default:
+          heapSizeGB = 1;
+      }
+
+      // Validate against system memory
+      if (heapSizeGB > systemMemoryInfo.total * 0.75) {
+        setValidationErrors([{
+          type: 'heap_size',
+          message: `Heap size exceeds 75% of system memory (${Math.floor(systemMemoryInfo.total * 0.75)}GB max)`
+        }]);
+        setShowValidationErrors(true);
+        return false;
+      }
+    }
+
+    setIsValidating(true);
+    setShowValidationErrors(false);
+    
+    try {
+      const response = await axiosClient.post('/api/admin/node-management/validate-node', requestBody);
+      
+      if (response.data.valid) {
+        setValidationErrors([]);
+        setValidationSuggestions({});
+        setShowValidationErrors(false);
+        setLastValidatedConfig(configKey);
+        return true;
+      } else {
+        setValidationErrors(response.data.conflicts || []);
+        setValidationSuggestions(response.data.suggestions || {});
+        setShowValidationErrors(true);
+        return false;
+      }
+    } catch (error) {
+      console.error('Validation error:', error);
+      if (error.response?.status === 409) {
+        // Handle validation conflicts from backend
+        setValidationErrors(error.response.data.conflicts || []);
+        setValidationSuggestions(error.response.data.suggestions || {});
+        setShowValidationErrors(true);
+      } else {
+        setValidationErrors([{
+          type: 'general',
+          message: error.response?.data?.error || 'Failed to validate configuration'
+        }]);
+        setShowValidationErrors(true);
+      }
+      return false;
+    } finally {
+      setIsValidating(false);
+    }
+  }, [mode, nodeToEdit, systemMemoryInfo, isValidating, lastValidatedConfig]);
+
   // Fetch backend-configured base path
   const fetchBackendBasePath = async () => {
     try {
@@ -126,7 +234,26 @@ const LocalNodeManager = ({
         validateNodeConfiguration(initialConfig);
       }
     }
-  }, [isOpen, mode, nodeToEdit, fetchSystemMemoryInfo]);
+  }, [isOpen, mode, nodeToEdit]); // Intentionally omitting fetchSystemMemoryInfo to prevent infinite API calls
+
+  // Add cluster selection effect
+  useEffect(() => {
+    if (isOpen && clusters.length === 0 && clusterManagement.fetchClusters) {
+      clusterManagement.fetchClusters();
+    }
+  }, [isOpen, clusters.length, clusterManagement]);
+
+  // Add cluster selection dropdown
+  const handleClusterSelect = (e) => {
+    if (clusterManagement.setSelectedCluster) {
+      clusterManagement.setSelectedCluster(e.target.value);
+    }
+  };
+
+  // Filter nodes by selected cluster
+  const filteredNodes = clusterManagement.selectedCluster && clusterManagement.selectedCluster !== 'all'
+    ? clusterManagement.localNodes.filter(node => (node.cluster || 'trustquery-cluster') === clusterManagement.selectedCluster)
+    : clusterManagement.localNodes;
 
   const updatePathsForNewName = (newName, oldName, currentDataPath, currentLogsPath, setDataPath, setLogsPath) => {
     let basePath = backendBasePath || 'C://elasticsearch';
@@ -203,15 +330,16 @@ const LocalNodeManager = ({
         ingest: true,
       });
     }
-  }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles, setNewNodeHeapSize, backendBasePath]);
+  }, [nodeToEdit, mode, setNewNodeName, setNewNodeHost, setNewNodePort, setNewNodeTransportPort, setNewNodeCluster, setNewNodeDataPath, setNewNodeLogsPath, setNewNodeRoles, setNewNodeHeapSize, backendBasePath, clusters]);
 
   // Remove auto-validation on input change - validation now only happens on button click
 
   // Cleanup validation timeout on unmount or close
   useEffect(() => {
     return () => {
-      if (validationTimeoutRef.current) {
-        clearTimeout(validationTimeoutRef.current);
+      const timeoutRef = validationTimeoutRef.current;
+      if (timeoutRef) {
+        clearTimeout(timeoutRef);
       }
     };
   }, []);
@@ -258,115 +386,6 @@ const LocalNodeManager = ({
       setNewNodeCluster(newClusterName);
       setNewClusterName('');
       setShowNewCluster(false);
-    }
-  };
-
-  // Validate node configuration
-  const validateNodeConfiguration = async (nodeConfig) => {
-    // When editing, we need to pass the original node name to the validation function
-    const requestBody = mode === 'edit' 
-      ? { nodeConfig: nodeConfig, originalName: nodeToEdit?.name } 
-      : { nodeConfig: nodeConfig };
-
-    // Create a unique key for this configuration
-    const configKey = JSON.stringify({
-      name: nodeConfig.name,
-      host: nodeConfig.host,
-      port: nodeConfig.port,
-      transportPort: nodeConfig.transportPort,
-      cluster: nodeConfig.cluster,
-      dataPath: nodeConfig.dataPath,
-      logsPath: nodeConfig.logsPath,
-      heapSize: nodeConfig.heapSize,
-      mode: mode
-    });
-    
-    // Skip if we're already validating
-    if (isValidating) {
-      return false;
-    }
-    
-    // Skip if this exact configuration was just validated successfully
-    if (lastValidatedConfig === configKey) {
-      return true;
-    }
-
-    // Validate heap size format
-    const heapSizePattern = /^[0-9]+[kmgt]$/i;
-    if (nodeConfig.heapSize && !heapSizePattern.test(nodeConfig.heapSize)) {
-      setValidationErrors([{
-        type: 'heap_size',
-        message: 'Invalid heap size format. Use format like "1g", "2048m", etc.'
-      }]);
-      setShowValidationErrors(true);
-      return false;
-    }
-
-    // Convert heap size to GB for validation
-    if (nodeConfig.heapSize && systemMemoryInfo) {
-      const heapSizeNumber = parseInt(nodeConfig.heapSize);
-      const heapSizeUnit = nodeConfig.heapSize.slice(-1).toLowerCase();
-      let heapSizeGB;
-      switch (heapSizeUnit) {
-        case 'g':
-          heapSizeGB = heapSizeNumber;
-          break;
-        case 'm':
-          heapSizeGB = heapSizeNumber / 1024;
-          break;
-        case 'k':
-          heapSizeGB = heapSizeNumber / (1024 * 1024);
-          break;
-        default:
-          heapSizeGB = 1;
-      }
-
-      // Validate against system memory
-      if (heapSizeGB > systemMemoryInfo.total * 0.75) {
-        setValidationErrors([{
-          type: 'heap_size',
-          message: `Heap size exceeds 75% of system memory (${Math.floor(systemMemoryInfo.total * 0.75)}GB max)`
-        }]);
-        setShowValidationErrors(true);
-        return false;
-      }
-    }
-
-    setIsValidating(true);
-    setShowValidationErrors(false);
-    
-    try {
-      const response = await axiosClient.post('/api/admin/cluster-advanced/validate-node', requestBody);
-      
-      if (response.data.valid) {
-        setValidationErrors([]);
-        setValidationSuggestions({});
-        setShowValidationErrors(false);
-        setLastValidatedConfig(configKey);
-        return true;
-      } else {
-        setValidationErrors(response.data.conflicts || []);
-        setValidationSuggestions(response.data.suggestions || {});
-        setShowValidationErrors(true);
-        return false;
-      }
-    } catch (error) {
-      console.error('Validation error:', error);
-      if (error.response?.status === 409) {
-        // Handle validation conflicts from backend
-        setValidationErrors(error.response.data.conflicts || []);
-        setValidationSuggestions(error.response.data.suggestions || {});
-        setShowValidationErrors(true);
-      } else {
-        setValidationErrors([{
-          type: 'general',
-          message: error.response?.data?.error || 'Failed to validate configuration'
-        }]);
-        setShowValidationErrors(true);
-      }
-      return false;
-    } finally {
-      setIsValidating(false);
     }
   };
 
@@ -431,16 +450,14 @@ const LocalNodeManager = ({
   // Auto-suggest ports when cluster is selected
   const handleClusterChange = async (clusterName) => {
     setNewNodeCluster(clusterName);
-    
     // If in edit mode and the node exists, offer to change the cluster assignment
     if (mode === 'edit' && nodeToEdit && clusterName !== nodeToEdit.cluster) {
-      // Only attempt to change cluster if the node is not running
-      if (nodeToEdit.isRunning) {
+      // Only attempt to change cluster if the node is stopped
+      if (nodeToEdit.status !== 'stopped') {
         // Show a warning that node must be stopped first
         showNotification('warning', 'Node must be stopped before changing its cluster', faExclamationTriangle);
         return;
       }
-      
       try {
         await changeNodeCluster(nodeToEdit.name, clusterName);
         // No need to update state as fetchLocalNodes will refresh everything
@@ -448,7 +465,6 @@ const LocalNodeManager = ({
         // Error is already handled in the hook
       }
     }
-    
     // Clear any pending validation timeout to avoid conflicts
     if (validationTimeoutRef.current) {
       clearTimeout(validationTimeoutRef.current);
@@ -473,19 +489,46 @@ const LocalNodeManager = ({
         </div>
 
 
-        {/* Running Node Warning - Show only in edit mode when node is running */}
-        {mode === 'edit' && nodeToEdit?.isRunning && (
-          <div className="mt-3 mb-3 p-4 bg-amber-900 rounded-lg border border-amber-700">
-            <h3 className="text-lg font-semibold text-amber-100 mb-2 flex items-center">
+        {/* Node Status Warning - Show only in edit mode when node is not stopped */}
+        {mode === 'edit' && nodeToEdit?.status && nodeToEdit.status !== 'stopped' && (
+          <div className={`mt-3 mb-3 p-4 rounded-lg border ${
+            nodeToEdit.status === 'running' ? 'bg-amber-900 border-amber-700' :
+            nodeToEdit.status === 'starting' ? 'bg-blue-900 border-blue-700' :
+            nodeToEdit.status === 'stopping' ? 'bg-gray-900 border-gray-700' :
+            'bg-neutral-900 border-neutral-700'
+          }`}>
+            <h3 className={`text-lg font-semibold mb-2 flex items-center ${
+              nodeToEdit.status === 'running' ? 'text-amber-100' :
+              nodeToEdit.status === 'starting' ? 'text-blue-100' :
+              nodeToEdit.status === 'stopping' ? 'text-gray-100' :
+              'text-neutral-100'
+            }`}>
               <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
-              Node is Currently Running
+              Node is Currently {nodeToEdit.status.charAt(0).toUpperCase() + nodeToEdit.status.slice(1)}
             </h3>
-            <p className="text-amber-200 text-sm mb-3">
-              All configuration fields are disabled while the node is running. Stop the node first to make any changes to its configuration. Changes to a running node would require a restart to take effect anyway.
+            <p className={`text-sm mb-3 ${
+              nodeToEdit.status === 'running' ? 'text-amber-200' :
+              nodeToEdit.status === 'starting' ? 'text-blue-200' :
+              nodeToEdit.status === 'stopping' ? 'text-gray-200' :
+              'text-neutral-200'
+            }`}>
+              All configuration fields are disabled while the node is {nodeToEdit.status}. Stop the node first to make any changes to its configuration. Changes to a running node would require a restart to take effect anyway.
             </p>
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-amber-200 text-sm font-medium">Status: Running on port {nodeToEdit.port}</span>
+              <div className={`w-2 h-2 rounded-full animate-pulse ${
+                nodeToEdit.status === 'running' ? 'bg-green-400' :
+                nodeToEdit.status === 'starting' ? 'bg-blue-400' :
+                nodeToEdit.status === 'stopping' ? 'bg-gray-400' :
+                'bg-neutral-400'
+              }`}></div>
+              <span className={`text-sm font-medium ${
+                nodeToEdit.status === 'running' ? 'text-amber-200' :
+                nodeToEdit.status === 'starting' ? 'text-blue-200' :
+                nodeToEdit.status === 'stopping' ? 'text-gray-200' :
+                'text-neutral-200'
+              }`}>
+                Status: {nodeToEdit.status.charAt(0).toUpperCase() + nodeToEdit.status.slice(1)} on port {nodeToEdit.port}
+              </span>
             </div>
           </div>
         )}
@@ -511,9 +554,9 @@ const LocalNodeManager = ({
                 value={newNodeName}
                 onChange={handleNodeNameChange}
                 placeholder="e.g., node-1, data-node-01"
-                disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
+                disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
-                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                  (mode === 'edit' && nodeToEdit?.status !== 'stopped') ? 'opacity-50 cursor-not-allowed' : ''
                 } ${
                   validationErrors.some(e => e.type === 'node_name') 
                     ? 'border-red-500 focus:ring-red-500' 
@@ -533,18 +576,20 @@ const LocalNodeManager = ({
                 <select
                   value={newNodeCluster}
                   onChange={(e) => handleClusterChange(e.target.value)}
-                  disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
+                  disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                   className={`flex-1 p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                    (mode === 'edit' && nodeToEdit?.status !== 'stopped') ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
                 >
                   {(clusters || []).map(cluster => (
-                    <option key={cluster} value={cluster}>{cluster}</option>
+                    <option key={cluster.name} value={cluster.name}>
+                      {cluster.name} ({cluster.nodeCount})
+                    </option>
                   ))}
                 </select>
                 <button
                   onClick={() => setShowNewCluster(!showNewCluster)}
-                  disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
+                  disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                   className={buttonStyles.primary}
                   title="Create new cluster"
                 >
@@ -552,7 +597,7 @@ const LocalNodeManager = ({
                 </button>
               </div>
               {/* Add warning message for running nodes in edit mode */}
-              {mode === 'edit' && nodeToEdit?.isRunning && (
+              {mode === 'edit' && nodeToEdit?.status === 'running' && (
                 <p className="text-amber-400 text-xs mt-1">
                   <FontAwesomeIcon icon={faExclamationTriangle} className="mr-1" />
                   Node must be stopped before changing its cluster
@@ -590,9 +635,9 @@ className={buttonStyles.create}
                 value={newNodeHost}
                 onChange={(e) => setNewNodeHost(e.target.value)}
                 placeholder="localhost"
-                disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
+                disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                 className={`w-full p-3 border border-neutral-700 rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                  (mode === 'edit' && nodeToEdit?.status !== 'stopped') ? 'opacity-50 cursor-not-allowed' : ''
                 }`}
               />
             </div>
@@ -611,9 +656,9 @@ className={buttonStyles.create}
                 value={newNodePort}
                 onChange={(e) => setNewNodePort(e.target.value)}
                 placeholder="9200"
-                disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
+                disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                 className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
-                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                  (mode === 'edit' && nodeToEdit?.status !== 'stopped') ? 'opacity-50 cursor-not-allowed' : ''
                 } ${
                   validationErrors.some(e => e.type === 'http_port') 
                     ? 'border-red-500 focus:ring-red-500' 
@@ -636,14 +681,14 @@ className={buttonStyles.create}
                 value={newNodeTransportPort}
                 onChange={(e) => setNewNodeTransportPort(e.target.value)}
                 placeholder="9300"
-            disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
-                className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
-                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
-                } ${
-                  validationErrors.some(e => e.type === 'transport_port') 
-                    ? 'border-red-500 focus:ring-red-500' 
-                    : 'border-neutral-700 focus:ring-blue-500'
-                }`}
+            disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
+            className={`w-full p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
+              (mode === 'edit' && nodeToEdit?.status !== 'stopped') ? 'opacity-50 cursor-not-allowed' : ''
+            } ${
+              validationErrors.some(e => e.type === 'transport_port') 
+                ? 'border-red-500 focus:ring-red-500' 
+                : 'border-neutral-700 focus:ring-blue-500'
+            }`}
               />
             </div>
           </div>
@@ -657,13 +702,13 @@ className={buttonStyles.create}
             <div className="grid grid-cols-3 gap-4">
               {Object.entries(newNodeRoles).map(([role, enabled]) => (
                 <label key={role} className={`flex items-center space-x-2 ${
-                  (mode === 'edit' && nodeToEdit?.isRunning) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                  (mode === 'edit' && nodeToEdit?.status !== 'stopped') ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
                 }`}>
                   <input
                     type="checkbox"
                     checked={enabled}
                     onChange={() => handleRoleChange(role)}
-                    disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
+                    disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                     className="form-checkbox text-blue-600 bg-neutral-900 border-neutral-700 rounded focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <span className="text-neutral-300 capitalize">{role}</span>
@@ -716,9 +761,9 @@ className={buttonStyles.create}
                     value={newNodeHeapSize}
                     onChange={(e) => setNewNodeHeapSize(e.target.value)}
                     placeholder="e.g., 2g, 512m"
-                    disabled={disabled || (mode === 'edit' && nodeToEdit?.isRunning)}
+                    disabled={disabled || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                     className={`flex-1 p-3 border rounded-md bg-neutral-900 text-white focus:outline-none focus:ring-2 ${
-                      (mode === 'edit' && nodeToEdit?.isRunning) ? 'opacity-50 cursor-not-allowed' : ''
+                      (mode === 'edit' && nodeToEdit?.status !== 'stopped') ? 'opacity-50 cursor-not-allowed' : ''
                     } ${
                       validationErrors.some(e => e.type === 'heap_size') 
                         ? 'border-red-500 focus:ring-red-500' 
@@ -745,9 +790,9 @@ className={buttonStyles.create}
                       setMoveTargetPath(defaultPath);
                       setShowMoveModal(true);
                     }}
-                    disabled={disabled || nodeToEdit?.isRunning}
+                    disabled={disabled || nodeToEdit?.status !== 'stopped'}
                     className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={nodeToEdit?.isRunning ? "Stop the node to move it" : "Move node to new location"}
+                    title={nodeToEdit?.status !== 'stopped' ? "Stop the node to move it" : "Move node to new location"}
                   >
                     <FontAwesomeIcon icon={faArrowRight} className="mr-1" />
                     Move Node
@@ -787,7 +832,7 @@ className={buttonStyles.create}
                   value={newNodeDataPath}
                   onChange={mode === 'create' ? (e) => setNewNodeDataPath(e.target.value) : undefined}
                   placeholder={backendBasePath ? `${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}node-name${backendBasePath.includes('\\') ? '\\' : '/'}data` : 'C:\\elasticsearch\\nodes\\node-name\\data'}
-                  disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
+                  disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
                     mode === 'edit' 
                       ? 'cursor-not-allowed opacity-70 border-neutral-600' 
@@ -818,7 +863,7 @@ className={buttonStyles.create}
                   value={newNodeLogsPath}
                   onChange={mode === 'create' ? (e) => setNewNodeLogsPath(e.target.value) : undefined}
                   placeholder={backendBasePath ? `${backendBasePath}${backendBasePath.endsWith('\\') || backendBasePath.endsWith('/') ? '' : (backendBasePath.includes('\\') ? '\\' : '/') }nodes${backendBasePath.includes('\\') ? '\\' : '/'}node-name${backendBasePath.includes('\\') ? '\\' : '/'}logs` : 'C:\\elasticsearch\\nodes\\node-name\\logs'}
-                  disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.isRunning)}
+                  disabled={disabled || mode === 'edit' || (mode === 'edit' && nodeToEdit?.status !== 'stopped')}
                   className={`w-full p-3 border rounded-md bg-neutral-800 text-white focus:outline-none ${
                     mode === 'edit' 
                       ? 'cursor-not-allowed opacity-70 border-neutral-600' 
@@ -995,7 +1040,7 @@ className={buttonStyles.create}
               !newNodeName.trim() || 
               isValidating || 
               isApplyingSuggestions || 
-              (mode === 'edit' && nodeToEdit?.isRunning)
+              (mode === 'edit' && nodeToEdit?.status !== 'stopped')
             }
           >
             <FontAwesomeIcon icon={isValidating ? faSpinner : faServer} className={`mr-2 ${isValidating ? 'fa-spin' : ''}`} />
@@ -1073,7 +1118,7 @@ className={buttonStyles.create}
                 </p>
               </div>
 
-              {nodeToEdit?.isRunning && (
+              {nodeToEdit?.status === 'running' && (
                 <div className="p-4 bg-amber-900 rounded-lg border border-amber-700">
                   <div className="flex items-start space-x-3">
                     <FontAwesomeIcon icon={faExclamationTriangle} className="text-amber-400 mt-1" />
@@ -1107,7 +1152,7 @@ className={buttonStyles.create}
                     setIsMoving(false);
                   }
                 }}
-                disabled={!moveTargetPath.trim() || isMoving || nodeToEdit?.isRunning}
+                disabled={!moveTargetPath.trim() || isMoving || nodeToEdit?.status !== 'stopped'}
                 className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FontAwesomeIcon icon={isMoving ? faSpinner : faArrowRight} className={`mr-2 ${isMoving ? 'fa-spin' : ''}`} />

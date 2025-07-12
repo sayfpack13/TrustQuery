@@ -192,32 +192,46 @@ export const useAdminDashboard = () => {
 
   // Effect to manage polling based on presence of active tasks
   useEffect(() => {
-    const anyActiveTasks = tasksList.some(
-      (task) => !task.completed && task.status !== "error"
-    );
+    // Only set up the interval once, on mount
+    pollingIntervalRef.current = null;
+    let isUnmounted = false;
 
-    if (anyActiveTasks) {
+    const startPolling = () => {
       if (!pollingIntervalRef.current) {
         pollingIntervalRef.current = setInterval(() => {
           fetchAllTasks();
-        }, 3000); // Poll every 3 seconds
+        }, 3000);
       }
-    } else {
-      // If no active tasks, clear any existing interval
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-    }
+    };
 
-    // Cleanup on unmount
-    return () => {
+    const stopPolling = () => {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
         pollingIntervalRef.current = null;
       }
     };
-  }, [tasksList, fetchAllTasks]);
+
+    // Watch for changes in tasksList to start/stop polling
+    const checkPolling = () => {
+      const anyActiveTasks = tasksList.some(
+        (task) => !task.completed && task.status !== "error"
+      );
+      if (anyActiveTasks) {
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    checkPolling();
+
+    // Cleanup on unmount
+    return () => {
+      isUnmounted = true;
+      stopPolling();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchAllTasks]);
 
   return {
     // State
@@ -237,6 +251,7 @@ export const useAdminDashboard = () => {
 
     // Setters
     setCurrentRunningTaskId,
+    setTasksList,
 
     // Sound functions
     playSuccessSound,

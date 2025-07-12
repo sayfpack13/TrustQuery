@@ -27,7 +27,6 @@ import buttonStyles from "../../../components/ButtonStyles";
 export default function FilesManagement({
   showNotification,
   isAnyTaskRunning,
-  showEditModal,
   setTasksList = () => {}, // Default to no-op if not provided
   setCurrentRunningTaskId,
   availableNodes = [],
@@ -113,7 +112,7 @@ export default function FilesManagement({
   };
 
   const getRunningNodes = () => {
-    return availableNodes.filter((node) => node.isRunning);
+    return availableNodes.filter((node) => node.status === 'running');
   };
 
   const getNodeDisplayName = (node) => {
@@ -325,9 +324,7 @@ export default function FilesManagement({
 
     setDeletingFiles((prev) => new Set([...prev, filename]));
     try {
-      await axiosClient.delete("/api/admin/pending-files", {
-        data: { filename },
-      });
+      await axiosClient.delete(`/api/admin/pending-files/${filename}`);
       showNotification(
         "success",
         `Deleted '${filename}' successfully.`,

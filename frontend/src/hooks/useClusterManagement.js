@@ -41,11 +41,30 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
     showNotificationRef.current = showNotification;
   }, [showNotification]);
 
+  // Fetch system memory info
+  const fetchSystemMemoryInfo = useCallback(async () => {
+    try {
+      const response = await axiosClient.get('/api/setup-wizard/system-memory');
+      if (response.data && response.data.success) {
+        setSystemMemoryInfo(response.data.memory);
+      }
+    } catch (error) {
+      showNotificationRef.current('error', 'Failed to fetch system memory information', faExclamationTriangle);
+    }
+  }, []);
+
+  // Fetch data on initial mount only
+  useEffect(() => {
+    // Initial fetch of nodes and memory info
+    fetchLocalNodes();
+    fetchSystemMemoryInfo();
+  }, []); // Empty dependency array means this runs once on mount
+
   // Fetch all locally managed node configurations
   const fetchLocalNodes = useCallback(async (forceRefresh = false, cluster = null) => {
     setClusterLoading(true);
     try {
-      let url = '/api/admin/cluster-advanced/local-nodes';
+      let url = '/api/admin/node-management/local-nodes';
       const params = [];
       if (forceRefresh) params.push('forceRefresh=true');
       if (cluster) params.push(`cluster=${encodeURIComponent(cluster)}`);
@@ -53,8 +72,6 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
       const response = await axiosClient.get(url);
       setLocalNodes(response.data.nodes || []);
       setEnhancedNodesData(response.data.indicesByNodes || {});
-      // Debug log: print enhancedNodesData after refresh
-      console.log('EnhancedNodesData after refresh:', response.data.indicesByNodes || {});
     } catch (error) {
       showNotificationRef.current('error', 'Failed to fetch local node configuration', faExclamationTriangle);
     } finally {
@@ -63,17 +80,13 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
   }, []);
 
   // Available clusters: always use clustersList from backend
-  const clusters = useMemo(() => {
-    return clustersList && clustersList.length > 0
-      ? clustersList.map(cluster => cluster.name)
-      : ['trustquery-cluster'];
-  }, [clustersList]);
+  const clusters = useMemo(() => clustersList || [], [clustersList]);
 
   // Fetch all clusters
   const fetchClusters = useCallback(async () => {
     setClustersLoading(true);
     try {
-      const response = await axiosClient.get('/api/admin/cluster-advanced/clusters');
+      const response = await axiosClient.get('/api/admin/cluster-management/clusters');
       setClustersList(response.data.clusters || []);
       return response.data.clusters;
     } catch (error) {
@@ -92,7 +105,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
     }
     setClusterActionLoading(prev => [...prev, clusterName]);
     try {
-      const response = await axiosClient.put(`/api/admin/cluster-advanced/clusters/${clusterName}`, {
+      const response = await axiosClient.put(`/api/admin/cluster-management/clusters/${clusterName}`, {
         newName: newClusterName
       });
       showNotificationRef.current('success', `Cluster "${clusterName}" renamed to "${newClusterName}" successfully`, faCheckCircle);
@@ -117,7 +130,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
     setClusterActionLoading(prev => [...prev, clusterName]);
     try {
       const requestBody = targetCluster ? { targetCluster } : {};
-      const response = await axiosClient.delete(`/api/admin/cluster-advanced/clusters/${clusterName}`, {
+      const response = await axiosClient.delete(`/api/admin/cluster-management/clusters/${clusterName}`, {
         data: requestBody
       });
       showNotificationRef.current('success', response.data.message, faCheckCircle);
@@ -135,18 +148,6 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
       setClusterActionLoading(prev => prev.filter(name => name !== clusterName));
     }
   }, [fetchClusters, fetchLocalNodes]);
-
-  // Fetch system memory info
-  const fetchSystemMemoryInfo = useCallback(async () => {
-    try {
-      const response = await axiosClient.get('/api/setup-wizard/system-memory');
-      if (response.data && response.data.success) {
-        setSystemMemoryInfo(response.data.memory);
-      }
-    } catch (error) {
-      showNotificationRef.current('error', 'Failed to fetch system memory information', faExclamationTriangle);
-    }
-  }, []);
 
   // Reset form function
   const resetNodeForm = useCallback(() => {
@@ -167,23 +168,25 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
 
   const createLocalNode = useCallback(async (nodeConfig) => {
     try {
+      // Ensure cluster is a string (cluster name), not an object
       const config = nodeConfig || {
         name: newNodeName,
         host: newNodeHost,
         port: parseInt(newNodePort),
         transportPort: parseInt(newNodeTransportPort),
-        cluster: newNodeCluster,
+        cluster: typeof newNodeCluster === 'object' && newNodeCluster !== null ? newNodeCluster.name : newNodeCluster,
         dataPath: newNodeDataPath,
         logsPath: newNodeLogsPath,
         roles: newNodeRoles,
         heapSize: newNodeHeapSize // Add heap size to config
       };
-      
-      const response = await axiosClient.post('/api/admin/cluster-advanced/nodes', config);
-      
+      // If nodeConfig is provided, also fix cluster field if needed
+      if (nodeConfig && typeof nodeConfig.cluster === 'object' && nodeConfig.cluster !== null) {
+        config.cluster = nodeConfig.cluster.name;
+      }
+      const response = await axiosClient.post('/api/admin/node-management/nodes', config);
       showNotificationRef.current('success', `Node "${config.name}" created successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
-      
       // Reset form if using form data
       if (!nodeConfig) {
         resetNodeForm();
@@ -202,7 +205,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
         heapSize: updates.heapSize || newNodeHeapSize // Use provided heapSize or current state
       };
       
-      await axiosClient.put(`/api/admin/cluster-advanced/nodes/${nodeName}`, updatesWithHeapSize);
+      await axiosClient.put(`/api/admin/node-management/nodes/${nodeName}`, updatesWithHeapSize);
       showNotificationRef.current('success', `Node "${nodeName}" updated successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
     } catch (error) {
@@ -227,7 +230,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
   const handleDeleteLocalNode = async (nodeName) => {
     setNodeActionLoading(prev => [...prev, nodeName]);
     try {
-      await axiosClient.delete(`/api/admin/cluster-advanced/nodes/${nodeName}`);
+      await axiosClient.delete(`/api/admin/node-management/nodes/${nodeName}`);
       showNotificationRef.current('success', `Node "${nodeName}" and its data deleted successfully`, faCheckCircle);
       fetchLocalNodes(); // Refresh list
     } catch (error) {
@@ -238,101 +241,70 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
   };
 
   const handleStartLocalNode = async (nodeName) => {
-    setNodeActionLoading(prev => [...prev, nodeName]);
+    setNodeActionLoading((prev) => [...prev, nodeName]);
     try {
-      showNotificationRef.current('info', `Starting node "${nodeName}"...`, faCircleNotch, true);
-      // Call the start endpoint and get the taskId
-      const response = await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/start`);
-      if (typeof fetchAllTasks === 'function') {
-        fetchAllTasks(); // Fetch tasks immediately after backend responds
-      }
-      // Poll for actual started status instead of using timeout
-      const pollForNodeStart = async (maxAttempts = 15, interval = 2000) => {
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          await new Promise(resolve => setTimeout(resolve, interval));
-          try {
-            // Force refresh for polling to get accurate status
-            const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=true');
-            const freshNodes = response.data.nodes || [];
-            const freshEnhancedData = response.data.indicesByNodes || {};
-            setLocalNodes(freshNodes);
-            setEnhancedNodesData(freshEnhancedData);
-            // Debug log: print enhancedNodesData after refresh
-            console.log('EnhancedNodesData after refresh:', freshEnhancedData);
-            const targetNode = freshNodes.find(n => n.name === nodeName);
-            if (targetNode?.isRunning) {
-              showNotificationRef.current('success', `Node "${nodeName}" started successfully!`, faCheckCircle);
-              return true;
-            }
-          } catch (error) {
-            // Continue polling on error
-          }
+      await axiosClient.post(`/api/admin/node-management/nodes/${nodeName}/start`);
+      // Immediately fetch tasks so the new task appears in the dashboard
+      if (typeof fetchAllTasks === 'function') fetchAllTasks();
+      // Poll for node to reach 'running' status
+      let attempts = 0;
+      let found = false;
+      while (attempts < 10) {
+        await fetchLocalNodes(true);
+        const node = localNodes.find((n) => n.name === nodeName);
+        if (node && node.status === "running") {
+          found = true;
+          break;
         }
-        // If we get here, the node didn't start within the timeout
-        showNotificationRef.current('warning', `Node "${nodeName}" may still be starting. Please check its status.`, faExclamationTriangle);
-        await fetchLocalNodes(true); // Final refresh to get actual status
-        return false;
-      };
-      // Start polling and wait for result
-      await pollForNodeStart();
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        attempts++;
+      }
+      if (!found) {
+        showNotificationRef.current('warning', `Node "${nodeName}" did not reach running state after start.`, faExclamationTriangle);
+      }
     } catch (error) {
-      showNotificationRef.current('error', `Failed to start node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
-      // Refresh nodes data anyway to get current status
-      await fetchLocalNodes(true);
+      if (error.response && (error.response.status === 404 || error.response.status === 410)) {
+        await fetchLocalNodes(true);
+        showNotificationRef.current('error', `Node "${nodeName}" not found or missing data/logs. Cache refreshed.`, faExclamationTriangle);
+      } else {
+        showNotificationRef.current('error', `Failed to start node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      }
     } finally {
-      setNodeActionLoading(prev => prev.filter(name => name !== nodeName));
+      setNodeActionLoading((prev) => prev.filter((n) => n !== nodeName));
     }
   };
 
   const handleStopLocalNode = async (nodeName) => {
-    setNodeActionLoading(prev => [...prev, nodeName]);
+    setNodeActionLoading((prev) => [...prev, nodeName]);
     try {
-      showNotificationRef.current('info', `Stopping node "${nodeName}"...`, faCircleNotch, true);
-      
-      // Call the stop endpoint
-      await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/stop`);
-      
-      // Poll for actual stopped status instead of using timeout
-      const pollForNodeStop = async (maxAttempts = 10, interval = 2000) => {
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          await new Promise(resolve => setTimeout(resolve, interval));
-          
-          try {
-            // Use cached data for polling to reduce load
-            const response = await axiosClient.get('/api/admin/cluster-advanced/local-nodes?forceRefresh=false');
-            const freshNodes = response.data.nodes || [];
-            const freshEnhancedData = response.data.indicesByNodes || {};
-            
-            // Update state with fresh data
-            setLocalNodes(freshNodes);
-            setEnhancedNodesData(freshEnhancedData);
-            // Debug log: print enhancedNodesData after refresh
-            console.log('EnhancedNodesData after refresh:', freshEnhancedData);
-            
-            const targetNode = freshNodes.find(n => n.name === nodeName);
-            
-            if (!targetNode?.isRunning) {
-              showNotificationRef.current('success', `Node "${nodeName}" stopped successfully!`, faCheckCircle);
-              return true;
-            }
-          } catch (error) {
-            // Continue polling on error
-          }
+      await axiosClient.post(`/api/admin/node-management/nodes/${nodeName}/stop`);
+      // Immediately fetch tasks so the new task appears in the dashboard
+      if (typeof fetchAllTasks === 'function') fetchAllTasks();
+      // Poll for node to reach 'stopped' status
+      let attempts = 0;
+      let found = false;
+      while (attempts < 10) {
+        await fetchLocalNodes(true);
+        const node = localNodes.find((n) => n.name === nodeName);
+        if (node && node.status === "stopped") {
+          found = true;
+          break;
         }
-        
-        // If we get here, the node didn't stop within the timeout
-        showNotificationRef.current('error', `Node "${nodeName}" failed to stop within expected time. It may still be running.`, faExclamationTriangle);
-        await fetchLocalNodes(); // Final refresh to get actual status
-        return false;
-      };
-      
-      // Start polling and wait for result
-      await pollForNodeStop();
-      
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        attempts++;
+      }
+      if (!found) {
+        showNotificationRef.current('warning', `Node "${nodeName}" did not reach stopped state after stop.`, faExclamationTriangle);
+      }
     } catch (error) {
-      showNotificationRef.current('error', `Failed to stop node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      if (error.response && (error.response.status === 404 || error.response.status === 410)) {
+        await fetchLocalNodes(true);
+        showNotificationRef.current('error', `Node "${nodeName}" not found or missing data/logs. Cache refreshed.`, faExclamationTriangle);
+      } else {
+        showNotificationRef.current('error', `Failed to stop node: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
+      }
     } finally {
-      setNodeActionLoading(prev => prev.filter(name => name !== nodeName));
+      setNodeActionLoading((prev) => prev.filter((n) => n !== nodeName));
     }
   };
 
@@ -342,7 +314,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
     }
     
     try {
-      const response = await axiosClient.get(`/api/admin/cluster-advanced/nodes/${nodeName}`);
+      const response = await axiosClient.get(`/api/admin/node-management/nodes/${nodeName}`);
       return response.data;
     } catch (error) {
       showNotificationRef.current('error', `Failed to fetch node details: ${error.response?.data?.error || error.message}`, faExclamationTriangle);
@@ -353,7 +325,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
   const createCluster = useCallback(async (clusterName) => {
     try {
       // Call the backend API to create the cluster
-      const response = await axiosClient.post('/api/admin/cluster-advanced/clusters', { name: clusterName });
+      const response = await axiosClient.post('/api/admin/cluster-management/clusters', { name: clusterName });
       showNotificationRef.current('success', `Cluster "${clusterName}" created successfully`, faCheckCircle);
       
       // Refresh clusters list after creating a new cluster
@@ -371,7 +343,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
     try {
       showNotificationRef.current('info', `Moving node "${nodeName}"...`, faCircleNotch);
       
-      const response = await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/move`, {
+      const response = await axiosClient.post(`/api/admin/node-management/nodes/${nodeName}/move`, {
         newPath,
         preserveData
       });
@@ -393,7 +365,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
     try {
       showNotificationRef.current('info', `Copying node "${nodeName}" to "${newNodeName}"...`, faCircleNotch);
       
-      const response = await axiosClient.post(`/api/admin/cluster-advanced/nodes/${nodeName}/copy`, {
+      const response = await axiosClient.post(`/api/admin/node-management/nodes/${nodeName}/copy`, {
         newNodeName,
         newPath,
         copyData
@@ -413,7 +385,7 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
 
   const changeNodeCluster = useCallback(async (nodeName, clusterName) => {
     try {
-      const response = await axiosClient.put(`/api/admin/cluster-advanced/nodes/${nodeName}/cluster`, { cluster: clusterName });
+      const response = await axiosClient.put(`/api/admin/node-management/nodes/${nodeName}/cluster`, { cluster: clusterName });
       showNotificationRef.current('success', `Node "${nodeName}" moved to cluster "${clusterName}"`, faCheckCircle);
       fetchLocalNodes(); // Refresh node list to show updated cluster assignment
       return response.data;

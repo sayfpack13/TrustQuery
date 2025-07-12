@@ -12,7 +12,7 @@ async function getClusterStatus() {
     // Use cached isRunning from listNodes
     const enhancedNodes = nodes.map(node => ({
       ...node,
-      status: node.isRunning ? "running" : "stopped"
+      status: node.status || (node.status === "running" ? "running" : "stopped")
     }));
 
     // Get write node status from cache if available
@@ -20,13 +20,13 @@ async function getClusterStatus() {
     let writeNodeRunning = false;
     if (writeNode) {
       const writeNodeInfo = nodes.find(n => n.name === writeNode);
-      writeNodeRunning = writeNodeInfo ? writeNodeInfo.isRunning : false;
+      writeNodeRunning = writeNodeInfo ? writeNodeInfo.status === "running" : false;
     }
 
     return {
       totalNodes: nodes.length,
-      runningNodes: enhancedNodes.filter(n => n.isRunning).length,
-      stoppedNodes: enhancedNodes.filter(n => !n.isRunning).length,
+      runningNodes: enhancedNodes.filter(n => n.status === "running").length,
+      stoppedNodes: enhancedNodes.filter(n => n.status === "stopped").length,
       writeNode,
       writeNodeRunning,
       nodes: enhancedNodes

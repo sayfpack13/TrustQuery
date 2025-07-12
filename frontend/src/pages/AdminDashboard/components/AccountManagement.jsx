@@ -55,7 +55,7 @@ export default function AccountManagement({
         .map(([nodeName, nodeData]) => ({
           name: nodeName,
           url: nodeData.nodeUrl,
-          isRunning: nodeData.isRunning,
+          status: nodeData.status,
           indices: nodeData.indices || [],
           cluster: nodeData.cluster,
         }));
@@ -64,7 +64,7 @@ export default function AccountManagement({
     return Object.entries(enhancedNodesData).map(([nodeName, nodeData]) => ({
       name: nodeName,
       url: nodeData.nodeUrl,
-      isRunning: nodeData.isRunning,
+      status: nodeData.status,
       indices: nodeData.indices || [],
       cluster: nodeData.cluster,
     }));
@@ -113,7 +113,7 @@ export default function AccountManagement({
 
   // Check if any nodes are running
   const anyNodesRunning = React.useMemo(() => {
-    return availableNodes.some(node => node.isRunning);
+    return availableNodes.some(node => node.status === 'running');
   }, [availableNodes]);
 
   // Fetch accounts data
@@ -161,7 +161,7 @@ export default function AccountManagement({
       // Check if selected node is running before making the request
       if (node) {
         const nodeData = availableNodes.find(n => n.name === node);
-        if (!nodeData?.isRunning) {
+        if (nodeData?.status !== 'running') {
           setAccounts([]);
           setTotal(0);
           showNotification(
@@ -342,7 +342,7 @@ export default function AccountManagement({
 
     // Check if node is running before proceeding
     const nodeData = availableNodes.find(n => n.name === nodeInfo.node);
-    if (!nodeData?.isRunning) {
+    if (nodeData?.status !== 'running') {
       showNotification(
         "error",
         `Cannot update account: Node '${nodeInfo.node}' is not running`,
@@ -415,7 +415,7 @@ export default function AccountManagement({
 
     // Check if node is running before proceeding
     const nodeData = availableNodes.find(n => n.name === nodeInfo.node);
-    if (!nodeData?.isRunning) {
+    if (nodeData?.status !== 'running') {
       showNotification(
         "error",
         `Cannot delete account: Node '${nodeInfo.node}' is not running`,
@@ -492,7 +492,7 @@ export default function AccountManagement({
     for (const group of Object.values(groups)) {
       // Check if node is running
       const nodeData = availableNodes.find(n => n.name === group.node);
-      if (!nodeData?.isRunning) {
+      if (nodeData?.status !== 'running') {
         showNotification(
           "warning",
           `Skipping accounts on node '${group.node}' - node is not running`,
@@ -685,10 +685,10 @@ export default function AccountManagement({
                   <option
                     key={node.name}
                     value={node.name}
-                    disabled={!node.isRunning}
-                    className={!node.isRunning ? "text-gray-400" : ""}
+                    disabled={node.status !== 'running'}
+                    className={node.status !== 'running' ? "text-gray-400" : ""}
                   >
-                    {node.name} {!node.isRunning ? "(Not Running)" : ""}
+                    {node.name} {node.status !== 'running' ? "(Not Running)" : ""}
                   </option>
                 ))}
               </select>

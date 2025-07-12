@@ -6,7 +6,7 @@ import {
   faInfoCircle,
   faFileAlt,
   faDatabase,
-  faCircleInfo,
+  // faCircleInfo, // Removed unused import
   faPlus,
   faTrash,
   faExclamationTriangle,
@@ -25,164 +25,162 @@ export default function NodeDetailsModal({
   node,
   enhancedNodesData = {},
   onRefreshNodes,
-  disabled = false,
+  disabled = false
 }) {
-  const [activeTab, setActiveTab] = useState("overview");
-  const [configContent, setConfigContent] = useState("");
-  const [configLoading, setConfigLoading] = useState(false);
+  // All hooks must be called at the top, before any early returns
   const [nodeIndices, setNodeIndices] = useState([]);
-  const [indicesLoading, setIndicesLoading] = useState(false);
-  const [indicesError, setIndicesError] = useState(null);
-  const [usingCachedData, setUsingCachedData] = useState(true);
+  const [isLoadingIndices, setIsLoadingIndices] = useState(false);
+  const [indexName, setIndexName] = useState("");
+  const [shards, setShards] = useState(1);
+  const [replicas, setReplicas] = useState(0);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [indexToDelete, setIndexToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [configContent, setConfigContent] = useState("");
+  const [isLoadingConfig, setIsLoadingConfig] = useState(false);
+  const [configError, setConfigError] = useState(null);
+  const [showConfig, setShowConfig] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
   const [showCreateIndexForm, setShowCreateIndexForm] = useState(false);
-  const [isCreatingIndex, setIsCreatingIndex] = useState(false);
-  const [isDeletingIndex, setIsDeletingIndex] = useState(null);
-  const [isRefreshingIndices, setIsRefreshingIndices] = useState(false);
   const [newIndexName, setNewIndexName] = useState("");
   const [newIndexShards, setNewIndexShards] = useState("1");
   const [newIndexReplicas, setNewIndexReplicas] = useState("0");
-
-  // Disk usage state
+  const [indicesError, setIndicesError] = useState(null);
+  const [isCreatingIndex, setIsCreatingIndex] = useState(false);
+  const [isDeletingIndex, setIsDeletingIndex] = useState(null);
+  const [usingCachedData, setUsingCachedData] = useState(false);
   const [diskStats, setDiskStats] = useState(null);
   const [diskStatsLoading, setDiskStatsLoading] = useState(false);
   const [diskStatsError, setDiskStatsError] = useState(null);
-
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [indexToDelete, setIndexToDelete] = useState(null);
-
-  // Ref to track if a refresh operation is in progress to prevent race conditions
   const refreshInProgress = useRef(false);
+  const [nodeDetails, setNodeDetails] = useState(null);
 
-  // Add validation for form inputs
-  const isValidIndexName =
-    newIndexName.trim().length > 0 && !/[A-Z\s]/.test(newIndexName);
-  const isValidShards = parseInt(newIndexShards) > 0;
-  const isValidReplicas = parseInt(newIndexReplicas) >= 0;
-  const isFormValid = isValidIndexName && isValidShards && isValidReplicas;
+  // Add a ref to track if the modal is open for polling cancellation
+  const isModalOpenRef = useRef(show);
+  useEffect(() => { isModalOpenRef.current = show; }, [show]);
+
+
+
+  // Helper: Fetch latest indices from backend
+  const fetchLiveNodeIndices = useCallback(async (showLoading = true) => {
+    if (!node?.name) return;
+    if (showLoading) setIsLoadingIndices(true);
+    try {
+      const res = await axiosClient.get(`/api/admin/node-management/${node?.name}/indices`);
+      setNodeIndices(Array.isArray(res.data) ? res.data : []);
+    } catch (e) {
+      setNodeIndices([]);
+    } finally {
+      if (showLoading) setIsLoadingIndices(false);
+    }
+  }, [node?.name]);
+
+  // Helper: Poll for index presence/absence after mutation, with cancellation
+  const pollForIndexChange = useCallback(async (indexName, shouldExist = true, maxAttempts = 10, interval = 1000) => {
+    setPolling(true);
+    let attempts = 0;
+    let cancelled = false;
+    const cancelCheck = () => !isModalOpenRef.current || !node?.name;
+    while (attempts < maxAttempts && !cancelCheck()) {
+      try {
+        const res = await axiosClient.get(`/api/admin/node-management/${node?.name}/indices`);
+        const indices = Array.isArray(res.data) ? res.data : [];
+        const found = indices.some(idx => idx.index === indexName);
+        if ((shouldExist && found) || (!shouldExist && !found)) {
+          setNodeIndices(indices);
+          break;
+        }
+      } catch (e) {
+        // ignore
+      }
+      await new Promise(resolve => setTimeout(resolve, interval));
+      attempts++;
+    }
+    setPolling(false);
+  }, [node?.name]);
 
   // Fetch cached indices from prop instead of API
   const fetchCachedNodeIndices = useCallback(() => {
     if (!node?.name) return;
-
     try {
-      const nodeData = enhancedNodesData[node.name];
-
+      const nodeData = enhancedNodesData[node?.name];
       if (nodeData && nodeData.indices) {
-        // Convert indices object to array format expected by the UI
         const indicesArray = Array.isArray(nodeData.indices)
           ? nodeData.indices
           : Object.entries(nodeData.indices).map(([indexName, indexData]) => ({
             index: indexName,
             "doc.count": indexData["doc.count"] || 0,
             "store.size": formatBytes(indexData["store.size"]),
-            health: "green", // Default value since cache doesn't store health
-            status: "open", // Default value since cache doesn't store status
-            uuid: indexName, // Use index name as fallback UUID for cache
+            health: "green",
+            status: "open",
+            uuid: indexName,
             creation: {
               date: {
-                string: new Date().toISOString(), // Fallback date
+                string: new Date().toISOString(),
               },
             },
           }));
-
         setNodeIndices(indicesArray);
-        setUsingCachedData(!nodeData.isRunning); // Use cached data if node is not running
-        setIndicesError(nodeData.error || null);
+        setError(nodeData.error || null);
       } else {
         setNodeIndices([]);
-        setIndicesError(nodeData?.error || "No data available");
+        setError(nodeData?.error || "No data available");
       }
     } catch (error) {
-      setIndicesError("Failed to load indices data");
+      setError("Failed to load indices data");
       setNodeIndices([]);
     }
   }, [enhancedNodesData, node?.name]);
 
-  // Fetch live indices directly from node (fallback or explicit refresh)
-  const fetchLiveNodeIndices = useCallback(
-    async (showLoading = true) => {
-      if (node) {
-        if (showLoading) setIndicesLoading(true);
-        setIndicesError(null);
-        setUsingCachedData(false);
-
-        try {
-          const response = await axiosClient.get(
-            `/api/admin/cluster-advanced/${node.name}/indices`
-          );
-          setNodeIndices(response.data || []);
-        } catch (error) {
-          setIndicesError(
-            error.response?.data?.error || "Failed to load indices"
-          );
-          setNodeIndices([]);
-        } finally {
-          if (showLoading) setIndicesLoading(false);
-        }
-      }
-    },
-    [node?.name]
-  );
-
   // Primary fetch function - uses cached data by default
-  const fetchNodeIndices = useCallback(
-    (showLoading = true, forceLive = false) => {
-      if (forceLive) {
-        return fetchLiveNodeIndices(showLoading);
-      } else {
-        if (showLoading) setIndicesLoading(true);
-        try {
-          fetchCachedNodeIndices();
-        } catch (error) {
-          setIndicesError("Failed to fetch indices data");
-        } finally {
-          if (showLoading) setIndicesLoading(false);
-        }
+  const fetchNodeIndices = useCallback((showLoading = true, forceLive = false) => {
+    if (forceLive) {
+      return fetchLiveNodeIndices(showLoading);
+    } else {
+      if (showLoading) setIsLoadingIndices(true);
+      try {
+        fetchCachedNodeIndices();
+      } catch (error) {
+        setError("Failed to fetch indices data");
+      } finally {
+        if (showLoading) setIsLoadingIndices(false);
       }
-    },
-    [fetchLiveNodeIndices, fetchCachedNodeIndices]
-  );
+    }
+  }, [fetchLiveNodeIndices, fetchCachedNodeIndices]);
 
-  // Manual refresh function for the retry button
   const handleManualRefresh = useCallback(async () => {
     if (refreshInProgress.current) return;
-
-    setIsRefreshingIndices(true);
+    setIsRefreshing(true);
     refreshInProgress.current = true;
-
     try {
-      if (node.isRunning) {
-        // Trigger a centralized cache refresh for all nodes
+      if (node?.status === "running") {
         if (onRefreshNodes) {
           await onRefreshNodes(true);
         }
-        // After cache refresh, fetch live indices for this node
         await fetchLiveNodeIndices(false);
       } else {
-        // For offline nodes, just update from cached data
         fetchCachedNodeIndices();
       }
     } catch (error) {
-      setIndicesError(error.response?.data?.error || "Refresh failed");
+      setError(error.response?.data?.error || "Refresh failed");
     } finally {
-      setIsRefreshingIndices(false);
+      setIsRefreshing(false);
       refreshInProgress.current = false;
     }
-  }, [
-    node?.isRunning,
-    fetchLiveNodeIndices,
-    fetchCachedNodeIndices,
-    onRefreshNodes,
-  ]);
+  }, [node?.status, fetchLiveNodeIndices, fetchCachedNodeIndices, onRefreshNodes]);
 
   const fetchDiskStats = useCallback(async () => {
-    if (node && node.isRunning) {
+    if (node && node.status === "running") {
       setDiskStatsLoading(true);
       setDiskStatsError(null);
-
       try {
         const response = await axiosClient.get(
-          `/api/admin/cluster-advanced/nodes/${node.name}/stats`
+          `/api/admin/node-management/nodes/${node?.name}/stats`
         );
         setDiskStats(response.data);
       } catch (error) {
@@ -197,62 +195,95 @@ export default function NodeDetailsModal({
       setDiskStats(null);
       setDiskStatsError(null);
     }
-  }, [node?.name, node?.isRunning]);
+  }, [node]);
 
   // Update indices when enhancedNodesData changes (for cached data updates)
   useEffect(() => {
-    if (activeTab === "indices" && node && !refreshInProgress.current) {
-      fetchCachedNodeIndices();
-    }
-  }, [enhancedNodesData, activeTab, node?.name, fetchCachedNodeIndices]);
+    if (!show || activeTab !== "indices" || !node || refreshInProgress.current) return;
+    fetchCachedNodeIndices();
+  }, [enhancedNodesData, activeTab, node, fetchCachedNodeIndices, show]);
 
   // Primary tab content loading effect
   useEffect(() => {
-    if (activeTab === "configuration" && node) {
+    if (!show || !node) return;
+    if (activeTab === "configuration") {
       const fetchConfig = async () => {
-        setConfigLoading(true);
+        setIsLoadingConfig(true);
         try {
           const response = await axiosClient.get(
-            `/api/admin/cluster-advanced/${node.name}/config`
+            `/api/admin/node-management/${node?.name}/config`
           );
           setConfigContent(response.data);
         } catch (error) {
           setConfigContent("Failed to load configuration.");
         } finally {
-          setConfigLoading(false);
+          setIsLoadingConfig(false);
         }
       };
       fetchConfig();
-    } else if (activeTab === "indices" && node && !refreshInProgress.current) {
+    } else if (activeTab === "indices" && !refreshInProgress.current) {
       fetchNodeIndices();
-    } else if (activeTab === "overview" && node) {
+    } else if (activeTab === "overview") {
       fetchDiskStats();
     }
-  }, [activeTab, node?.name, fetchNodeIndices, fetchDiskStats]);
+  }, [activeTab, node, fetchNodeIndices, fetchDiskStats, show]);
 
   // Hide create index form if node stops running
   useEffect(() => {
-    if (node && !node.isRunning && showCreateIndexForm) {
+    if (!show || !node) return;
+    if (node.status !== "running" && showCreateIndexForm) {
       setShowCreateIndexForm(false);
     }
-  }, [node?.isRunning, showCreateIndexForm]);
+  }, [node, showCreateIndexForm, show]);
 
   // Reset state when modal is closed
   useEffect(() => {
-    if (!show) {
-      setActiveTab("overview");
-      setShowCreateIndexForm(false);
-      setNewIndexName("");
-      setNewIndexShards("1");
-      setNewIndexReplicas("0");
-      setShowDeleteModal(false);
-      setIndexToDelete(null);
-      setIndicesError(null);
-      setIsDeletingIndex(null);
-      setDiskStats(null);
-      setDiskStatsError(null);
-    }
+    if (show) return;
+    setActiveTab("overview");
+    setShowCreateIndexForm(false);
+    setNewIndexName("");
+    setNewIndexShards("1");
+    setNewIndexReplicas("0");
+    setShowDeleteModal(false);
+    setIndexToDelete(null);
+    setIndicesError(null);
+    setIsDeletingIndex(null);
+    setDiskStats(null);
+    setDiskStatsError(null);
   }, [show]);
+
+  // Listen for cache refresh events - but don't trigger fetch if we just updated
+  useEffect(() => {
+    if (!show) return;
+    const handleCacheRefresh = () => {
+      if (activeTab === "indices" && node && !refreshInProgress.current) {
+        fetchCachedNodeIndices();
+      }
+    };
+    window.addEventListener("indicesCacheRefreshed", handleCacheRefresh);
+    return () => {
+      window.removeEventListener("indicesCacheRefreshed", handleCacheRefresh);
+    };
+  }, [activeTab, node, fetchCachedNodeIndices, show]);
+
+  // Only fetch node details when modal opens or node changes, not on input change
+  useEffect(() => {
+    if (show && node?.name) {
+      axiosClient.get(`/api/admin/node-management/nodes/${node.name}`)
+        .then(res => setNodeDetails(res.data))
+        .catch(err => setError(err.response?.data?.error || 'Failed to fetch node details'));
+    }
+    // Do not depend on form state/input value
+  }, [show, node?.name]);
+
+  if (!node) return null;
+
+  // Add validation for form inputs
+  const isValidIndexName =
+    indexName.trim().length > 0 && !/[A-Z\s]/.test(indexName);
+  const isValidShards = parseInt(shards) > 0;
+  const isValidReplicas = parseInt(replicas) >= 0;
+  const isFormValid = isValidIndexName && isValidShards && isValidReplicas;
 
   const handleCreateIndex = async () => {
     if (!isFormValid || refreshInProgress.current || isCreatingIndex) {
@@ -265,7 +296,7 @@ export default function NodeDetailsModal({
 
     try {
       await axiosClient.post(
-        `/api/admin/cluster-advanced/${node.name}/indices`,
+        `/api/admin/node-management/${node.name}/indices`,
         {
           indexName: newIndexName.trim(),
           shards: parseInt(newIndexShards),
@@ -279,11 +310,8 @@ export default function NodeDetailsModal({
       setNewIndexShards("1");
       setNewIndexReplicas("0");
 
-      // Get fresh live data for the modal immediately
-      await fetchLiveNodeIndices(false);
-
-      // Wait for backend cache update to complete
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Poll for index to appear
+      await pollForIndexChange(newIndexName.trim(), true);
 
       // Single centralized refresh to update all components
       if (onRefreshNodes) {
@@ -321,14 +349,11 @@ export default function NodeDetailsModal({
     try {
       // Use the correct node-specific API endpoint
       await axiosClient.delete(
-        `/api/admin/cluster-advanced/${node.name}/indices/${indexToDelete.index}`
+        `/api/admin/node-management/${node.name}/indices/${indexToDelete.index}`
       );
 
-      // Get fresh live data for the modal immediately
-      await fetchLiveNodeIndices(false);
-
-      // Wait for backend cache update to complete
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Poll for index to disappear
+      await pollForIndexChange(indexToDelete.index, false);
 
       // Single centralized refresh to update all components
       if (onRefreshNodes) {
@@ -349,27 +374,9 @@ export default function NodeDetailsModal({
     }
   };
 
-  // Listen for cache refresh events - but don't trigger fetch if we just updated
-  useEffect(() => {
-    const handleCacheRefresh = () => {
-      // Only refresh if we're not in the middle of a refresh operation
-      if (activeTab === "indices" && node && !refreshInProgress.current) {
-        fetchCachedNodeIndices(); // Use cached data refresh instead of API call
-      }
-    };
-
-    window.addEventListener("indicesCacheRefreshed", handleCacheRefresh);
-    return () => {
-      window.removeEventListener("indicesCacheRefreshed", handleCacheRefresh);
-    };
-  }, [activeTab, node, fetchCachedNodeIndices]); // Fixed dependencies
-
-  if (!show || !node) {
-    return null;
-  }
-
   const renderContent = () => {
-    const isStarting = node.isStarting || node.status === "starting" || node.cacheStatus === "starting";
+    const isStarting = node.status === "starting" || node.cacheStatus === "starting";
+    const isStopping = node.status === "stopping" || node.cacheStatus === "stopping";
     switch (activeTab) {
       case "overview":
         return (
@@ -390,13 +397,19 @@ export default function NodeDetailsModal({
                         <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div>
                         <span className="text-white font-medium">Starting</span>
                       </>
+                    ) : isStopping ? (
+                      <>
+                        <FontAwesomeIcon icon={faCircleNotch} spin className="text-yellow-400 text-xs mr-1" />
+                        <div className="w-3 h-3 rounded-full bg-yellow-500 animate-pulse"></div>
+                        <span className="text-white font-medium">Stopping</span>
+                      </>
                     ) : (
                       <>
                         <div
-                          className={`w-3 h-3 rounded-full ${node.isRunning ? "bg-green-500" : "bg-red-500"}`}
+                          className={`w-3 h-3 rounded-full ${node.status === "running" ? "bg-green-500" : "bg-red-500"}`}
                         ></div>
                         <span className="text-white font-medium">
-                          {node.isRunning ? "Running" : "Stopped"}
+                          {node.status === "running" ? "Running" : "Stopped"}
                         </span>
                       </>
                     )}
@@ -461,7 +474,7 @@ export default function NodeDetailsModal({
             </div>
 
             {/* Memory Information */}
-            {node.isRunning && enhancedNodesData[node.name]?.memory && (
+            {node.status === "running" && enhancedNodesData[node.name]?.memory && (
               <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
                 <h3 className="text-lg font-semibold text-white mb-4">
                   Memory Usage
@@ -565,7 +578,7 @@ export default function NodeDetailsModal({
                 <FontAwesomeIcon icon={faHdd} className="mr-2" />
                 Disk Usage
               </h4>
-              {!node.isRunning ? (
+              {node.status !== "running" ? (
                 <div className="p-4 bg-amber-600 rounded-lg border border-amber-500">
                   <p className="text-amber-100 text-sm">
                     Node must be running to view disk statistics.
@@ -637,7 +650,7 @@ export default function NodeDetailsModal({
           </div>
         );
       case "indices":
-        if (indicesLoading) {
+        if (isLoadingIndices) {
           return (
             <div className="text-center py-8">
               <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
@@ -647,7 +660,7 @@ export default function NodeDetailsModal({
         }
         return (
           <div>
-            {!node.isRunning && (
+            {(node.status !== "running" && node.status !== "starting" && node.status !== "stopping") && (
               <div className="mb-4 p-4 bg-amber-600 rounded-lg border border-amber-500">
                 <div className="flex items-center space-x-3">
                   <FontAwesomeIcon
@@ -667,7 +680,7 @@ export default function NodeDetailsModal({
               </div>
             )}
 
-            {indicesError && (
+            {error && (
               <div className="mb-4 p-4 bg-amber-600 rounded-lg border border-amber-500">
                 <div className="flex items-start space-x-3">
                   <FontAwesomeIcon
@@ -679,7 +692,7 @@ export default function NodeDetailsModal({
                       Error Loading Indices
                     </h4>
                     <p className="text-amber-200 text-sm mb-2">
-                      {indicesError}
+                      {error}
                     </p>
                     <div className="flex space-x-2">
                       <button
@@ -691,12 +704,12 @@ export default function NodeDetailsModal({
                       >
                         <FontAwesomeIcon
                           icon={faCircleNotch}
-                          className={`mr-1 ${isRefreshingIndices ? "fa-spin" : ""
+                          className={`mr-1 ${isRefreshing ? "fa-spin" : ""
                             }`}
                         />
-                        {isRefreshingIndices ? "Retrying..." : "Retry"}
+                        {isRefreshing ? "Retrying..." : "Retry"}
                       </button>
-                      {node.isRunning && (
+                      {node.status === 'running' && (
                         <button
                           onClick={() => fetchLiveNodeIndices(true)}
                           className="bg-red-700 hover:bg-red-600 text-white px-3 py-1 rounded text-sm"
@@ -713,7 +726,7 @@ export default function NodeDetailsModal({
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold text-white flex items-center">
                 Indices on {node.name}
-                {(indicesLoading || isRefreshingIndices) && (
+                {(isLoadingIndices || isRefreshing) && (
                   <FontAwesomeIcon
                     icon={faCircleNotch}
                     className="fa-spin ml-2 text-blue-400"
@@ -724,19 +737,23 @@ export default function NodeDetailsModal({
                 {/* Cache status indicator */}
                 <div className="flex items-center space-x-1">
                   <span
-                    className={`inline-block w-2 h-2 rounded-full ${node.isRunning
+                    className={`inline-block w-2 h-2 rounded-full ${node.status === "running"
                         ? usingCachedData
                           ? "bg-yellow-400"
                           : "bg-green-400"
-                        : "bg-blue-400"
+                        : node.status === "starting" || node.status === "stopping"
+                          ? "bg-yellow-400"
+                          : "bg-blue-400"
                       }`}
                   ></span>
                   <span className="text-xs text-neutral-400">
-                    {node.isRunning
+                    {node.status === "running"
                       ? usingCachedData
                         ? "Smart Cache"
                         : "Live"
-                      : "Cached (Offline)"}
+                      : node.status === "starting" ? "Starting..." 
+                        : node.status === "stopping" ? "Stopping..."
+                        : "Cached (Offline)"}
                   </span>
                 </div>
 
@@ -745,280 +762,85 @@ export default function NodeDetailsModal({
                   onClick={handleManualRefresh}
                   className={buttonStyles.refresh}
                   title="Refresh indices data"
-                  disabled={!node.isRunning}
+                  disabled={node.status !== "running"}
                 >
                   <FontAwesomeIcon
                     icon={faRefresh}
-                    className={`mr-1 ${isRefreshingIndices ? "fa-spin" : ""}`}
+                    className={`mr-1 ${isRefreshing ? "fa-spin" : ""}`}
                   />
-                  {isRefreshingIndices ? "Refreshing..." : "Refresh"}
+                  Refresh
                 </button>
 
-                {/* Create index button */}
+                {/* Create Index Button */}
                 <button
-                  onClick={() => setShowCreateIndexForm(!showCreateIndexForm)}
+                  onClick={() => setShowCreateIndexForm(true)}
                   className={buttonStyles.create}
-                  disabled={isCreatingIndex || !node.isRunning}
+                  disabled={node.status !== "running"}
                 >
-                  <FontAwesomeIcon
-                    icon={isCreatingIndex ? faRefresh : faPlus}
-                    className={`mr-2 ${isCreatingIndex ? "fa-spin" : ""}`}
-                  />
-                  {isCreatingIndex ? "Creating..." : "Create Index"}
+                  <FontAwesomeIcon icon={faPlus} className="mr-1" />
+                  Create Index
                 </button>
               </div>
             </div>
 
-            {showCreateIndexForm && (
-              <div className="bg-neutral-700 p-6 rounded-lg mb-4 shadow-lg border border-neutral-600">
-                <h4 className="text-xl font-bold mb-4 text-primary flex items-center">
-                  <FontAwesomeIcon icon={faPlus} className="mr-2" />
-                  Create New Index
-                </h4>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    handleCreateIndex();
-                  }}
-                >
-                  <div className="mb-4">
-                    <label
-                      className="block text-sm font-medium text-neutral-200 mb-1"
-                      htmlFor="index-name"
-                    >
-                      Index Name
-                    </label>
-                    <input
-                      id="index-name"
-                      type="text"
-                      value={newIndexName}
-                      onChange={(e) => setNewIndexName(e.target.value)}
-                      placeholder="e.g. logs-2025"
-                      autoFocus
-                      className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${newIndexName && !isValidIndexName
-                          ? "border-red-500 focus:ring-red-500"
-                          : "border-neutral-600 focus:ring-blue-500"
-                        }`}
-                    />
-                    {newIndexName && !isValidIndexName && (
-                      <p className="text-red-400 text-xs mt-1">
-                        Index name must be lowercase, no spaces or uppercase
-                        letters
-                      </p>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <label
-                        className="block text-sm font-medium text-neutral-200 mb-1"
-                        htmlFor="index-shards"
-                      >
-                        Shards
-                      </label>
-                      <input
-                        id="index-shards"
-                        type="number"
-                        value={newIndexShards}
-                        onChange={(e) => setNewIndexShards(e.target.value)}
-                        min="1"
-                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${!isValidShards
-                            ? "border-red-500 focus:ring-red-500"
-                            : "border-neutral-600 focus:ring-blue-500"
-                          }`}
-                      />
-                      {!isValidShards && (
-                        <p className="text-red-400 text-xs mt-1">
-                          Must be at least 1
-                        </p>
-                      )}
-                    </div>
-                    <div>
-                      <label
-                        className="block text-sm font-medium text-neutral-200 mb-1"
-                        htmlFor="index-replicas"
-                      >
-                        Replicas
-                      </label>
-                      <input
-                        id="index-replicas"
-                        type="number"
-                        value={newIndexReplicas}
-                        onChange={(e) => setNewIndexReplicas(e.target.value)}
-                        min="0"
-                        className={`w-full p-2 rounded-md bg-neutral-800 text-white border focus:outline-none focus:ring-2 transition-all ${!isValidReplicas
-                            ? "border-red-500 focus:ring-red-500"
-                            : "border-neutral-600 focus:ring-blue-500"
-                          }`}
-                      />
-                      {!isValidReplicas && (
-                        <p className="text-red-400 text-xs mt-1">
-                          Must be 0 or greater
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2 mt-6">
-                    <button
-                      type="submit"
-                      className={
-                        buttonStyles.primary +
-                        " px-6 py-2 rounded flex items-center gap-2"
-                      }
-                      disabled={
-                        isCreatingIndex || !node.isRunning || !isFormValid
-                      }
-                      title={
-                        !node.isRunning
-                          ? "Node must be running to create indices"
-                          : !isFormValid
-                            ? "Please fix validation errors"
-                            : ""
-                      }
-                    >
-                      <FontAwesomeIcon icon={isCreatingIndex ? faRefresh : faPlus} className={"mr-2" + (isCreatingIndex ? " fa-spin" : "")} />
-                      {isCreatingIndex ? "Creating..." : "Create Index"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowCreateIndexForm(false)}
-                      className={
-                        buttonStyles.cancel +
-                        " px-6 py-2 rounded flex items-center"
-                      }
-                      disabled={isCreatingIndex}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            <div className="relative">
-              <table className="w-full text-neutral-100 bg-neutral-600 rounded-lg">
-                <thead className="bg-neutral-500">
-                  <tr>
-                    <th className="text-left py-3 px-4 font-semibold">
-                      Health
-                    </th>
-                    <th className="text-left py-3 px-4 font-semibold">Index</th>
-                    <th className="text-left py-3 px-4 font-semibold">Docs</th>
-                    <th className="text-left py-3 px-4 font-semibold">
-                      Storage
-                    </th>
-                    <th className="text-left py-3 px-4 font-semibold">
-                      Actions
-                    </th>
+            {/* Indices Table */}
+            <div className="overflow-x-auto">
+              <table className="min-w-full bg-neutral-800 rounded-lg border border-neutral-700">
+                <thead>
+                  <tr className="text-left text-sm font-medium text-neutral-400 border-b border-neutral-600">
+                    <th className="py-3 px-6">Index</th>
+                    <th className="py-3 px-6">Docs</th>
+                    <th className="py-3 px-6">Size</th>
+                    <th className="py-3 px-6">Health</th>
+                    <th className="py-3 px-6">Status</th>
+                    <th className="py-3 px-6">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {nodeIndices.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan="5"
-                        className="py-8 text-center text-neutral-400"
-                      >
-                        {indicesLoading || isRefreshingIndices ? (
-                          <div className="flex items-center justify-center">
-                            <FontAwesomeIcon
-                              icon={faCircleNotch}
-                              className="fa-spin mr-2"
-                            />
-                            Loading indices...
-                          </div>
-                        ) : indicesError ? (
-                          "Error loading indices - see message above"
-                        ) : (
-                          "No indices found on this node"
-                        )}
+                  {nodeIndices.map((index) => (
+                    <tr key={index.uuid} className="hover:bg-neutral-700">
+                      <td className="py-3 px-6 text-white font-medium">
+                        {index.index}
+                      </td>
+                      <td className="py-3 px-6 text-neutral-300">
+                        {index["doc.count"]}
+                      </td>
+                      <td className="py-3 px-6 text-neutral-300">
+                        {index["store.size"]}
+                      </td>
+                      <td className="py-3 px-6">
+                        <span
+                          className={`inline-block w-2 h-2 rounded-full ${
+                            index.health === "green"
+                              ? "bg-green-500"
+                              : index.health === "yellow"
+                                ? "bg-yellow-500"
+                                : "bg-red-500"
+                          }`}
+                        ></span>
+                      </td>
+                      <td className="py-3 px-6 text-neutral-300">
+                        {index.status}
+                      </td>
+                      <td className="py-3 px-6 text-neutral-400 text-sm">
+                        <button
+                          onClick={() => handleDeleteClick(index)}
+                          className={buttonStyles.delete}
+                          title="Delete Index"
+                          disabled={isDeletingIndex === index.index}
+                        >
+                          <FontAwesomeIcon icon={faTrash} />
+                        </button>
                       </td>
                     </tr>
-                  ) : (
-                    nodeIndices.map((index) => (
-                      <tr
-                        key={index.uuid || index.index}
-                        className="border-b border-neutral-500"
-                      >
-                        <td className="py-3 px-4">
-                          <span
-                            className={`inline-block w-3 h-3 rounded-full ${index.health === "green"
-                                ? "bg-green-500"
-                                : index.health === "yellow"
-                                  ? "bg-yellow-500"
-                                  : "bg-red-500"
-                              }`}
-                          ></span>
-                        </td>
-                        <td className="py-3 px-4 font-medium">{index.index}</td>
-                        <td className="py-3 px-4">
-                          {(index["doc.count"] || 0).toLocaleString()}
-                        </td>
-                        <td className="py-3 px-4">
-                          {formatBytes(index["store.size"])}
-                        </td>
-                        <td className="py-3 px-4">
-                          <button
-                            onClick={() => handleDeleteClick(index)}
-                            className={
-                              buttonStyles.delete 
-                            }
-                            disabled={
-                              !node.isRunning ||
-                              isDeletingIndex === index.index ||
-                              isCreatingIndex ||
-                              refreshInProgress.current
-                            }
-                            title={
-                              !node.isRunning
-                                ? "Start the node to delete indices"
-                                : isDeletingIndex === index.index
-                                  ? "Deleting..."
-                                  : isCreatingIndex
-                                    ? "Wait for index creation to complete"
-                                    : refreshInProgress.current
-                                      ? "Wait for refresh to complete"
-                                      : "Delete index"
-                            }
-                          >
-
-                              <FontAwesomeIcon icon={isDeletingIndex === index.index ? faCircleNotch : faTrash} spin={isDeletingIndex === index.index} />
-
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                  ))}
                 </tbody>
               </table>
-              {/* Loading overlay for table updates */}
-              {(indicesLoading || isRefreshingIndices) &&
-                nodeIndices.length > 0 && (
-                  <div className="absolute inset-0 bg-black bg-opacity-20 flex items-center justify-center rounded-lg">
-                    <div className="bg-neutral-800 px-4 py-2 rounded-lg border border-neutral-600 flex items-center">
-                      <FontAwesomeIcon
-                        icon={faCircleNotch}
-                        className="fa-spin mr-2 text-blue-400"
-                      />
-                      <span className="text-white text-sm">
-                        Updating indices...
-                      </span>
-                    </div>
-                  </div>
-                )}
             </div>
-
-            {/* Last update timestamp */}
-            {nodeIndices.length > 0 && (
-              <div className="text-xs text-neutral-400 mt-2 text-right">
-                {node.isRunning
-                  ? `Live data • Updated: ${new Date().toLocaleTimeString()}`
-                  : `Cached data • Node offline`}
-              </div>
-            )}
           </div>
         );
       case "configuration":
-        if (configLoading) {
+        if (isLoadingConfig) {
           return (
             <div className="text-center py-8">
               <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
@@ -1027,17 +849,29 @@ export default function NodeDetailsModal({
           );
         }
         return (
-          <div>
-            <h3 className="text-xl font-semibold text-white mb-4">
-              elasticsearch.yml
-            </h3>
-            <pre className="bg-neutral-900 p-4 rounded-lg text-sm text-neutral-300 overflow-x-auto">
-              <code>{configContent}</code>
-            </pre>
+          <div className="space-y-6">
+            <div className="p-4 bg-neutral-900 rounded-lg border border-neutral-700">
+              <h3 className="text-lg font-semibold text-white mb-4">
+                Node Configuration
+              </h3>
+              {configError ? (
+                <div className="p-4 bg-amber-600 rounded-lg border border-amber-500">
+                  <p className="text-amber-100 text-sm">{configError}</p>
+                  <button
+                    onClick={() => setShowConfig(false)}
+                    className={buttonStyles.delete + " mt-2 px-4 py-2"}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <pre className="text-neutral-300 text-sm overflow-x-auto p-4 bg-neutral-800 rounded-lg">
+                  {configContent}
+                </pre>
+              )}
+            </div>
           </div>
         );
-      default:
-        return null;
     }
   };
 
@@ -1046,49 +880,49 @@ export default function NodeDetailsModal({
       <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
         <div className="bg-neutral-800 rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col border border-neutral-600">
           {/* Header */}
-          <div className="flex justify-between items-center p-4 border-b border-neutral-700">
-            <h2 className="text-2xl font-semibold text-white flex items-center">
-              <FontAwesomeIcon icon={faServer} className="mr-3 text-primary" />
-              Manage Node: {node.name}
+          <div className="p-6 flex justify-between items-center border-b border-neutral-600">
+            <h2 className="text-2xl font-bold text-white">
+              Node Details: {node.name}
             </h2>
             <button
               onClick={onClose}
-              className="text-neutral-400 hover:text-white transition-colors"
+              className="text-neutral-400 hover:text-white"
+              title="Close"
             >
-              <FontAwesomeIcon icon={faTimes} size="lg" />
+              <FontAwesomeIcon icon={faTimes} />
             </button>
           </div>
 
           {/* Tab Navigation */}
-          <div className="flex border-b border-neutral-700">
+          <div className="flex border-b border-neutral-600">
             <button
               onClick={() => setActiveTab("overview")}
-              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${activeTab === "overview"
-                  ? "border-b-2 border-primary text-primary"
-                  : "text-neutral-400 hover:text-white"
-                }`}
+              className={`flex-1 py-3 px-4 text-center text-neutral-400 hover:text-white ${
+                activeTab === "overview"
+                  ? "border-b-2 border-blue-500 text-white font-semibold"
+                  : ""
+              }`}
             >
-              <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
               Overview
             </button>
             <button
               onClick={() => setActiveTab("indices")}
-              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${activeTab === "indices"
-                  ? "border-b-2 border-primary text-primary"
-                  : "text-neutral-400 hover:text-white"
-                }`}
+              className={`flex-1 py-3 px-4 text-center text-neutral-400 hover:text-white ${
+                activeTab === "indices"
+                  ? "border-b-2 border-blue-500 text-white font-semibold"
+                  : ""
+              }`}
             >
-              <FontAwesomeIcon icon={faDatabase} className="mr-2" />
               Indices
             </button>
             <button
               onClick={() => setActiveTab("configuration")}
-              className={`py-3 px-6 font-medium text-sm transition-colors duration-200 ${activeTab === "configuration"
-                  ? "border-b-2 border-primary text-primary"
-                  : "text-neutral-400 hover:text-white"
-                }`}
+              className={`flex-1 py-3 px-4 text-center text-neutral-400 hover:text-white ${
+                activeTab === "configuration"
+                  ? "border-b-2 border-blue-500 text-white font-semibold"
+                  : ""
+              }`}
             >
-              <FontAwesomeIcon icon={faFileAlt} className="mr-2" />
               Configuration
             </button>
           </div>

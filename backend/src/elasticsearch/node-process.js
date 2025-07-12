@@ -33,7 +33,7 @@ async function findPidByPort(port) {
 /**
  * Start a node
  */
-async function startNode(nodeName) {
+async function startNode(nodeName, progressCallback = () => {}) {
   const nodeMetadata = getConfig("nodeMetadata") || {};
   const metadata = nodeMetadata[nodeName];
   const elasticsearchConfig = getConfig("elasticsearchConfig");
@@ -43,16 +43,19 @@ async function startNode(nodeName) {
   }
   
   // Check if node is already running
-  const isRunning = await isNodeRunning(nodeName);
-  if (isRunning) {
+  const status = (await isNodeRunning(nodeName)) ? "running" : "stopped";
+  if (status === "running") {
+    progressCallback({ progress: 100, status: "completed", message: `Node ${nodeName} is already running` });
     return { success: true, message: `Node ${nodeName} is already running` };
   }
 
   try {
+    progressCallback({ progress: 10, status: "preparing", message: `Preparing to start node ${nodeName}...` });
     
     // Force close any process using the node's HTTP port before starting
     const portToFree = metadata.port;
     if (portToFree) {
+      progressCallback({ progress: 20, status: "freeing_port", message: `Freeing port ${portToFree}...` });
       if (process.platform === 'win32') {
         // Find and kill process using the port on Windows
         const { execSync } = require('child_process');
@@ -102,6 +105,8 @@ async function startNode(nodeName) {
       // Update the nodeMetadata in config
       await setConfig("nodeMetadata", nodeMetadata);
     }
+    
+    progressCallback({ progress: 30, status: "launching", message: `Launching Elasticsearch process for node ${nodeName}...` });
     
     // First try to use servicePath if available
     if (metadata.servicePath && fs.existsSync(metadata.servicePath)) {
@@ -165,16 +170,25 @@ async function startNode(nodeName) {
       throw new Error(`No valid start method found for node ${nodeName}. Please configure servicePath or elasticsearchConfig.basePath`);
     }
 
-    // Wait for node to start (up to 120 seconds)
+    progressCallback({ progress: 40, status: "waiting", message: `Waiting for node ${nodeName} to start...` });
     
+    // Wait for node to start (up to 120 seconds)
     for (let i = 0; i < 120; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       
+      // Update progress every 10 seconds
       if (i % 10 === 0) {
+        const progressValue = Math.min(40 + Math.floor(i / 2), 95);
+        progressCallback({ 
+          progress: progressValue, 
+          status: "waiting", 
+          message: `Waiting for node ${nodeName} to start... (${i} seconds elapsed)` 
+        });
         console.log(`Still waiting for node ${nodeName} to start... (${i} seconds elapsed)`);
       }
       
       if (await isNodeRunning(nodeName)) {
+        progressCallback({ progress: 100, status: "completed", message: `Node ${nodeName} started successfully!` });
         console.log(`Node ${nodeName} started successfully! Refreshing cache...`);
         return { success: true, message: `Node ${nodeName} started successfully` };
       }
@@ -182,6 +196,12 @@ async function startNode(nodeName) {
 
     throw new Error(`Node ${nodeName} failed to start within 120 seconds`);
   } catch (error) {
+    progressCallback({ 
+      progress: 0, 
+      status: "error", 
+      message: `Error starting node ${nodeName}: ${error.message}`,
+      error: error.message
+    });
     console.error(`Error starting node ${nodeName}:`, error);
     throw error;
   }
@@ -190,7 +210,7 @@ async function startNode(nodeName) {
 /**
  * Stop a node
  */
-async function stopNode(nodeName) {
+async function stopNode(nodeName, progressCallback = () => {}) {
   const nodeMetadata = getConfig("nodeMetadata") || {};
   const metadata = nodeMetadata[nodeName];
   
@@ -201,12 +221,17 @@ async function stopNode(nodeName) {
   // Check if node is running
   const isRunning = await isNodeRunning(nodeName);
   if (!isRunning) {
+    progressCallback({ progress: 100, status: "completed", message: `Node ${nodeName} is already stopped` });
     return { success: true, message: `Node ${nodeName} is already stopped` };
   }
 
   try {
+    progressCallback({ progress: 10, status: "stopping", message: `Stopping node ${nodeName}...` });
+    
     // Try to find and kill the process
     if (metadata.port) {
+      progressCallback({ progress: 30, status: "finding_process", message: `Finding process for node ${nodeName}...` });
+      
       // On Windows, use taskkill to kill process using the port
       if (process.platform === 'win32') {
         const findPid = spawn('netstat', ['-ano'], { shell: true });
@@ -234,15 +259,21 @@ async function stopNode(nodeName) {
         }
         
         if (pid) {
+          progressCallback({ progress: 60, status: "killing_process", message: `Killing process ${pid} for node ${nodeName}...` });
           spawn('taskkill', ['/F', '/PID', pid], { shell: true });
+          
+          // Wait a moment to ensure the process is killed
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          progressCallback({ progress: 100, status: "completed", message: `Node ${nodeName} stopped successfully` });
           return { success: true, message: `Node ${nodeName} stopped successfully` };
         }
-      } 
+      }
       // For non-Windows, try using the dataPath/pid file if available
       else if (metadata.dataPath) {
         const pidFile = path.join(metadata.dataPath, "pid");
         if (fs.existsSync(pidFile)) {
           const pid = parseInt(fs.readFileSync(pidFile, "utf8"));
+          progressCallback({ progress: 60, status: "killing_process", message: `Killing process ${pid} from pid file for node ${nodeName}...` });
           try {
             if (process.platform === 'linux') {
               const { execSync } = require('child_process');
@@ -255,12 +286,18 @@ async function stopNode(nodeName) {
             } else {
               process.kill(pid);
             }
+            
+            // Wait a moment to ensure the process is killed
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            progressCallback({ progress: 100, status: "completed", message: `Node ${nodeName} stopped successfully` });
             return { success: true, message: `Node ${nodeName} stopped successfully` };
           } catch (err) {
             console.error(`Failed to kill process with PID from pid file: ${pid}`, err);
           }
         }
+        
         // Fallback: Try to find PID by port if pid file is missing or failed
+        progressCallback({ progress: 40, status: "finding_process_fallback", message: `Finding process by port for node ${nodeName}...` });
         try {
           const { execSync } = require("child_process");
           let pid = null;
@@ -279,6 +316,7 @@ async function stopNode(nodeName) {
             }
           }
           if (pid && !isNaN(pid)) {
+            progressCallback({ progress: 70, status: "killing_process_fallback", message: `Killing process ${pid} for node ${nodeName}...` });
             try {
               if (process.platform === 'linux') {
                 const { execSync } = require('child_process');
@@ -291,6 +329,10 @@ async function stopNode(nodeName) {
               } else {
                 process.kill(pid);
               }
+              
+              // Wait a moment to ensure the process is killed
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              progressCallback({ progress: 100, status: "completed", message: `Node ${nodeName} stopped successfully (by port fallback)` });
               return { success: true, message: `Node ${nodeName} stopped successfully (by port fallback)` };
             } catch (killErr) {
               console.error(`Failed to kill process found by port: ${pid}`, killErr);
@@ -302,8 +344,30 @@ async function stopNode(nodeName) {
       }
     }
     
-    throw new Error(`Could not find process for node ${nodeName}`);
+    progressCallback({ 
+      progress: 50, 
+      status: "error", 
+      message: `Could not find process for node ${nodeName}. Waiting for node to stop naturally...`,
+    });
+    
+    // Final check - wait up to 30 seconds to see if the node stops naturally
+    for (let i = 0; i < 30; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const stillRunning = await isNodeRunning(nodeName);
+      if (!stillRunning) {
+        progressCallback({ progress: 100, status: "completed", message: `Node ${nodeName} stopped successfully after waiting` });
+        return { success: true, message: `Node ${nodeName} stopped successfully after waiting` };
+      }
+    }
+    
+    throw new Error(`Could not find process for node ${nodeName} and node did not stop naturally`);
   } catch (error) {
+    progressCallback({ 
+      progress: 0, 
+      status: "error", 
+      message: `Error stopping node ${nodeName}: ${error.message}`,
+      error: error.message
+    });
     console.error(`Error stopping node ${nodeName}:`, error);
     throw error;
   }

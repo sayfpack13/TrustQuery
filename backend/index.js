@@ -7,17 +7,12 @@ const parser = require("./parser");
 const { Client } = require("@elastic/elasticsearch");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
-const { randomUUID } = require("crypto");
 const cors = require("cors");
 const { syncSearchIndices, getCacheFiltered, refreshClusterCache } = require("./src/cache/indices-cache");
 
 // Configuration management
-const { loadConfig: loadCentralizedConfig, getConfig, setConfig, saveConfig } = require("./src/config");
+const { loadConfig: loadCentralizedConfig, getConfig, setConfig } = require("./src/config");
 
-// Configuration state will be managed by centralized config module
-
-// Use shared formatBytes utility
-const { formatBytes } = require("./src/utils/format");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -57,15 +52,17 @@ const upload = multer({ storage: storage });
 app.use(cors());
 app.use(express.json());
 
-// Import route modules
-const clusterAdvancedRoutes = require("./src/routes/cluster-advanced");
+
 const esConfigRoutes = require("./src/routes/elasticsearch-config");
 const setupWizardRoutes = require("./src/routes/setup-wizard");
+const nodeManagementRoutes = require("./src/routes/node-management");
+const clusterManagementRoutes = require("./src/routes/cluster-management");
 
-// Add route middleware
-app.use("/api/admin/cluster-advanced", clusterAdvancedRoutes);
+
 app.use("/api/admin/es/config", esConfigRoutes);
 app.use("/api/setup-wizard", setupWizardRoutes);
+app.use("/api/admin/node-management", nodeManagementRoutes);
+app.use("/api/admin/cluster-management", clusterManagementRoutes);
 
 // Initialize Elasticsearch client with configuration
 const { getES, isElasticsearchAvailable } = require("./src/elasticsearch/client");
@@ -134,6 +131,9 @@ const { verifyJwt } = require("./src/middleware/auth");
 // Admin Login endpoint
 app.post("/api/admin/login", (req, res) => {
   const { username, password } = req.body;
+  if (typeof username !== "string" || typeof password !== "string") {
+    return res.status(400).json({ error: "Username and password are required and must be strings." });
+  }
   if (username === ADMIN_USER && password === ADMIN_PASS) {
     const token = jwt.sign({ username: ADMIN_USER, role: "admin" }, SECRET_KEY, { expiresIn: "24h" });
     res.json({ token });
@@ -434,13 +434,12 @@ app.get("/api/admin/parsed-files", verifyJwt, async (req, res) => {
 
 // UPLOAD endpoint
 app.post("/api/admin/upload", verifyJwt, upload.array("files"), async (req, res) => {
-  if (!req.files || req.files.length === 0) {
+  if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
     return res.status(400).json({ error: "No files uploaded" });
   }
-
+  // Optionally, check file types/extensions here if needed
   const taskId = createTask("Upload Files", "uploading", req.files.map((f) => f.originalname).join(", "));
   res.json({ taskId });
-
   try {
     const uploadedFiles = req.files.map((file) => file.originalname);
     updateTask(taskId, {
@@ -465,18 +464,21 @@ app.post("/api/admin/upload", verifyJwt, upload.array("files"), async (req, res)
 app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
   const { filename } = req.params;
   const { targetIndex, targetNode } = req.body;
+  if (targetIndex && typeof targetIndex !== "string") {
+    return res.status(400).json({ error: "targetIndex must be a string if provided." });
+  }
+  if (targetNode && typeof targetNode !== "string") {
+    return res.status(400).json({ error: "targetNode must be a string if provided." });
+  }
   const filePath = path.join(UNPARSED_DIR, filename);
   const parsedFilePath = path.join(PARSED_DIR, filename);
-
   try {
     await fs.access(filePath);
   } catch (err) {
     return res.status(404).json({ error: "File not found in unparsed directory." });
   }
-
   const taskId = createTask("Parse File", "initializing", filename); // Pass filename to task
   res.json({ taskId });
-
   (async () => {
     try {
       // Determine target index and node for this parsing operation
@@ -615,7 +617,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
     }
 
     // Check if any nodes are running
-    const runningNodes = Object.values(cachedIndices).filter(node => node.isRunning);
+    const runningNodes = Object.values(cachedIndices).filter(node => node.status === "running");
     if (runningNodes.length === 0) {
       return res.status(503).json({
         error: "No Elasticsearch nodes are currently running",
@@ -631,7 +633,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
 
     if (requestedNode && requestedIndex) {
       // Only allow search if node is running
-      if (!cachedIndices[requestedNode] || !cachedIndices[requestedNode].isRunning) {
+      if (!cachedIndices[requestedNode] || cachedIndices[requestedNode].status !== "running") {
         return res.status(503).json({
           error: `Node '${requestedNode}' is not running or not reachable`,
           results: [],
@@ -673,7 +675,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
           total: 0,
         });
       }
-      if (!nodeData.isRunning) {
+      if (nodeData.status !== "running") {
         return res.status(503).json({
           error: `Node '${requestedNode}' is not running or not reachable`,
           results: [],
@@ -691,7 +693,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       targetNodeUrl = nodeUrl;
       es = new Client({ node: targetNodeUrl });
     } else if (requestedNode && !requestedIndex) {
-      if (!cachedIndices[requestedNode] || !cachedIndices[requestedNode].isRunning) {
+      if (!cachedIndices[requestedNode] || cachedIndices[requestedNode].status !== "running") {
         return res.status(503).json({
           error: `Node '${requestedNode}' is not running or not reachable`,
           results: [],
@@ -718,8 +720,8 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       es = new Client({ node: targetNodeUrl });
     } else if (!requestedNode && requestedIndex) {
       let indexExists = false;
-      for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
-        if (!nodeData.isRunning) continue;
+      for (const [, nodeData] of Object.entries(cachedIndices)) {
+        if (nodeData.status !== 'running') continue;
         if (nodeData.indices && nodeData.indices.find((idx) => idx.index === requestedIndex)) {
           indexExists = true;
           break;
@@ -739,7 +741,7 @@ app.get("/api/admin/accounts", verifyJwt, async (req, res) => {
       const allIndices = [];
       let anyRunningNode = false;
       for (const [nodeName, nodeData] of Object.entries(cachedIndices)) {
-        if (nodeData.isRunning && nodeData.indices && nodeData.indices.length > 0) {
+        if (nodeData.status === 'running' && nodeData.indices && nodeData.indices.length > 0) {
           anyRunningNode = true;
           const nodeClient = new Client({ node: nodeData.nodeUrl });
           for (const indexInfo of nodeData.indices) {
@@ -867,7 +869,7 @@ app.delete("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
       });
     }
 
-    if (!nodeData.isRunning) {
+    if (nodeData.status !== "running") {
       return res.status(503).json({
         error: `Node '${requestedNode}' is not running. Please start the node and try again.`,
       });
@@ -914,14 +916,14 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
   const { url, username, password } = req.body;
   const requestedNode = req.query.node;
   const requestedIndex = req.query.index;
+  if (!requestedNode || !requestedIndex) {
+    return res.status(400).json({ error: "Both node and index are required for account update." });
+  }
+  if (typeof url !== "string" || typeof username !== "string" || typeof password !== "string") {
+    return res.status(400).json({ error: "url, username, and password are required and must be strings." });
+  }
 
   try {
-    if (!requestedNode || !requestedIndex) {
-      return res.status(400).json({
-        error: "Both node and index are required for account update.",
-      });
-    }
-
     // Check if the specific node is running
     const cachedIndices = await getCacheFiltered();
     const nodeData = cachedIndices[requestedNode];
@@ -932,7 +934,7 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
       });
     }
 
-    if (!nodeData.isRunning) {
+    if (nodeData.status !== "running") {
       return res.status(503).json({
         error: `Node '${requestedNode}' is not running. Please start the node and try again.`,
       });
@@ -983,11 +985,13 @@ app.put("/api/admin/accounts/:id", verifyJwt, async (req, res) => {
 app.post("/api/admin/accounts/bulk-delete", verifyJwt, async (req, res) => {
   const { items } = req.body;
   if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({
-      error: "Invalid or empty array of items provided. Each item must have id, node, and index.",
-    });
+    return res.status(400).json({ error: "Invalid or empty array of items provided. Each item must have id, node, and index." });
   }
-
+  for (const item of items) {
+    if (!item || typeof item !== "object" || !item.id || !item.node || !item.index) {
+      return res.status(400).json({ error: "Each item must be an object with id, node, and index properties." });
+    }
+  }
   const taskId = createTask("Bulk Delete", "deleting");
   res.json({ taskId });
 
@@ -1208,7 +1212,6 @@ app.post("/api/admin/tasks/:action", verifyJwt, (req, res) => {
   if (action === "clear-completed") {
     // Clear completed and error tasks
     const allTasks = getAllTasks();
-    const tasksToDelete = [];
     Object.keys(allTasks).forEach((taskId) => {
       if (allTasks[taskId].completed || allTasks[taskId].status === "error") {
         delete allTasks[taskId];
@@ -1255,6 +1258,22 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
     const updates = {};
 
     // Handle direct config updates
+    if (searchIndices !== undefined && !Array.isArray(searchIndices)) {
+      return res.status(400).json({ error: "searchIndices must be an array if provided." });
+    }
+    if (minVisibleChars !== undefined && typeof minVisibleChars !== "number") {
+      return res.status(400).json({ error: "minVisibleChars must be a number if provided." });
+    }
+    if (maskingRatio !== undefined && typeof maskingRatio !== "number") {
+      return res.status(400).json({ error: "maskingRatio must be a number if provided." });
+    }
+    if (usernameMaskingRatio !== undefined && typeof usernameMaskingRatio !== "number") {
+      return res.status(400).json({ error: "usernameMaskingRatio must be a number if provided." });
+    }
+    if (batchSize !== undefined && typeof batchSize !== "number") {
+      return res.status(400).json({ error: "batchSize must be a number if provided." });
+    }
+
     if (searchIndices !== undefined) updates.searchIndices = searchIndices;
     if (minVisibleChars !== undefined) updates.minVisibleChars = minVisibleChars;
     if (maskingRatio !== undefined) updates.maskingRatio = maskingRatio;
@@ -1289,7 +1308,7 @@ app.post("/api/admin/config", verifyJwt, async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating configuration:", error);
-    res.status(500).json({ error: "Failed to update configuration" });
+    res.status(500).json({ error: "Failed to update configuration", details: error.message });
   }
 });
 
@@ -1301,6 +1320,12 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
 
     if (!Array.isArray(indices)) {
       return res.status(400).json({ error: "Indices must be an array of { node, index } objects" });
+    }
+
+    for (const entry of indices) {
+      if (!entry || typeof entry !== "object" || !entry.node || !entry.index) {
+        return res.status(400).json({ error: "Each search index must have both node and index properties." });
+      }
     }
 
     // Allow empty array to clear all search indices (makes search return nothing)
@@ -1352,7 +1377,7 @@ app.post("/api/admin/config/search-indices", verifyJwt, async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating search indices:", error);
-    res.status(500).json({ error: "Failed to update search indices" });
+    res.status(500).json({ error: "Failed to update search indices", details: error.message });
   }
 });
 
@@ -1497,7 +1522,7 @@ app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
 app.post("/api/admin/es/select-index", verifyJwt, async (req, res) => {
   const { indexName } = req.body;
   if (!indexName || typeof indexName !== "string") {
-    return res.status(400).json({ error: "Index name is required" });
+    return res.status(400).json({ error: "Index name is required and must be a string." });
   }
 
   try {
@@ -1677,7 +1702,7 @@ app.get("/api/total-accounts", async (req, res) => {
         nodeName = null;
         indexName = entry;
       }
-      if (nodeName && (!cachedIndices[nodeName] || !cachedIndices[nodeName].isRunning)) {
+      if (nodeName && (!cachedIndices[nodeName] || cachedIndices[nodeName].status !== 'running')) {
         continue; // skip non-running nodes
       }
       let es = null;

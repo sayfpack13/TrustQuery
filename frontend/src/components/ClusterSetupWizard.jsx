@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { 
-  faServer, 
-  faPlay, 
-  faStop, 
-  faTrash, 
-  faCog, 
-  faInfoCircle, 
-  faCheckCircle, 
+import {
+  faServer,
+  faPlay,
+  faStop,
+  faTrash,
+  faCog,
+  faInfoCircle,
+  faCheckCircle,
   faExclamationTriangle,
   faPlus,
   faMinus,
@@ -116,7 +116,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     return false;
   };
 
-  const validateElasticsearchInstallation = async (path, retry = false) => {
+  const validateElasticsearchInstallation = async (path) => {
     // INSTANT loading state for validation
     setRealtimeValidation(prev => ({
       ...prev,
@@ -135,9 +135,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       if (!isValidPath) {
         setRealtimeValidation(prev => ({
           ...prev,
-          basePath: { 
-            valid: false, 
-            message: 'Invalid path format', 
+          basePath: {
+            valid: false,
+            message: 'Invalid path format',
             checking: false,
             suggestions: systemInfo?.isWindows ? ['C:\\elasticsearch', 'D:\\elasticsearch'] : ['/opt/elasticsearch', '/usr/share/elasticsearch']
           }
@@ -149,9 +149,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         const response = await axiosClient.post('/api/setup-wizard/validate-elasticsearch', { basePath: path }, { timeout: 10000 });
         setRealtimeValidation(prev => ({
           ...prev,
-          basePath: { 
-            valid: response.data.valid, 
-            message: response.data.message || 'Validation complete', 
+          basePath: {
+            valid: response.data.valid,
+            message: response.data.message || 'Validation complete',
             checking: false,
             suggestions: response.data.pathValidation?.suggestions || []
           }
@@ -164,9 +164,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         console.warn('Elasticsearch validation failed:', error);
         setRealtimeValidation(prev => ({
           ...prev,
-          basePath: { 
-            valid: false, 
-            message: error.response?.data?.error || 'Validation failed', 
+          basePath: {
+            valid: false,
+            message: error.response?.data?.error || 'Validation failed',
             checking: false,
             suggestions: systemInfo?.isWindows ? ['C:\\elasticsearch', 'D:\\elasticsearch'] : ['/opt/elasticsearch', '/usr/share/elasticsearch']
           }
@@ -203,6 +203,12 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!realtimeValidation.basePath.checking) {
+      document.getElementById("base-path")?.focus()
+    }
+  }, [realtimeValidation.basePath.checking])
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (event) => {
@@ -234,7 +240,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
 
   // Real-time path validation
   useEffect(() => {
-    const timer = setTimeout(() => validateElasticsearchInstallation(basePath), 800);
+    const timer = setTimeout(() => validateElasticsearchInstallation(basePath), 1000);
     return () => clearTimeout(timer);
   }, [basePath]);
 
@@ -282,7 +288,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       // Removed trackStepTime (no metrics in minimal wizard)
       console.error('Error fetching system info:', error);
       incrementRetry(retryKey);
-      const errorMessage = error.code === 'ECONNABORTED' 
+      const errorMessage = error.code === 'ECONNABORTED'
         ? 'Request timed out. Please check your connection.'
         : error.response?.data?.error || error.message;
       setError(retryKey, `Failed to get system information: ${errorMessage}`, error.code === 'NETWORK_ERROR');
@@ -301,12 +307,12 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   const initializeSetup = async (retry = false) => {
     const maxRetries = 2;
     const retryKey = 'initialization';
-    
+
     if (!basePath.trim()) {
       setError(retryKey, 'Please enter the Elasticsearch base path');
       return;
     }
-    
+
     if (!retry && retryCount[retryKey] >= maxRetries) {
       setError(retryKey, `Setup initialization failed after ${maxRetries} attempts.`);
       return;
@@ -315,22 +321,22 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     try {
       updateLoadingState('initialization', true);
       clearError(retryKey);
-      
+
       // Only send elasticsearch base path entered by user
       const response = await axiosClient.post('/api/setup-wizard/initialize', {
         basePath: basePath.trim()
       });
-      
+
       updateStepProgress(4, { completed: true, validated: true });
-      
+
       // Clear saved state on successful completion
       localStorage.removeItem('trustquery-setup-state');
-      
+
       // Show success message with animation
       setTimeout(() => {
         if (onComplete) onComplete();
       }, 2000);
-      
+
     } catch (error) {
       console.error('Error initializing setup:', error);
       incrementRetry(retryKey);
@@ -382,16 +388,16 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
         {/* Main Progress Bar */}
         <div className="relative mb-6">
           <div className="absolute top-5 left-0 w-full h-0.5 bg-neutral-600"></div>
-          <div 
+          <div
             className="absolute top-5 left-0 h-0.5 bg-gradient-to-r from-blue-500 to-green-500 transition-all duration-1000 ease-out"
             style={{ width: `${(currentStep - 1) * 33.33}%` }}
           ></div>
-          
+
           <div className="flex items-center justify-between relative">
             {steps.map((step, index) => {
               const status = getStepStatus(step);
               const progress = stepProgress[step.number]?.progress || 0;
-              
+
               return (
                 <div key={step.number} className="flex items-center">
                   <div className="relative">
@@ -404,7 +410,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
                       ) : (
                         <FontAwesomeIcon icon={step.icon} className="text-sm" />
                       )}
-                      
+
                       {/* Active step pulse animation */}
                       {status === 'active' && (
                         <>
@@ -413,7 +419,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
                         </>
                       )}
                     </div>
-                    
+
                     {/* Progress Ring for Active Step */}
                     {status === 'active' && progress > 0 && (
                       <svg className="absolute inset-0 w-10 h-10 transform -rotate-90">
@@ -440,14 +446,13 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
                       </svg>
                     )}
                   </div>
-                  
+
                   {/* Step Details */}
                   <div className="ml-3 hidden sm:block">
-                    <div className={`text-sm font-medium transition-colors duration-300 ${
-                      status === 'active' ? 'text-blue-400' : 
-                      status === 'completed' ? 'text-green-400' : 
-                      status === 'passed' ? 'text-yellow-400' : 'text-neutral-400'
-                    }`}>
+                    <div className={`text-sm font-medium transition-colors duration-300 ${status === 'active' ? 'text-blue-400' :
+                      status === 'completed' ? 'text-green-400' :
+                        status === 'passed' ? 'text-yellow-400' : 'text-neutral-400'
+                      }`}>
                       {step.title}
                     </div>
                     <div className="text-xs text-neutral-500">
@@ -455,13 +460,12 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
                     </div>
                     {/* Removed performanceMetrics display (no metrics in minimal wizard) */}
                   </div>
-                  
+
                   {/* Connector Line */}
                   {index < steps.length - 1 && (
-                    <div 
-                      className={`flex-1 h-0.5 mx-4 transition-all duration-700 ${
-                        getConnectorColor(step, steps[index + 1])
-                      }`}
+                    <div
+                      className={`flex-1 h-0.5 mx-4 transition-all duration-700 ${getConnectorColor(step, steps[index + 1])
+                        }`}
                     ></div>
                   )}
                 </div>
@@ -469,7 +473,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             })}
           </div>
         </div>
-        
+
         {/* Critical Error Alert */}
         {criticalError && (
           <div className="mb-4 p-4 bg-red-900/40 border border-red-600 rounded-lg animate-pulse">
@@ -494,7 +498,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
             </div>
           </div>
         )}
-        
+
         {/* Regular Error Summary */}
         {Object.keys(errors).length > 0 && !criticalError && (
           <div className="mb-4 p-3 bg-red-900/30 border border-red-700 rounded-lg">
@@ -572,10 +576,10 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           {/* Main Loading Animation */}
           <div className="relative mb-6">
             <div className="w-16 h-16 mx-auto relative">
-              <FontAwesomeIcon 
-                icon={faCircleNotch} 
-                spin 
-                className="text-4xl text-blue-500 absolute inset-0 mx-auto my-auto" 
+              <FontAwesomeIcon
+                icon={faCircleNotch}
+                spin
+                className="text-4xl text-blue-500 absolute inset-0 mx-auto my-auto"
               />
               <div className="absolute inset-0 rounded-full border-4 border-blue-200 opacity-25 animate-pulse"></div>
             </div>
@@ -590,7 +594,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           {displayProgress !== undefined && displayProgress > 0 && (
             <div className="mb-4">
               <div className="w-full bg-neutral-700 rounded-full h-3 mb-2 overflow-hidden">
-                <div 
+                <div
                   className="bg-gradient-to-r from-blue-500 to-blue-400 h-3 rounded-full transition-all duration-500 ease-out relative"
                   style={{ width: `${Math.min(100, Math.max(0, displayProgress))}%` }}
                 >
@@ -714,7 +718,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
       <div className="flex justify-between">
         <button
           onClick={onClose}
-          className={buttonStyles.cancel }
+          className={buttonStyles.cancel}
         >
           Cancel
         </button>
@@ -764,17 +768,18 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           </label>
           <div className="relative">
             <input
+              id='base-path'
               type="text"
               value={basePath}
+              disabled={realtimeValidation.basePath.checking}
               onChange={(e) => setBasePath(e.target.value)}
               placeholder={backendBasePath || (systemInfo?.isWindows ? 'C:\\elasticsearch' : '/opt/elasticsearch')}
-              className={`w-full px-3 py-2 pr-10 bg-neutral-600 border rounded-md text-white focus:outline-none focus:ring-2 font-mono text-sm transition-all ${
-                realtimeValidation.basePath.valid === true 
-                  ? 'border-green-500 focus:ring-green-500' 
-                  : realtimeValidation.basePath.valid === false
-                    ? 'border-red-500 focus:ring-red-500'
-                    : 'border-neutral-500 focus:ring-blue-500'
-              }`}
+              className={`w-full px-3 py-2 pr-10 bg-neutral-600 border rounded-md text-white focus:outline-none focus:ring-2 font-mono text-sm transition-all ${realtimeValidation.basePath.valid === true
+                ? 'border-green-500 focus:ring-green-500'
+                : realtimeValidation.basePath.valid === false
+                  ? 'border-red-500 focus:ring-red-500'
+                  : 'border-neutral-500 focus:ring-blue-500'
+                }`}
             />
             <div className="absolute inset-y-0 right-0 flex items-center pr-3">
               {realtimeValidation.basePath.checking ? (
@@ -788,16 +793,15 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
           </div>
           {/* Real-time validation feedback */}
           {realtimeValidation.basePath.message && (
-            <div className={`text-xs mt-1 flex items-center ${
-              realtimeValidation.basePath.valid === true 
-                ? 'text-green-400' 
-                : realtimeValidation.basePath.valid === false
-                  ? 'text-red-400'
-                  : 'text-blue-400'
-            }`}>
-              <FontAwesomeIcon 
-                icon={realtimeValidation.basePath.checking ? faCircleNotch : faInfoCircle} 
-                className={`mr-1 ${realtimeValidation.basePath.checking ? 'animate-spin' : ''}`} 
+            <div className={`text-xs mt-1 flex items-center ${realtimeValidation.basePath.valid === true
+              ? 'text-green-400'
+              : realtimeValidation.basePath.valid === false
+                ? 'text-red-400'
+                : 'text-blue-400'
+              }`}>
+              <FontAwesomeIcon
+                icon={realtimeValidation.basePath.checking ? faCircleNotch : faInfoCircle}
+                className={`mr-1 ${realtimeValidation.basePath.checking ? 'animate-spin' : ''}`}
               />
               {realtimeValidation.basePath.message}
             </div>
@@ -845,21 +849,19 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
 
       {/* Validation Results */}
       {validationResult && (
-        <div className={`rounded-lg p-6 ${
-          validationResult.valid 
-            ? 'bg-green-900/30 border border-green-700' 
-            : 'bg-red-900/30 border border-red-700'
-        }`}>
-          <h4 className={`text-lg font-semibold mb-4 ${
-            validationResult.valid ? 'text-green-400' : 'text-red-400'
+        <div className={`rounded-lg p-6 ${validationResult.valid
+          ? 'bg-green-900/30 border border-green-700'
+          : 'bg-red-900/30 border border-red-700'
           }`}>
-            <FontAwesomeIcon 
-              icon={validationResult.valid ? faCheckCircle : faExclamationTriangle} 
-              className="mr-2" 
+          <h4 className={`text-lg font-semibold mb-4 ${validationResult.valid ? 'text-green-400' : 'text-red-400'
+            }`}>
+            <FontAwesomeIcon
+              icon={validationResult.valid ? faCheckCircle : faExclamationTriangle}
+              className="mr-2"
             />
             Validation {validationResult.valid ? 'Passed' : 'Failed'}
           </h4>
-          
+
           <p className="text-neutral-300 mb-4">{validationResult.message}</p>
 
           {/* Detected Paths */}
@@ -924,9 +926,9 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
                 {Object.entries(validationResult.checks).map(([key, check]) => (
                   <div key={key} className="flex items-center justify-between bg-neutral-800 px-3 py-2 rounded">
                     <div className="flex items-center space-x-2">
-                      <FontAwesomeIcon 
-                        icon={check.exists ? faCheckCircle : faExclamationTriangle} 
-                        className={check.exists ? 'text-green-400' : 'text-red-400'} 
+                      <FontAwesomeIcon
+                        icon={check.exists ? faCheckCircle : faExclamationTriangle}
+                        className={check.exists ? 'text-green-400' : 'text-red-400'}
                       />
                       <span className="text-neutral-300 capitalize">
                         {key.replace(/_/g, ' ').replace('dir', 'directory')}:
@@ -1040,7 +1042,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
   if (!isOpen) return null;
 
   return (
-    <div 
+    <div
       className="fixed inset-0 bg-black bg-opacity-85 flex items-center justify-center z-[60] p-4 backdrop-blur-sm"
       onMouseDown={(e) => {
         // Only close if clicking the backdrop, not if focusing an input
@@ -1051,23 +1053,23 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
     >
       <div className="bg-neutral-800 rounded-xl shadow-2xl w-full max-w-6xl border border-neutral-700 relative max-h-[95vh] flex flex-col">
         {/* Enhanced Loading Overlay */}
-        <LoadingOverlay 
-          show={Object.values(loadingStates).some(Boolean)} 
+        <LoadingOverlay
+          show={Object.values(loadingStates).some(Boolean)}
           message={
             loadingStates.systemInfo ? 'Detecting system information...' :
-            loadingStates.installationGuide ? 'Generating installation guide...' :
-            loadingStates.validation ? 'Validating Elasticsearch installation...' :
-            loadingStates.connectionTest ? 'Testing connection to Elasticsearch...' :
-            loadingStates.initialization ? 'Initializing setup...' :
-            'Processing...'
+              loadingStates.installationGuide ? 'Generating installation guide...' :
+                loadingStates.validation ? 'Validating Elasticsearch installation...' :
+                  loadingStates.connectionTest ? 'Testing connection to Elasticsearch...' :
+                    loadingStates.initialization ? 'Initializing setup...' :
+                      'Processing...'
           }
           details={
             loadingStates.systemInfo ? 'Scanning system configuration and requirements' :
-            loadingStates.installationGuide ? 'Preparing platform-specific installation instructions' :
-            loadingStates.validation ? 'Checking Elasticsearch files and configuration' :
-            loadingStates.connectionTest ? 'Attempting to connect to Elasticsearch cluster' :
-            loadingStates.initialization ? 'Finalizing setup and configuration' :
-            undefined
+              loadingStates.installationGuide ? 'Preparing platform-specific installation instructions' :
+                loadingStates.validation ? 'Checking Elasticsearch files and configuration' :
+                  loadingStates.connectionTest ? 'Attempting to connect to Elasticsearch cluster' :
+                    loadingStates.initialization ? 'Finalizing setup and configuration' :
+                      undefined
           }
           progress={stepProgress[getCurrentStep()]?.progress}
         />
@@ -1083,7 +1085,7 @@ const ClusterSetupWizard = ({ isOpen, onClose, onComplete }) => {
               </p>
             </div>
           </div>
-          
+
           <div className="flex items-center space-x-3">
             {/* Help Button */}
             {/* Close Button */}

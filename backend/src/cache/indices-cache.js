@@ -46,7 +46,6 @@ async function setCache(data) {
 
 /**
  * Refresh cache for running nodes. Accepts an optional node list to avoid redundant listNodes() calls.
- * @param {Array} nodes Optional array of node objects (with isRunning, host, port, etc)
  */
 async function refreshClusterCache() {
   // Reduced logging for regular refresh operations
@@ -56,10 +55,10 @@ async function refreshClusterCache() {
   try {
     const allNodes = await clusterManager.listNodes();
     runningNodes = allNodes || [];
-    if (runningNodes.filter((n) => n.isRunning).length > 0) {
+    if (runningNodes.filter((n) => n.status === "running").length > 0) {
       console.log(
         `Found ${runningNodes.length} configured nodes, ${
-          runningNodes.filter((n) => n.isRunning).length
+          runningNodes.filter((n) => n.status === "running").length
         } running`
       );
     }
@@ -85,6 +84,28 @@ async function refreshClusterCache() {
     } else {
       // Only fallback if no host/port or nodeUrl at all
       nodeUrl = `http://localhost:9200`;
+    }
+
+    // Check if dataPath or logsPath exists
+    const { dataPath, logsPath } = node;
+    let dataExists = true, logsExists = true;
+    try {
+      if (dataPath) {
+        await fs.access(dataPath);
+      }
+    } catch {
+      dataExists = false;
+    }
+    try {
+      if (logsPath) {
+        await fs.access(logsPath);
+      }
+    } catch {
+      logsExists = false;
+    }
+    if (!dataExists || !logsExists) {
+      console.warn(`[indices-cache] Node ${nodeName} missing dataPath or logsPath on disk. Removing from cache.`);
+      continue; // Do not include this node in the new cache
     }
 
     // Use improved isNodeRunning (port + HTTP check)
@@ -129,10 +150,9 @@ async function refreshClusterCache() {
           console.log(`No indices found in response for node ${nodeName}`);
         }
         newCache[nodeName] = {
-          status: "online",
+          status: "running",
           last_updated: new Date().toISOString(),
-          indices,
-          isRunning: true,
+          indices
         };
         if (Object.keys(indices).length > 0) {
           console.log(
@@ -147,48 +167,38 @@ async function refreshClusterCache() {
         if (currentCache[nodeName]) {
           newCache[nodeName] = {
             ...currentCache[nodeName],
-            status: "offline",
-            isRunning: false,
+            status: "stopped"
           };
         } else {
           newCache[nodeName] = {
-            status: "offline",
+            status: "stopped",
             last_updated: new Date().toISOString(),
-            indices: {},
-            isRunning: false,
+            indices: {}
           };
         }
       }
     } else {
-      // Node is not truly running, mark as offline
+      // Node is not truly running, mark as stopped
       console.log(`Node ${nodeName} is not truly running (port or HTTP check failed).`);
       if (currentCache[nodeName]) {
         newCache[nodeName] = {
           ...currentCache[nodeName],
-          status: "offline",
-          isRunning: false,
+          status: "stopped"
         };
       } else {
         newCache[nodeName] = {
-          status: "offline",
-          last_updated: null,
-          indices: {},
-          isRunning: false,
+          status: "stopped",
+          last_updated: new Date().toISOString(),
+          indices: {}
         };
       }
     }
   }
 
+  // Always write the new cache to disk after refreshing
   await setCache(newCache);
-  return newCache;
-}
-
-async function getOrSetCache(nodeName = null) {
-  const cache = await getCache();
-  if (nodeName) {
-    return cache[nodeName] || { status: "offline", indices: {} };
-  }
-  return cache;
+  // Clean up search indices if any nodes were removed
+  await syncSearchIndices();
 }
 
 async function removeNodeFromCache(nodeName) {
@@ -337,7 +347,6 @@ async function getCachedNodeIndices(nodeName) {
 }
 
 module.exports = {
-  getOrSetCache,
   refreshClusterCache,
   syncSearchIndices,
   removeNodeFromCache,
@@ -346,5 +355,5 @@ module.exports = {
   getCacheFiltered,
   getCachedData,
   getCachedNodeData,
-  getCachedNodeIndices,
+  getCachedNodeIndices
 };

@@ -337,14 +337,29 @@ async function getNodeConfigContent(nodeName) {
       return await fs.readFile(configPath, "utf8");
     } catch (readError) {
       if (readError.code === "ENOENT") {
-        // Return default configuration content if file doesn't exist
-        const defaultConfig = generateNodeConfig({
+        // Return config generated from actual node metadata if available
+        const { getConfig } = require("../config");
+        const nodeMetadata = getConfig("nodeMetadata") || {};
+        const meta = nodeMetadata[nodeName] || {};
+        // Use metadata values if present, else fallback to defaults
+        const dataPath = meta.dataPath || path.join(nodeBaseDir, "data");
+        const logsPath = meta.logsPath || path.join(nodeBaseDir, "logs");
+        const cluster = meta.cluster || "trustquery-cluster";
+        const host = meta.host || "localhost";
+        const port = meta.port || 9200;
+        const transportPort = meta.transportPort || 9300;
+        const roles = meta.roles || { master: true, data: true, ingest: true };
+        const config = generateNodeConfig({
           name: nodeName,
-          dataPath: path.join(nodeBaseDir, "data"),
-          logsPath: path.join(nodeBaseDir, "logs"),
-          roles: { master: true, data: true, ingest: true }
+          dataPath,
+          logsPath,
+          cluster,
+          host,
+          port,
+          transportPort,
+          roles
         });
-        return defaultConfig;
+        return config;
       }
       throw readError;
     }

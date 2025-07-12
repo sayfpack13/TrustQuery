@@ -3,6 +3,7 @@ const path = require("path");
 const { getConfig, setConfig } = require("../config");
 const { getEnvAndConfig, getNodeConfig } = require("./node-config");
 const { isNodeRunning } = require("./node-utils");
+const yaml = require("yaml");
 
 /**
  * Build canonical node metadata object from any node config or detection source.
@@ -80,6 +81,7 @@ function getNodeMetadata(nodeName) {
  * List all nodes by scanning both metadata and filesystem
  */
 async function listNodes() {
+  await autoFixNodeFolders();
   const env = getEnvAndConfig();
   const nodesDir = path.join(env.baseElasticsearchPath, "nodes");
   const nodes = new Map(); // Use Map to deduplicate nodes by name
@@ -88,7 +90,7 @@ async function listNodes() {
   const nodeMetadata = getConfig("nodeMetadata") || {};
   for (const [name, metadata] of Object.entries(nodeMetadata)) {
     const nodeInfo = buildNodeMetadata(metadata);
-    nodeInfo.isRunning = await isNodeRunning(name);
+    nodeInfo.status = (await isNodeRunning(name)) ? "running" : "stopped";
     nodes.set(name, nodeInfo);
   }
 
@@ -96,30 +98,51 @@ async function listNodes() {
     // Then scan filesystem for any additional nodes
     await fs.mkdir(nodesDir, { recursive: true });
     const nodeDirs = await fs.readdir(nodesDir, { withFileTypes: true });
+    const yaml = require("yaml");
 
     for (const dirent of nodeDirs) {
       if (dirent.isDirectory()) {
-        const nodeDirName = dirent.name;
+        let nodeDirName = dirent.name;
+        let nodeDirPath = path.join(nodesDir, nodeDirName);
+        const configPath = path.join(nodeDirPath, "config", "elasticsearch.yml");
         try {
-          const config = await getNodeConfig(nodeDirName);
-          const definitiveNodeName = config.node.name;
-          
+          const configContent = await fs.readFile(configPath, "utf8");
+          const config = yaml.parse(configContent);
+          const definitiveNodeName = config["node.name"] || nodeDirName;
+
+          // --- Auto-fix: Rename folder if folder name != node.name and no folder with node.name exists ---
+          if (nodeDirName !== definitiveNodeName) {
+            const targetDirPath = path.join(nodesDir, definitiveNodeName);
+            let targetExists = false;
+            try { await fs.access(targetDirPath); targetExists = true; } catch {}
+            if (!targetExists) {
+              await fs.rename(nodeDirPath, targetDirPath);
+              nodeDirName = definitiveNodeName;
+              nodeDirPath = targetDirPath;
+            } else {
+              // Conflict: folder with node.name already exists
+              console.warn(`Cannot rename folder '${nodeDirName}' to '${definitiveNodeName}' because target already exists.`);
+              // Do not proceed with this folder
+              continue;
+            }
+          }
+
           // Skip if we already have this node from metadata
           if (nodes.has(definitiveNodeName)) continue;
 
           const metadata = getNodeMetadata(definitiveNodeName);
           nodes.set(definitiveNodeName, {
             name: definitiveNodeName,
-            cluster: config.cluster.name,
-            host: config.network.host,
-            port: config.http.port,
-            transportPort: config.transport.port,
-            roles: config.node.roles || {
+            cluster: config["cluster.name"] || "trustquery-cluster",
+            host: config["network.host"] || "localhost",
+            port: config["http.port"] || 9200,
+            transportPort: config["transport.port"] || 9300,
+            roles: config["node.roles"] || {
               master: true,
               data: true,
               ingest: true,
             },
-            isRunning: await isNodeRunning(definitiveNodeName),
+            status: (await isNodeRunning(definitiveNodeName)) ? "running" : "stopped",
             dataPath: metadata.dataPath,
             logsPath: metadata.logsPath,
             heapSize: metadata.heapSize,
@@ -151,11 +174,15 @@ async function verifyNodeMetadata() {
   const issues = [];
   const repairs = [];
   let needsSave = false;
+  const removedNodes = [];
 
   // First, scan filesystem for nodes
   const env = getEnvAndConfig();
   const nodesDir = path.join(env.baseElasticsearchPath, "nodes");
-  
+  const foundNodeNames = new Set();
+  const fs = require("fs").promises;
+  const yaml = require("yaml");
+
   try {
     // Create nodes directory if it doesn't exist
     await fs.mkdir(nodesDir, { recursive: true });
@@ -163,50 +190,148 @@ async function verifyNodeMetadata() {
 
     for (const dirent of nodeDirs) {
       if (dirent.isDirectory()) {
-        const nodeDirName = dirent.name;
+        let nodeDirName = dirent.name;
+        let nodeDirPath = path.join(nodesDir, nodeDirName);
+        const configPath = path.join(nodeDirPath, "config", "elasticsearch.yml");
         try {
-          const config = await getNodeConfig(nodeDirName);
-          const definitiveNodeName = config.node.name;
+          const configContent = await fs.readFile(configPath, "utf8");
+          const config = yaml.parse(configContent);
+          const definitiveNodeName = config["node.name"] || nodeDirName;
+          foundNodeNames.add(definitiveNodeName);
 
-          // If node exists in filesystem but not in metadata, add it
-          if (!nodeMetadata[definitiveNodeName]) {
-            const nodeBaseDir = path.join(nodesDir, nodeDirName);
-            const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
-            
-            nodeMetadata[definitiveNodeName] = {
-              name: definitiveNodeName,
-              configPath: path.join(nodeBaseDir, "config", "elasticsearch.yml"),
-              servicePath: path.join(nodeBaseDir, "config", serviceFileName),
-              dataPath: config.path.data || path.join(nodeBaseDir, "data"),
-              logsPath: config.path.logs || path.join(nodeBaseDir, "logs"),
-              cluster: config.cluster.name || "trustquery-cluster",
-              host: config.network.host || "localhost",
-              port: config.http.port || 9200,
-              transportPort: config.transport.port || 9300,
-              roles: config.node.roles || {
-                master: true,
-                data: true,
-                ingest: true
-              },
-              heapSize: "1g"
-            };
-
-            // Add to elasticsearchNodes array if not present
-            if (!elasticsearchNodes.includes(definitiveNodeName)) {
-              elasticsearchNodes.push(definitiveNodeName);
+          // --- Auto-fix: Rename folder if folder name != node.name and no folder with node.name exists ---
+          if (nodeDirName !== definitiveNodeName) {
+            const targetDirPath = path.join(nodesDir, definitiveNodeName);
+            let targetExists = false;
+            try { await fs.access(targetDirPath); targetExists = true; } catch {}
+            if (!targetExists) {
+              // Rename the folder
+              await fs.rename(nodeDirPath, targetDirPath);
+              repairs.push({
+                type: "renamed_folder",
+                from: nodeDirName,
+                to: definitiveNodeName,
+                message: `Renamed node folder '${nodeDirName}' to match node.name '${definitiveNodeName}'`
+              });
+              needsSave = true;
+              nodeDirName = definitiveNodeName;
+              nodeDirPath = targetDirPath;
+              // --- Update elasticsearch.yml: fix node.name and node.attr.custom_id ---
+              const configPathToFix = path.join(targetDirPath, "config", "elasticsearch.yml");
+              let configObjToFix;
+              let configContentToFix;
+              let shouldWriteConfig = false;
+              try {
+                configContentToFix = await fs.readFile(configPathToFix, "utf8");
+                configObjToFix = yaml.parse(configContentToFix) || {};
+                if (configObjToFix["node.name"] !== definitiveNodeName) {
+                  configObjToFix["node.name"] = definitiveNodeName;
+                  shouldWriteConfig = true;
+                }
+                if (configObjToFix["node.attr.custom_id"] !== definitiveNodeName) {
+                  configObjToFix["node.attr.custom_id"] = definitiveNodeName;
+                  shouldWriteConfig = true;
+                }
+                if (shouldWriteConfig) {
+                  const newYaml = yaml.stringify(configObjToFix);
+                  await fs.writeFile(configPathToFix, newYaml, "utf8");
+                }
+              } catch (e) {
+                // If config is not valid YAML, regenerate from metadata
+                const meta = nodeMetadata[definitiveNodeName] || {};
+                const { generateNodeConfig } = require("./node-config");
+                const newYaml = generateNodeConfig({
+                  ...meta,
+                  name: definitiveNodeName,
+                  cluster: meta.cluster || "trustquery-cluster",
+                  dataPath: meta.dataPath || path.join(targetDirPath, "data"),
+                  logsPath: meta.logsPath || path.join(targetDirPath, "logs"),
+                });
+                await fs.writeFile(configPathToFix, newYaml, "utf8");
+              }
+              // --- Always update all paths in nodeMetadata for both new and existing nodes ---
+              const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
+              const newConfigPath = path.join(targetDirPath, "config", "elasticsearch.yml");
+              const newServicePath = path.join(targetDirPath, "config", serviceFileName);
+              // Determine new dataPath/logsPath only if they are subfolders of the node folder
+              const nodeBaseDir = path.join(nodesDir, definitiveNodeName);
+              let oldMeta = nodeMetadata[definitiveNodeName] || nodeMetadata[dirent.name] || {};
+              let oldDataPath = oldMeta.dataPath || path.join(nodeDirPath, "data");
+              let oldLogsPath = oldMeta.logsPath || path.join(nodeDirPath, "logs");
+              if (config["path.data"]) oldDataPath = config["path.data"];
+              if (config["path.logs"]) oldLogsPath = config["path.logs"];
+              const wasDataInNode = oldDataPath.startsWith(path.join(nodesDir, nodeDirName) + path.sep);
+              const wasLogsInNode = oldLogsPath.startsWith(path.join(nodesDir, nodeDirName) + path.sep);
+              let newDataPath = oldDataPath;
+              let newLogsPath = oldLogsPath;
+              if (wasDataInNode) {
+                newDataPath = path.join(targetDirPath, path.relative(path.join(nodesDir, nodeDirName), oldDataPath));
+              }
+              if (wasLogsInNode) {
+                newLogsPath = path.join(targetDirPath, path.relative(path.join(nodesDir, nodeDirName), oldLogsPath));
+              }
+              // --- Always overwrite all paths in nodeMetadata ---
+              nodeMetadata[definitiveNodeName] = {
+                ...oldMeta,
+                name: definitiveNodeName,
+                configPath: newConfigPath,
+                servicePath: newServicePath,
+                dataPath: newDataPath,
+                logsPath: newLogsPath,
+                cluster: config["cluster.name"] || "trustquery-cluster",
+                host: config["network.host"] || "localhost",
+                port: config["http.port"] || 9200,
+                transportPort: config["transport.port"] || 9300,
+                roles: config["node.roles"] || { master: true, data: true, ingest: true },
+                heapSize: "1g"
+              };
+              // Update elasticsearchNodes array
+              const idxOld = elasticsearchNodes.indexOf(nodeDirName);
+              if (idxOld !== -1) elasticsearchNodes.splice(idxOld, 1);
+              if (!elasticsearchNodes.includes(definitiveNodeName)) {
+                elasticsearchNodes.push(definitiveNodeName);
+              }
+              needsSave = true;
+            } else {
+              // Conflict: folder with node.name already exists
+              issues.push({
+                type: "folder_conflict",
+                folder: nodeDirName,
+                nodeName: definitiveNodeName,
+                message: `Cannot rename folder '${nodeDirName}' to '${definitiveNodeName}' because target already exists.`
+              });
             }
-
-            repairs.push({
-              type: "added_metadata",
-              node: definitiveNodeName,
-              message: `Added metadata for node "${definitiveNodeName}" found in filesystem`
-            });
-            needsSave = true;
           }
+
+          // --- Always update all paths in nodeMetadata for both new and existing nodes ---
+          const nodeBaseDir = path.join(nodesDir, nodeDirName);
+          const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
+          let meta = nodeMetadata[definitiveNodeName] || {};
+          let configPathFinal = path.join(nodeBaseDir, "config", "elasticsearch.yml");
+          let servicePathFinal = path.join(nodeBaseDir, "config", serviceFileName);
+          let dataPathFinal = config["path.data"] || path.join(nodeBaseDir, "data");
+          let logsPathFinal = config["path.logs"] || path.join(nodeBaseDir, "logs");
+          nodeMetadata[definitiveNodeName] = {
+            ...meta,
+            name: definitiveNodeName,
+            configPath: configPathFinal,
+            servicePath: servicePathFinal,
+            dataPath: dataPathFinal,
+            logsPath: logsPathFinal,
+            cluster: config["cluster.name"] || "trustquery-cluster",
+            host: config["network.host"] || "localhost",
+            port: config["http.port"] || 9200,
+            transportPort: config["transport.port"] || 9300,
+            roles: config["node.roles"] || { master: true, data: true, ingest: true },
+            heapSize: "1g"
+          };
+          if (!elasticsearchNodes.includes(definitiveNodeName)) {
+            elasticsearchNodes.push(definitiveNodeName);
+          }
+          needsSave = true;
         } catch (configError) {
-          console.warn(
-            `⚠️ Skipping node directory ${nodeDirName}: ${configError.message}`
-          );
+          // If config file is missing, skip this directory
+          console.warn(`⚠️ Skipping node directory ${nodeDirName}: ${configError.message}`);
         }
       }
     }
@@ -216,55 +341,55 @@ async function verifyNodeMetadata() {
     }
   }
 
-  // Check for nodes in elasticsearchNodes but not in metadata
-  for (const nodeName of elasticsearchNodes) {
-    if (!nodeMetadata[nodeName]) {
-      issues.push({
-        type: "missing_metadata",
-        node: nodeName,
-        message: `Node "${nodeName}" is in elasticsearchNodes but has no metadata`
-      });
-    }
-  }
-
-  // Check for nodes in metadata but not in elasticsearchNodes
+  // Remove nodes from metadata/config/cache that do not exist on disk
   for (const nodeName of Object.keys(nodeMetadata)) {
-    if (!elasticsearchNodes.includes(nodeName)) {
-      elasticsearchNodes.push(nodeName);
+    if (!foundNodeNames.has(nodeName)) {
+      delete nodeMetadata[nodeName];
+      const idx = elasticsearchNodes.indexOf(nodeName);
+      if (idx !== -1) elasticsearchNodes.splice(idx, 1);
+      removedNodes.push(nodeName);
       repairs.push({
-        type: "added_to_list",
+        type: "removed_metadata",
         node: nodeName,
-        message: `Added node "${nodeName}" to elasticsearchNodes list`
-      });
-      needsSave = true;
-    }
-    
-    // Ensure all nodes have a nodeUrl
-    const metadata = nodeMetadata[nodeName];
-    if (!metadata.nodeUrl && metadata.host && metadata.port) {
-      metadata.nodeUrl = `http://${metadata.host}:${metadata.port}`;
-      repairs.push({
-        type: "added_url",
-        node: nodeName,
-        message: `Added missing nodeUrl for "${nodeName}": ${metadata.nodeUrl}`
+        message: `Removed metadata for node "${nodeName}" not found on disk`
       });
       needsSave = true;
     }
   }
 
-  // Check write node validity
+  // Check write node validity and auto-fix if needed
   if (writeNode && !nodeMetadata[writeNode]) {
     issues.push({
       type: "invalid_write_node",
       node: writeNode,
-      message: `Write node "${writeNode}" does not exist in metadata`
+      message: `Write node "${writeNode}" does not exist in metadata. Auto-clearing.`
     });
+    // Auto-assign to another available node if possible, else clear
+    const availableNodes = Object.keys(nodeMetadata);
+    if (availableNodes.length > 0) {
+      await setConfig("writeNode", availableNodes[0]);
+    } else {
+      await setConfig("writeNode", null);
+    }
+    needsSave = true;
   }
 
   // Save changes if needed
   if (needsSave) {
     await setConfig("nodeMetadata", nodeMetadata);
     await setConfig("elasticsearchNodes", elasticsearchNodes);
+  }
+
+  // Remove from cache any nodes that were removed
+  if (removedNodes.length > 0) {
+    const { removeNodeFromCache } = require("../cache/indices-cache");
+    for (const nodeName of removedNodes) {
+      try {
+        await removeNodeFromCache(nodeName);
+      } catch (e) {
+        console.warn(`[verifyNodeMetadata] Failed to remove node ${nodeName} from cache: ${e.message}`);
+      }
+    }
   }
 
   return {
@@ -274,6 +399,136 @@ async function verifyNodeMetadata() {
     nodeMetadata,
     elasticsearchNodes
   };
+}
+
+/**
+ * Auto-fix node folders to match node.name in config
+ */
+async function autoFixNodeFolders() {
+  const nodeMetadata = getConfig("nodeMetadata") || {};
+  const elasticsearchNodes = getConfig("elasticsearchNodes") || [];
+  const env = getEnvAndConfig();
+  const nodesDir = path.join(env.baseElasticsearchPath, "nodes");
+  const fs = require("fs").promises;
+  const yaml = require("yaml");
+  let needsSave = false;
+
+  await fs.mkdir(nodesDir, { recursive: true });
+  const nodeDirs = await fs.readdir(nodesDir, { withFileTypes: true });
+
+  for (const dirent of nodeDirs) {
+    if (!dirent.isDirectory()) continue;
+    let nodeDirName = dirent.name;
+    let nodeDirPath = path.join(nodesDir, nodeDirName);
+    const configPath = path.join(nodeDirPath, "config", "elasticsearch.yml");
+    try {
+      const configContent = await fs.readFile(configPath, "utf8");
+      const config = yaml.parse(configContent);
+      const definitiveNodeName = config["node.name"] || nodeDirName;
+      // --- Auto-fix: Rename folder if folder name != node.name and no folder with node.name exists ---
+      if (nodeDirName !== definitiveNodeName) {
+        const targetDirPath = path.join(nodesDir, definitiveNodeName);
+        let targetExists = false;
+        try { await fs.access(targetDirPath); targetExists = true; } catch {}
+        if (!targetExists) {
+          await fs.rename(nodeDirPath, targetDirPath);
+          nodeDirName = definitiveNodeName;
+          nodeDirPath = targetDirPath;
+          // --- Update elasticsearch.yml: fix node.name and node.attr.custom_id ---
+          try {
+            const configPathToFix = path.join(targetDirPath, "config", "elasticsearch.yml");
+            let configObjToFix;
+            let configContentToFix;
+            let shouldWriteConfig = false;
+            try {
+              configContentToFix = await fs.readFile(configPathToFix, "utf8");
+              configObjToFix = yaml.parse(configContentToFix) || {};
+              if (configObjToFix["node.name"] !== definitiveNodeName) {
+                configObjToFix["node.name"] = definitiveNodeName;
+                shouldWriteConfig = true;
+              }
+              if (configObjToFix["node.attr.custom_id"] !== definitiveNodeName) {
+                configObjToFix["node.attr.custom_id"] = definitiveNodeName;
+                shouldWriteConfig = true;
+              }
+              if (shouldWriteConfig) {
+                const newYaml = yaml.stringify(configObjToFix);
+                await fs.writeFile(configPathToFix, newYaml, "utf8");
+              }
+            } catch (e) {
+              // If config is not valid YAML, regenerate from metadata
+              const meta = nodeMetadata[definitiveNodeName] || {};
+              const { generateNodeConfig } = require("./node-config");
+              const newYaml = generateNodeConfig({
+                ...meta,
+                name: definitiveNodeName,
+                cluster: meta.cluster || "trustquery-cluster",
+                dataPath: meta.dataPath || path.join(targetDirPath, "data"),
+                logsPath: meta.logsPath || path.join(targetDirPath, "logs"),
+              });
+              await fs.writeFile(configPathToFix, newYaml, "utf8");
+            }
+          } catch (e) {
+            // Ignore if config file is missing
+          }
+          // --- Update config.json paths and node names ---
+          const serviceFileName = env.isWindows ? "start-node.bat" : "start-node.sh";
+          // Remove old entry if present
+          if (nodeMetadata[nodeDirName] && nodeDirName !== definitiveNodeName) {
+            delete nodeMetadata[nodeDirName];
+          }
+          if (nodeMetadata[dirent.name] && dirent.name !== definitiveNodeName) {
+            delete nodeMetadata[dirent.name];
+          }
+          // Determine new configPath/servicePath
+          const newConfigPath = path.join(targetDirPath, "config", "elasticsearch.yml");
+          const newServicePath = path.join(targetDirPath, "config", serviceFileName);
+          // Determine new dataPath/logsPath only if they are subfolders of the node folder
+          const nodeBaseDir2 = path.join(nodesDir, definitiveNodeName);
+          const expectedConfigPath2 = path.join(nodeBaseDir2, "config", "elasticsearch.yml");
+          const expectedServicePath2 = path.join(nodeBaseDir2, "config", serviceFileName);
+          const expectedDataPath2 = config["path.data"] || path.join(nodeBaseDir2, "data");
+          const expectedLogsPath2 = config["path.logs"] || path.join(nodeBaseDir2, "logs");
+          const meta2 = nodeMetadata[definitiveNodeName] || {};
+          let changed2 = false;
+          if (meta2.configPath !== expectedConfigPath2) { meta2.configPath = expectedConfigPath2; changed2 = true; }
+          if (meta2.servicePath !== expectedServicePath2) { meta2.servicePath = expectedServicePath2; changed2 = true; }
+          if (meta2.dataPath !== expectedDataPath2) { meta2.dataPath = expectedDataPath2; changed2 = true; }
+          if (meta2.logsPath !== expectedLogsPath2) { meta2.logsPath = expectedLogsPath2; changed2 = true; }
+          if (changed2) needsSave = true;
+          nodeMetadata[definitiveNodeName] = { ...meta2, name: definitiveNodeName };
+          // Update elasticsearchNodes array
+          const idxOld = elasticsearchNodes.indexOf(nodeDirName);
+          if (idxOld !== -1) elasticsearchNodes.splice(idxOld, 1);
+          if (!elasticsearchNodes.includes(definitiveNodeName)) {
+            elasticsearchNodes.push(definitiveNodeName);
+          }
+          needsSave = true;
+          // Also update config file if dataPath/logsPath changed
+          let configChanged = false;
+          let newConfigContent = configContent;
+          if (wasDataInNode && config["path.data"] && config["path.data"] !== newDataPath) {
+            newConfigContent = newConfigContent.replace(/^(path\.data\s*[:=]\s*).*/m, `$1${newDataPath}`);
+            configChanged = true;
+          }
+          if (wasLogsInNode && config["path.logs"] && config["path.logs"] !== newLogsPath) {
+            newConfigContent = newConfigContent.replace(/^(path\.logs\s*[:=]\s*).*/m, `$1${newLogsPath}`);
+            configChanged = true;
+          }
+          if (configChanged) {
+            await fs.writeFile(newConfigPath, newConfigContent, "utf8");
+          }
+        }
+      }
+    } catch (configError) {
+      // If config file is missing, skip this directory
+      continue;
+    }
+  }
+  if (needsSave) {
+    await setConfig("nodeMetadata", nodeMetadata);
+    await setConfig("elasticsearchNodes", elasticsearchNodes);
+  }
 }
 
 /**

@@ -1,9 +1,14 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import React, { useState, useEffect } from "react";
+import { useClusterManagement } from "../../../hooks/useClusterManagement";
+import axiosClient from '../../../api/axiosClient';
+// Removed: import { toast } from 'react-toastify';
+import buttonStyles from '../../../components/ButtonStyles';
+import { formatBytes } from '../../../utils/format';
+import LocalNodeManager from '../../../components/LocalNodeManager';
 import {
-  faCircleNotch,
+  faSitemap,
+  faCubes,
   faServer,
-  faInfoCircle,
   faCog,
   faPlus,
   faSpinner,
@@ -14,271 +19,213 @@ import {
   faDatabase,
   faFolder,
   faHdd,
-  faCubes,
-  faNetworkWired,
+  faCheck,
+  faWrench,
+  faMemory,
   faChartLine,
   faClock,
-  faMemory,
-  faSitemap,
-  faEdit,
-  faCheck,
-  faTimes,
-  faSync,
+  faNetworkWired,
   faRefresh,
+  faEdit,
+  faExclamationTriangle,
+  faCircleNotch,
 } from "@fortawesome/free-solid-svg-icons";
-import axiosClient from "../../../api/axiosClient";
-import { formatBytes } from "../../../utils/format";
-import buttonStyles from "../../../components/ButtonStyles";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
-export default function ClusterManagement({
-  localNodes,
-  enhancedNodesData: enhancedNodesDataProp,
-  clusterLoading,
-  nodeActionLoading,
-  fetchLocalNodes,
-  handleStartLocalNode,
-  handleStopLocalNode,
-  handleDeleteLocalNode,
-  setShowLocalNodeManager,
-  isAnyTaskRunning,
-  onEditNode,
-  onOpenNodeDetails,
-  showNotification,
-  clustersList = [],
-  clustersLoading = false,
-  clusterActionLoading = [],
-  fetchClusters,
-  createCluster,
-  updateCluster,
-  deleteCluster,
-  fetchAllTasks,
-  tasksList = [], // <-- add default
-  selectedCluster,
-  setSelectedCluster
-}) {
-  // Use the enhanced data from the hook instead of local state
-  const enhancedNodesData = enhancedNodesDataProp || {};
+function ClusterManagement(props) {
+  // ...existing logic and hooks...
+  // Connect to cluster management hook
+  const {
+    localNodes,
+    enhancedNodesData,
+    clusterLoading,
+    nodeActionLoading,
+    fetchLocalNodes,
+    handleDeleteLocalNode,
+    handleStartLocalNode,
+    handleStopLocalNode,
+    clustersList,
+    clustersLoading,
+    clusterActionLoading,
+    fetchClusters,
+    updateCluster,
+    deleteCluster,
+    createCluster,
+    selectedCluster,
+    setSelectedCluster
+  } = useClusterManagement(props.showNotification, props.fetchAllTasks);
 
-  // Loading state for metadata verification
-  const [isVerifyingMetadata, setIsVerifyingMetadata] = useState(false);
-  // Add state for delete confirmation modal and loading state for node deletion
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [nodeToDelete, setNodeToDelete] = useState(null);
-  const [deletingNodeName, setDeletingNodeName] = useState(null); // Track which node is being deleted
-
-  // Add state for cluster filtering
-  // const [selectedCluster, setSelectedCluster] = useState("all"); // REMOVED
-
-  // Keep selectedCluster in sync with clustersList (array of objects)
-  useEffect(() => {
-    if (
-      selectedCluster !== "all" &&
-      (!clustersList.some((c) => c.name === selectedCluster) ||
-        clustersList.length === 0)
-    ) {
-      setSelectedCluster("all");
-    }
-  }, [clustersList, selectedCluster, setSelectedCluster]);
-
-  // Add state for cluster management
-  const [showCreateClusterModal, setShowCreateClusterModal] = useState(false);
+  // Add missing state for newClusterName
   const [newClusterName, setNewClusterName] = useState("");
-  const [editingCluster, setEditingCluster] = useState(null);
-  const [editedClusterName, setEditedClusterName] = useState("");
+  // State for modals and UI
+  const [showCreateClusterModal, setShowCreateClusterModal] = useState(false);
   const [showDeleteClusterModal, setShowDeleteClusterModal] = useState(false);
   const [clusterToDelete, setClusterToDelete] = useState(null);
   const [targetClusterForMove, setTargetClusterForMove] = useState("");
+  const [editingCluster, setEditingCluster] = useState(null);
+  const [editedClusterName, setEditedClusterName] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [nodeToDelete, setNodeToDelete] = useState(null);
+  const [deletingNodeName, setDeletingNodeName] = useState("");
+  // Remove old isVerifyingMetadata and isRepairingNodes, add new state
+  const [isRepairingAndVerifying, setIsRepairingAndVerifying] = useState(false);
 
-  // Helper function to get enhanced data for a node
-  const getEnhancedNodeData = (nodeName) => {
-    return enhancedNodesData[nodeName] || {};
-  };
-
-  // Helper function to format node roles
-  const formatNodeRoles = (roles) => {
-    if (!roles) return [];
-    return Object.entries(roles)
-      .filter(([, enabled]) => enabled)
-      .map(([role]) => role);
-  };
-
-  // Helper function to calculate total documents across all indices
-  const getTotalDocuments = (nodeData) => {
-    if (!nodeData.indices || !Array.isArray(nodeData.indices)) return 0;
-    return nodeData.indices.reduce((total, index) => {
-      return total + (index["doc.count"] || 0);
-    }, 0);
-  };
-
-  // Helper function to calculate total storage across all indices
-  const getTotalStorage = (nodeData) => {
-    if (!nodeData.indices || !Array.isArray(nodeData.indices)) return 0;
-    return nodeData.indices.reduce((total, index) => {
-      if (index["store.size"]) return total + index["store.size"];
-      return total;
-    }, 0);
-  };
-
-  // Helper function to format last update time
-  const formatLastUpdate = (timestamp) => {
-    if (!timestamp) return null;
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 1) return "Just now";
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-    return date.toLocaleDateString();
-  };
-
-  // Improved metadata verification with loading state
-  const handleVerifyMetadata = async () => {
-    if (isVerifyingMetadata) return; // Prevent double operations
-
-    setIsVerifyingMetadata(true);
+  // Handler to repair and verify all nodes (combined action)
+  const handleRepairAndVerifyAllNodes = async () => {
+    setIsRepairingAndVerifying(true);
     try {
-      showNotification(
-        "info",
-        "Verifying node metadata...",
-        faCircleNotch,
-        true
-      );
-      const response = await axiosClient.post(
-        "/api/admin/cluster-advanced/nodes/verify-metadata"
-      );
-      showNotification(
-        "success",
-        "Node metadata verification completed successfully",
-        faCog
-      );
-      // Refresh the nodes list after verification
-      await fetchLocalNodes();
-      await fetchClusters();
+      const response = await axiosClient.post("/api/admin/node-management/nodes/repair-and-verify");
+      if (response.data && !response.data.error) {
+        if (props.showNotification) props.showNotification("success", "All nodes repaired and metadata verified.");
+        await fetchLocalNodes();
+      } else {
+        if (props.showNotification) props.showNotification("error", "Repair/Verify failed: " + (response.data?.error || "Unknown error"));
+      }
     } catch (error) {
-      showNotification(
-        "error",
-        `Failed to verify metadata: ${
-          error.response?.data?.error || error.message
-        }`,
-        faExclamationCircle
-      );
+      if (props.showNotification) props.showNotification("error", "Error repairing/verifying nodes: " + (error.message || "Unknown error"));
     } finally {
-      setIsVerifyingMetadata(false);
+      setIsRepairingAndVerifying(false);
     }
   };
 
-  // Add handler for delete button click
-  const handleDeleteClick = (node) => {
+  // Helper: get total documents from node data
+  function getTotalDocuments(nodeData) {
+    if (!nodeData || !nodeData.indices) return 0;
+    return nodeData.indices.reduce((sum, idx) => sum + (idx['doc.count'] || 0), 0);
+  }
+  // Helper: get total storage from node data
+  function getTotalStorage(nodeData) {
+    if (!nodeData || !nodeData.indices) return 0;
+    return nodeData.indices.reduce((sum, idx) => sum + (idx['store.size'] || 0), 0);
+  }
+  // Helper: get all clusters
+  function getAllClusters() {
+    return ['all', ...new Set((localNodes || []).map(n => n.cluster || 'trustquery-cluster'))];
+  }
+  // Helper: filter nodes by selected cluster
+  function getFilteredNodes() {
+    if (!localNodes) return [];
+    if (!selectedCluster || selectedCluster === 'all') return localNodes;
+    return localNodes.filter(n => (n.cluster || 'trustquery-cluster') === selectedCluster);
+  }
+  // Helper: get enhanced node data
+  function getEnhancedNodeData(nodeName) {
+    return enhancedNodesData[nodeName] || {};
+  }
+  // Helper: format node roles
+  function formatNodeRoles(roles) {
+    if (!roles) return [];
+    return Object.entries(roles).filter(([, v]) => v).map(([k]) => k.charAt(0).toUpperCase() + k.slice(1));
+  }
+  // Helper: check if node exists
+  function nodeExists(node) {
+    return !!node && (!node.deleted);
+  }
+  // Helper: check if node is running
+  function isNodeRunning(node) {
+    return node && node.status === 'running';
+  }
+  // Helper: check if node has a running task
+  function isNodeTaskRunning(nodeName) {
+    return (nodeActionLoading || []).includes(nodeName);
+  }
+  // Helper: get node status color
+  function getNodeStatusColor(status) {
+    switch (status) {
+      case 'running': return 'text-green-400';
+      case 'starting': return 'text-blue-400';
+      case 'stopped': return 'text-red-400';
+      default: return 'text-neutral-400';
+    }
+  }
+  // Helper: format last update
+  function formatLastUpdate(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diff = Math.floor((now - date) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return date.toLocaleString();
+  }
+ 
+  // Handler: delete node (stub)
+  function handleDeleteClick(node) {
     setNodeToDelete(node);
     setShowDeleteModal(true);
-  };
-
-  // Add handler for confirming deletion
-  const confirmDelete = async () => {
+  }
+  // Handler: confirm node delete (stub)
+  async function confirmDelete() {
     if (!nodeToDelete) return;
     setDeletingNodeName(nodeToDelete.name);
-    try {
-      await handleDeleteLocalNode(nodeToDelete.name);
-    } finally {
+    handleDeleteLocalNode(nodeToDelete.name).then(() => {
       setShowDeleteModal(false);
       setNodeToDelete(null);
-      setDeletingNodeName(null);
-    }
-  };
-
-  // Use clustersList prop for filter dropdown
-  const getAllClusters = () => {
-    return ["all", ...clustersList.map((c) => c.name)];
-  };
-
-  // Remove this useEffect to prevent fetchLocalNodes loop
-  // useEffect(() => {
-  //   if (selectedCluster === "all") {
-  //     fetchLocalNodes(false, null);
-  //   } else {
-  //     fetchLocalNodes(false, selectedCluster);
-  //   }
-  // }, [selectedCluster, fetchLocalNodes]);
-
-  // No need to filter nodes in the UI anymore, just use localNodes
-  const getFilteredNodes = () => localNodes;
-
-  // Handle creating a new cluster
-  const handleCreateCluster = async () => {
-    if (!newClusterName.trim()) return;
-    try {
-      await createCluster(newClusterName);
-      setNewClusterName("");
-      setShowCreateClusterModal(false);
-      await fetchClusters();
-      await fetchLocalNodes();
-    } catch (error) {
-      // Error is already handled in the hook
-    }
-  };
-
-  // Handle editing a cluster
-  const handleEditCluster = (cluster) => {
+      setDeletingNodeName('');
+      fetchLocalNodes();
+    });
+  }
+  // Handler: edit cluster
+  function handleEditCluster(cluster) {
     setEditingCluster(cluster);
     setEditedClusterName(cluster.name);
-  };
-
-  // Handle saving edited cluster
-  const handleSaveClusterEdit = async () => {
+  }
+  // Handler: save cluster edit
+  async function handleSaveClusterEdit() {
     if (!editingCluster || !editedClusterName.trim()) return;
-    try {
-      await updateCluster(editingCluster.name, editedClusterName);
-      setEditingCluster(null);
-      setEditedClusterName("");
-      await fetchClusters();
-      await fetchLocalNodes();
-    } catch (error) {
-      // Error is already handled in the hook
-    }
-  };
-
-  // Handle deleting a cluster
-  const handleDeleteClusterClick = (cluster) => {
+    await updateCluster(editingCluster.name, editedClusterName.trim());
+    setEditingCluster(null);
+    setEditedClusterName('');
+    fetchClusters();
+  }
+  // Handler: delete cluster click
+  function handleDeleteClusterClick(cluster) {
     setClusterToDelete(cluster);
     setShowDeleteClusterModal(true);
-
-    // Set default target cluster (first available that's not the one being deleted)
-    const availableTargets = clustersList.filter(
-      (c) => c.name !== cluster.name
-    );
-    if (availableTargets.length > 0) {
-      setTargetClusterForMove(availableTargets[0].name);
+    // Set default target cluster if nodes need to be moved
+    if (cluster.nodeCount > 0) {
+      const defaultTarget = clustersList.find(c => c.name !== cluster.name && c.name === 'trustquery-cluster');
+      if (defaultTarget) {
+        setTargetClusterForMove(defaultTarget.name);
+      } else if (clustersList.length > 1) {
+        const otherCluster = clustersList.find(c => c.name !== cluster.name);
+        if (otherCluster) setTargetClusterForMove(otherCluster.name);
+      }
     } else {
-      setTargetClusterForMove("trustquery-cluster");
+      setTargetClusterForMove('');
     }
-  };
-
-  // Handle confirming cluster deletion
-  const confirmDeleteCluster = async () => {
+  }
+  // Handler: confirm delete cluster
+  async function confirmDeleteCluster() {
     if (!clusterToDelete) return;
+    
+    // Validate that target cluster is selected if nodes need to be moved
+    if (clusterToDelete.nodeCount > 0 && !targetClusterForMove) {
+      props.showNotification('error', 'Please select a target cluster for the nodes', faExclamationTriangle);
+      return;
+    }
+    
     try {
       await deleteCluster(clusterToDelete.name, targetClusterForMove);
-      setClusterToDelete(null);
       setShowDeleteClusterModal(false);
-      setTargetClusterForMove("");
-      await fetchClusters();
-      await fetchLocalNodes();
+      setClusterToDelete(null);
+      setTargetClusterForMove('');
+      fetchClusters();
+      props.showNotification('success', `Cluster "${clusterToDelete.name}" deleted successfully`, faCheck);
     } catch (error) {
-      // Error is already handled in the hook
+      // Error is already handled in the deleteCluster function
+      // Just keep the modal open
     }
-  };
-
-  // Helper to check if a node has a running task
-  const isNodeTaskRunning = (nodeName) => {
-    return tasksList.some(
-      (task) =>
-        task.nodeName === nodeName &&
-        !task.completed &&
-        task.status !== "error"
-    );
-  };
+  }
+  // Handler: create cluster
+  async function handleCreateCluster() {
+    if (!newClusterName.trim()) return;
+    await createCluster(newClusterName.trim());
+    setShowCreateClusterModal(false);
+    setNewClusterName('');
+    fetchClusters();
+  }
 
   return (
     <>
@@ -347,11 +294,10 @@ export default function ClusterManagement({
               {clustersList.map((cluster) => (
                 <div
                   key={cluster.name}
-                  className={`bg-neutral-700 rounded-xl p-5 border-2 ${
-                    cluster.name === "trustquery-cluster"
-                      ? "border-blue-500"
-                      : "border-purple-500"
-                  }`}
+                  className={`bg-neutral-700 rounded-xl p-5 border-2 ${cluster.name === "trustquery-cluster"
+                    ? "border-blue-500"
+                    : "border-purple-500"
+                    }`}
                 >
                   {editingCluster && editingCluster.name === cluster.name ? (
                     <div className="space-y-3">
@@ -407,11 +353,10 @@ export default function ClusterManagement({
                                 ? faSitemap
                                 : faCubes
                             }
-                            className={`mr-2 ${
-                              cluster.name === "trustquery-cluster"
-                                ? "text-blue-400"
-                                : "text-purple-400"
-                            }`}
+                            className={`mr-2 ${cluster.name === "trustquery-cluster"
+                              ? "text-blue-400"
+                              : "text-purple-400"
+                              }`}
                           />
                           {cluster.name}
                           {cluster.name === "trustquery-cluster" && (
@@ -464,11 +409,10 @@ export default function ClusterManagement({
                           <span className="text-neutral-300">Status:</span>
                           <div className="flex items-center">
                             <div
-                              className={`w-2 h-2 rounded-full mr-2 ${
-                                cluster.nodeCount > 0
-                                  ? "bg-green-500"
-                                  : "bg-neutral-500"
-                              }`}
+                              className={`w-2 h-2 rounded-full mr-2 ${cluster.nodeCount > 0
+                                ? "bg-green-500"
+                                : "bg-neutral-500"
+                                }`}
                             ></div>
                             <span className="text-white">
                               {cluster.nodeCount > 0 ? "Active" : "Empty"}
@@ -516,7 +460,7 @@ export default function ClusterManagement({
           <h2 className="text-3xl font-semibold text-white">Node Management</h2>
           <div className="flex space-x-3">
             <button
-              onClick={() => setShowLocalNodeManager(true)}
+              onClick={() => props.setShowLocalNodeManager(true)}
               className={buttonStyles.primary}
             >
               <FontAwesomeIcon icon={faServer} className="mr-2" />
@@ -534,16 +478,16 @@ export default function ClusterManagement({
               Refresh
             </button>
             <button
-              onClick={handleVerifyMetadata}
+              onClick={handleRepairAndVerifyAllNodes}
               className={buttonStyles.neutral}
-              disabled={clusterLoading}
-              title="Verify and clean up node metadata"
+              disabled={clusterLoading || isRepairingAndVerifying}
+              title="Repair and verify all nodes and metadata"
             >
               <FontAwesomeIcon
-                icon={isVerifyingMetadata ? faSpinner : faCog}
-                className={"mr-2" + (isVerifyingMetadata ? " fa-spin" : "")}
+                icon={isRepairingAndVerifying ? faSpinner : faWrench}
+                className={"mr-2" + (isRepairingAndVerifying ? " fa-spin" : "")}
               />
-              {isVerifyingMetadata ? "Repairing..." : "Repair Nodes Metadata"}
+              {isRepairingAndVerifying ? "Repairing..." : "Repair & Verify All Nodes"}
             </button>
           </div>
         </div>
@@ -635,6 +579,7 @@ export default function ClusterManagement({
                         }
                         className="w-full p-2 bg-neutral-900 border border-neutral-700 rounded text-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
                       >
+                        <option value="">Select target cluster</option>
                         {clustersList
                           .filter((c) => c.name !== clusterToDelete.name)
                           .map((cluster) => (
@@ -652,16 +597,17 @@ export default function ClusterManagement({
                 <button
                   onClick={confirmDeleteCluster}
                   className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2"
-                  disabled={clusterActionLoading.includes(clusterToDelete.name)}
+                  disabled={clusterActionLoading.includes(clusterToDelete.name) || 
+                           (clusterToDelete.nodeCount > 0 && !targetClusterForMove)}
                 >
                   {clusterActionLoading.includes(clusterToDelete.name) ? (
                     <>
-                      <FontAwesomeIcon icon={faCircleNotch} spin />
+                      <FontAwesomeIcon icon={faCircleNotch} spin className="mr-2" />
                       <span>Deleting...</span>
                     </>
                   ) : (
                     <>
-                      <FontAwesomeIcon icon={faTrash} />
+                      <FontAwesomeIcon icon={faTrash} className="mr-2" />
                       <span>Delete Cluster</span>
                     </>
                   )}
@@ -703,8 +649,8 @@ export default function ClusterManagement({
               </div>
             </div>
             <div className="mt-2 text-xs text-neutral-400">
-              {(localNodes || []).filter((n) => n.isRunning).length} running,{" "}
-              {(localNodes || []).filter((n) => !n.isRunning).length} stopped
+              {(localNodes || []).filter((n) => n.status === "running").length} running,{" "}
+              {(localNodes || []).filter((n) => n.status !== "running").length} stopped
             </div>
           </div>
 
@@ -807,23 +753,22 @@ export default function ClusterManagement({
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2">
                   <div
-                    className={`w-4 h-4 rounded-full ${
-                      (localNodes || []).filter((n) => n.isRunning).length ===
+                    className={`w-4 h-4 rounded-full ${(localNodes || []).filter((n) => n.status === "running").length ===
                       localNodes.length
-                        ? "bg-green-500 animate-pulse"
-                        : (localNodes || []).filter((n) => n.isRunning).length >
-                          0
+                      ? "bg-green-500 animate-pulse"
+                      : (localNodes || []).filter((n) => n.status === "running").length >
+                        0
                         ? "bg-yellow-500"
                         : "bg-red-500"
-                    }`}
+                      }`}
                   ></div>
                   <span className="text-white font-medium">
-                    {(localNodes || []).filter((n) => n.isRunning).length ===
-                    localNodes.length
+                    {(localNodes || []).filter((n) => n.status === "running").length ===
+                      localNodes.length
                       ? "All Systems Operational"
-                      : (localNodes || []).filter((n) => n.isRunning).length > 0
-                      ? "Partial Operations"
-                      : "Systems Offline"}
+                      : (localNodes || []).filter((n) => n.status === "running").length > 0
+                        ? "Partial Operations"
+                        : "Systems Offline"}
                   </span>
                 </div>
 
@@ -916,9 +861,8 @@ export default function ClusterManagement({
           <div className="flex items-center space-x-6">
             <div className="flex items-center space-x-2">
               <div
-                className={`w-3 h-3 rounded-full ${
-                  (localNodes || []).length > 0 ? "bg-green-500" : "bg-gray-500"
-                }`}
+                className={`w-3 h-3 rounded-full ${(localNodes || []).length > 0 ? "bg-green-500" : "bg-gray-500"
+                  }`}
               ></div>
               <span className="text-neutral-300 text-sm">
                 Configured Nodes:{" "}
@@ -929,31 +873,29 @@ export default function ClusterManagement({
             </div>
             <div className="flex items-center space-x-2">
               <div
-                className={`w-3 h-3 rounded-full ${
-                  (localNodes || []).filter((n) => n.isRunning).length > 0
-                    ? "bg-green-500"
-                    : "bg-amber-500"
-                }`}
+                className={`w-3 h-3 rounded-full ${(localNodes || []).filter((n) => n.status === "running").length > 0
+                  ? "bg-green-500"
+                  : "bg-amber-500"
+                  }`}
               ></div>
               <span className="text-neutral-300 text-sm">
                 Running:{" "}
                 <span className="text-white font-medium">
-                  {(localNodes || []).filter((n) => n.isRunning).length}
+                  {(localNodes || []).filter((n) => n.status === "running").length}
                 </span>
               </span>
             </div>
             <div className="flex items-center space-x-2">
               <div
-                className={`w-3 h-3 rounded-full ${
-                  (localNodes || []).filter((n) => !n.isRunning).length > 0
-                    ? "bg-red-500"
-                    : "bg-gray-500"
-                }`}
+                className={`w-3 h-3 rounded-full ${(localNodes || []).filter((n) => n.status !== "running").length > 0
+                  ? "bg-red-500"
+                  : "bg-gray-500"
+                  }`}
               ></div>
               <span className="text-neutral-300 text-sm">
                 Stopped:{" "}
                 <span className="text-white font-medium">
-                  {(localNodes || []).filter((n) => !n.isRunning).length}
+                  {(localNodes || []).filter((n) => n.status !== "running").length}
                 </span>
               </span>
             </div>
@@ -1009,7 +951,7 @@ export default function ClusterManagement({
                   (n) => (n.cluster || "trustquery-cluster") === cluster
                 );
                 const runningCount = clusterNodes.filter(
-                  (n) => n.isRunning
+                  (n) => n.status === "running"
                 ).length;
                 return (
                   <div
@@ -1033,10 +975,11 @@ export default function ClusterManagement({
 
         <div className="mt-3">
           {clusterLoading && (!localNodes || localNodes.length === 0) ? (
-            <div className="text-center py-8 text-neutral-400">
+            <>
+              <div className="text-center py-8 text-neutral-400"></div>
               <FontAwesomeIcon icon={faCircleNotch} className="fa-spin mr-2" />
               Loading node information...
-            </div>
+            </>
           ) : (
             <div className="space-y-8">
               {/* Local Nodes Management */}
@@ -1078,7 +1021,7 @@ export default function ClusterManagement({
                     will guide you through the setup process.
                   </p>
                   <button
-                    onClick={() => setShowLocalNodeManager(true)}
+                    onClick={() => props.setShowLocalNodeManager(true)}
                     className={buttonStyles.primary}
                   >
                     <FontAwesomeIcon icon={faPlus} className="mr-2" />
@@ -1099,19 +1042,19 @@ export default function ClusterManagement({
                       : 0;
                     const nodeRoles = formatNodeRoles(node.roles);
                     const isStarting = node.isStarting || node.status === "starting" || node.cacheStatus === "starting";
+                    const exists = nodeExists(node);
 
                     return (
                       <div
                         key={node.name}
-                        className={`bg-neutral-800 rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 ease-in-out border-2 ${
-                          isStarting
-                            ? "border-blue-500"
-                            : node.isRunning
+                        className={`bg-neutral-800 rounded-2xl shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 ease-in-out border-2 ${isStarting
+                          ? "border-blue-500"
+                          : isNodeRunning(node)
                             ? indicesCount > 0
                               ? "border-green-500"
                               : "border-yellow-500"
                             : "border-red-500"
-                        }`}
+                          }`}
                       >
                         <div className="p-6">
                           {/* Node Header */}
@@ -1124,23 +1067,22 @@ export default function ClusterManagement({
                                 />
                                 {/* Health indicator badge */}
                                 <div
-                                  className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-neutral-800 ${
-                                    isStarting
-                                      ? "bg-blue-500 animate-pulse"
-                                      : node.isRunning
+                                  className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-neutral-800 ${isStarting
+                                    ? "bg-blue-500 animate-pulse"
+                                    : isNodeRunning(node)
                                       ? indicesCount > 0
                                         ? "bg-green-500"
                                         : "bg-yellow-500"
                                       : "bg-red-500"
-                                  }`}
+                                    }`}
                                   title={
                                     isStarting
                                       ? "Node is starting..."
-                                      : node.isRunning
-                                      ? indicesCount > 0
-                                        ? "Healthy - Running with data"
-                                        : "Warning - Running but no indices"
-                                      : "Offline - Node not running"
+                                      : isNodeRunning(node)
+                                        ? indicesCount > 0
+                                          ? "Healthy - Running with data"
+                                          : "Warning - Running but no indices"
+                                        : "Offline - Node not running"
                                   }
                                 ></div>
                               </div>
@@ -1149,11 +1091,10 @@ export default function ClusterManagement({
                                   <div className="flex items-center">
                                     <FontAwesomeIcon
                                       icon={faServer}
-                                      className={`mr-2 ${
-                                        node.isRunning
-                                          ? "text-green-400"
-                                          : "text-neutral-400"
-                                      }`}
+                                      className={`mr-2 ${isNodeRunning(node)
+                                        ? "text-green-400"
+                                        : "text-neutral-400"
+                                        }`}
                                     />
                                     <h4 className="font-medium text-white">
                                       {node.name}
@@ -1162,8 +1103,7 @@ export default function ClusterManagement({
                                 </div>
                                 <div className="flex items-center justify-between">
                                   <div className="text-sm text-neutral-400">
-                                    {node.description ||
-                                      `${node.host}:${node.port}`}
+                                    {node.description || `${node.host}:${node.port}`}
                                   </div>
                                   <span className="text-xs bg-blue-900 text-blue-200 px-2 py-1 rounded ml-2">
                                     {node.cluster || "trustquery-cluster"}
@@ -1172,6 +1112,15 @@ export default function ClusterManagement({
                               </div>
                             </div>
                           </div>
+                          {/* Node Existence Warning */}
+                          {!exists && (
+                            <div className="mb-4 p-4 bg-red-900 rounded-lg border border-red-700">
+                              <div className="flex items-center space-x-2">
+                                <FontAwesomeIcon icon={faExclamationTriangle} className="text-red-400" />
+                                <span className="text-red-200 font-semibold">Node data or logs missing. This node is no longer available. Please refresh or use Auto-Fix.</span>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Node Status */}
                           <div className="mb-4 pb-4 border-b border-neutral-700">
@@ -1182,19 +1131,11 @@ export default function ClusterManagement({
                                 ) : (
                                   <FontAwesomeIcon
                                     icon={faCircle}
-                                    className={`${
-                                      node.isRunning
-                                        ? "text-green-500"
-                                        : "text-red-500"
-                                    } text-xs`}
+                                    className={getNodeStatusColor(node.status) + " text-xs"}
                                   />
                                 )}
                                 <span className="text-sm font-semibold text-white">
-                                  {isStarting
-                                    ? "Starting"
-                                    : node.isRunning
-                                    ? "Running"
-                                    : "Stopped"}
+                                  {node.status.charAt(0).toUpperCase() + node.status.slice(1)}
                                 </span>
                               </div>
                               {enhancedData.lastCacheUpdate && (
@@ -1204,11 +1145,11 @@ export default function ClusterManagement({
                                     enhancedData.lastCacheUpdate
                                   ).toLocaleString()}
                                 >
-                                  {node.isRunning
+                                  {isNodeRunning(node)
                                     ? "Live"
                                     : `Cached ${formatLastUpdate(
-                                        enhancedData.lastCacheUpdate
-                                      )}`}
+                                      enhancedData.lastCacheUpdate
+                                    )}`}
                                 </div>
                               )}
                             </div>
@@ -1254,7 +1195,7 @@ export default function ClusterManagement({
                                 <span className="text-sm text-white font-medium">
                                   {node.heapSize || "Default"}
                                 </span>
-                                {node.isRunning && enhancedData.memory && (
+                                {isNodeRunning(node) && enhancedData.memory && (
                                   <div className="text-xs text-neutral-400">
                                     {formatBytes(enhancedData.memory.heapUsed)}{" "}
                                     / {formatBytes(enhancedData.memory.heapMax)}
@@ -1392,15 +1333,15 @@ export default function ClusterManagement({
                                   <FontAwesomeIcon icon={faSpinner} spin className="mr-2" />
                                   Starting...
                                 </button>
-                              ) : node.isRunning ? (
+                              ) : isNodeRunning(node) ? (
                                 <button
                                   onClick={async () => {
+                                    if (!exists) return;
                                     await handleStopLocalNode(node.name);
-                                    // Always refresh node status after stop
                                     await fetchLocalNodes();
-                                    if (typeof fetchAllTasks === 'function') fetchAllTasks();
+                                    if (typeof props.fetchAllTasks === 'function') props.fetchAllTasks();
                                   }}
-                                  disabled={isLoading}
+                                  disabled={isLoading || !exists}
                                   className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2 disabled:bg-neutral-600 disabled:cursor-not-allowed"
                                 >
                                   {isLoading ? (
@@ -1412,12 +1353,12 @@ export default function ClusterManagement({
                               ) : (
                                 <button
                                   onClick={async () => {
+                                    if (!exists) return;
                                     await handleStartLocalNode(node.name);
-                                    // Always refresh node status after start
                                     await fetchLocalNodes();
-                                    if (typeof fetchAllTasks === 'function') fetchAllTasks();
+                                    if (typeof props.fetchAllTasks === 'function') props.fetchAllTasks();
                                   }}
-                                  disabled={isLoading || isNodeTaskRunning(node.name)}
+                                  disabled={isLoading || isNodeTaskRunning(node.name) || !exists}
                                   className={buttonStyles.create}
                                 >
                                   {(isLoading || isNodeTaskRunning(node.name)) ? (
@@ -1428,31 +1369,31 @@ export default function ClusterManagement({
                                 </button>
                               )}
                               <button
-                                onClick={() => onOpenNodeDetails(node)}
+                                onClick={() => exists && props.onOpenNodeDetails(node)}
                                 className={buttonStyles.primary}
-                                disabled={false}
+                                disabled={!exists}
                               >
                                 Manage
                               </button>
                             </div>
                             <div className="flex space-x-2">
                               <button
-                                onClick={() => onEditNode(node)}
+                                onClick={async () => {
+                                  if (!exists) return;
+                                  await props.onEditNode(node);
+                                }}
                                 className="text-neutral-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 aria-label="Edit Node"
-                                disabled={false}
+                                disabled={!exists}
                               >
                                 <FontAwesomeIcon icon={faPencilAlt} />
                               </button>
                               <button
-                                onClick={() => handleDeleteClick(node)}
-                                className={`text-neutral-400 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                                  deletingNodeName === node.name
-                                    ? "opacity-50 cursor-not-allowed"
-                                    : ""
-                                }`}
+                                onClick={() => exists && handleDeleteClick(node)}
+                                className={`text-neutral-400 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${deletingNodeName === node.name ? "opacity-50 cursor-not-allowed" : ""
+                                  }`}
                                 aria-label="Delete Node"
-                                disabled={deletingNodeName === node.name}
+                                disabled={deletingNodeName === node.name || !exists}
                               >
                                 {deletingNodeName === node.name ? (
                                   <FontAwesomeIcon icon={faCircleNotch} spin />
@@ -1526,3 +1467,6 @@ export default function ClusterManagement({
     </>
   );
 }
+  
+export default ClusterManagement;
+  
