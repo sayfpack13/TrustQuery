@@ -212,12 +212,10 @@ function generateServiceScript(nodeName, configDir, port, env) {
   if (env.isWindows) {
     return `@echo off
 set ES_PATH_CONF=${configDir}
-set ES_JAVA_OPTS=-Xms1g -Xmx1g
 "${path.join(env.baseElasticsearchPath, "bin", "elasticsearch.bat")}"`;
   } else {
     return `#!/bin/bash
 export ES_PATH_CONF="${configDir}"
-export ES_JAVA_OPTS="-Xms1g -Xmx1g"
 "${path.join(env.baseElasticsearchPath, "bin", "elasticsearch")}"`;
   }
 }
