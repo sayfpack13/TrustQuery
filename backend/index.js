@@ -1698,7 +1698,13 @@ function isAdminRequest(req) {
 // GET search endpoint (public endpoint)
 app.get("/api/search", async (req, res) => {
   try {
-    const { q, page = 1, size, max } = req.query;
+    const { q, page = 1 } = req.query;
+    // Accept both 'size' and 'itemsPerPage' for per-page size
+    const pageSize = parseInt(req.query.size || req.query.itemsPerPage) || 20;
+    // Accept both 'max' and 'maxTotalResults' for global cap
+    const maxTotal = parseInt(req.query.max || req.query.maxTotalResults) || 10000;
+    const pageNum = parseInt(page) || 1;
+    const from = (pageNum - 1) * pageSize;
     const config = getConfig();
     const nodeMetadata = config.nodeMetadata || {};
     const isAdmin = isAdminRequest(req);
@@ -1709,12 +1715,12 @@ app.get("/api/search", async (req, res) => {
     }
 
     // Prepare search params
-    let pageSize = parseInt(size) || 20;
-    let pageNum = parseInt(page) || 1;
-    let maxTotal = (max && !isNaN(parseInt(max))) ? parseInt(max) : 10000;
-    const from = (pageNum - 1) * pageSize;
+    // const pageSize = parseInt(itemsPerPage) || 20;
+    // const pageNum = parseInt(page) || 1;
+    // const maxTotal = (maxTotalResults && !isNaN(parseInt(maxTotalResults))) ? parseInt(maxTotalResults) : 10000;
+    // const from = (pageNum - 1) * pageSize;
 
-    // Build all {node, index} pairs from all running nodes that are reachable (fast TCP check)
+    // Build all {node, index} pairs from all running nodes that are reachable
     const { isNodeRunning } = require("./src/elasticsearch/node-utils");
     const runningNodeIndexPairs = [];
     for (const [nodeName, nodeData] of Object.entries(nodeMetadata)) {
@@ -1740,8 +1746,6 @@ app.get("/api/search", async (req, res) => {
 
     // Group indices by node for efficient querying
     const clientsCache = {};
-    const searchLog = [];
-    let esAvailable = false;
     const nodeWarnings = [];
     let totalCount = 0;
     let allResults = [];
@@ -1751,6 +1755,10 @@ app.get("/api/search", async (req, res) => {
       if (!indicesByNode[node]) indicesByNode[node] = [];
       indicesByNode[node].push(index);
     }
+
+    // Calculate how many results to fetch from each node
+    // To ensure we can fill the requested page, fetch (from + pageSize) from each node, but cap at maxTotal
+    const fetchSize = Math.min(from + pageSize, maxTotal);
 
     // For each node, query all its indices in one request
     const searchPromises = Object.entries(indicesByNode).map(async ([node, indices]) => {
@@ -1773,17 +1781,16 @@ app.get("/api/search", async (req, res) => {
         const shouldQueries = [
           { match: { "raw_line": { query: q, operator: "and" } } },
           { match: { "raw_line.autocomplete": { query: q } } },
-          // Use ngram subfield for fast substring search
           { match: { "raw_line.ngram": { query: q } } }
         ];
         const response = await es.search({
           index: indices,
           track_total_hits: true,
-          from,
-          size: pageSize,
+          from: 0, // Always fetch from 0 for merging
+          size: fetchSize,
           body: {
             _source: ["raw_line"],
-            sort: ["_doc"],
+            sort: ["_score"],
             query: {
               bool: {
                 should: shouldQueries,
@@ -1792,7 +1799,6 @@ app.get("/api/search", async (req, res) => {
             },
           }
         });
-        esAvailable = true;
         const indexResults = response.hits.hits.map((hit) => {
           const parsedAccount = parser.parseLineForDisplay(hit._source.raw_line);
           if (isAdmin) {
@@ -1802,6 +1808,7 @@ app.get("/api/search", async (req, res) => {
               raw_line: hit._source.raw_line,
               _index: hit._index,
               node,
+              _score: hit._score || 0,
             };
           } else {
             const maskedAccount = applyMaskingForPublicSearch(parsedAccount, config);
@@ -1810,63 +1817,34 @@ app.get("/api/search", async (req, res) => {
               ...maskedAccount,
               _index: hit._index,
               node,
+              _score: hit._score || 0,
             };
           }
         });
-        searchLog.push({ node, indices, count: indexResults.length });
         searchedIndices.push(...indices.map(idx => ({ node, index: idx })));
         totalCount += response.hits.total && response.hits.total.value ? response.hits.total.value : 0;
         allResults.push(...indexResults);
         return null;
       } catch (indexError) {
-        console.error(`Error searching ${node}/${indices}:`, indexError.message);
-        searchLog.push({ node, indices, error: indexError.message });
         nodeWarnings.push({ node, indices, error: indexError.message });
         return null;
       }
     });
     await Promise.all(searchPromises);
 
-    // Log which nodes/indices were searched and how many results
-    console.log("[SEARCH LOG]", searchLog);
-
-    // If no ES available
-    if (!esAvailable) {
-      return res.json({
-        results: [],
-        total: 0,
-        searchIndices: [],
-        message: "Elasticsearch not available",
-        time_ms: Date.now() - startTime,
-        warnings: nodeWarnings
-      });
-    }
-    // If there are no results at all
-    if (allResults.length === 0) {
-      return res.json({
-        results: [],
-        total: 0,
-        searchIndices: searchedIndices,
-        message: nodeWarnings.length > 0 ? "All nodes timed out or failed" : "No results found",
-        time_ms: Date.now() - startTime,
-        warnings: nodeWarnings.length > 0 ? nodeWarnings : undefined
-      });
-    }
-    // If there are results in total, but this page is empty (e.g., page out of range)
-    if (allResults.length === 0 && totalCount > 0) {
-      return res.json({
-        results: [],
-        total: totalCount,
-        searchIndices: searchedIndices,
-        page: pageNum,
-        size: pageSize,
-        time_ms: Date.now() - startTime
-      });
-    }
+    // After collecting allResults and totalCount:
+    // Enforce maxTotal on total and results
+    let trimmedTotal = Math.min(totalCount, maxTotal);
+    // Sort allResults by _score (descending)
+    allResults.sort((a, b) => b._score - a._score);
+    // Only consider up to maxTotal results
+    const limitedResults = allResults.slice(0, maxTotal);
+    // Paginate: slice the results for the requested page
+    const pagedResults = limitedResults.slice(from, from + pageSize);
     const executionTime = Date.now() - startTime;
     res.json({
-      results: allResults,
-      total: totalCount,
+      results: pagedResults.map(({ _score, ...rest }) => rest), // Remove _score from output
+      total: trimmedTotal,
       searchIndices: searchedIndices,
       page: pageNum,
       size: pageSize,

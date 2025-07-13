@@ -320,8 +320,8 @@ export default function HomePage() {
   };
 
   // Add max results selection
-  const maxResultsOptions = [20, 50, 100, 500, 1000];
-  const maxTotalResultsOptions = [100, 500, 1000, 5000, 10000]; // New options for max total
+  const maxResultsOptions = [10,20, 50, 100, 500, 1000];
+  const maxTotalResultsOptions = [10,100, 500, 1000, 5000, 10000]; // New options for max total
 
   // Add handler for max results change
   const handleMaxResultsChange = (e) => {
