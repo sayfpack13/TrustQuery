@@ -1767,9 +1767,7 @@ function isAdminRequest(req) {
 app.get("/api/search", async (req, res) => {
   try {
     const { q, page = 1 } = req.query;
-    // Accept both 'size' and 'itemsPerPage' for per-page size
     const pageSize = parseInt(req.query.size || req.query.itemsPerPage) || 20;
-    // Accept both 'max' and 'maxTotalResults' for global cap
     const maxTotal = parseInt(req.query.max || req.query.maxTotalResults) || 10000;
     const pageNum = parseInt(page) || 1;
     const from = (pageNum - 1) * pageSize;
@@ -1781,12 +1779,6 @@ app.get("/api/search", async (req, res) => {
     if (!q || !q.trim()) {
       return res.status(400).json({ error: "Search query is required" });
     }
-
-    // Prepare search params
-    // const pageSize = parseInt(itemsPerPage) || 20;
-    // const pageNum = parseInt(page) || 1;
-    // const maxTotal = (maxTotalResults && !isNaN(parseInt(maxTotalResults))) ? parseInt(maxTotalResults) : 10000;
-    // const from = (pageNum - 1) * pageSize;
 
     // Build all {node, index} pairs from all running nodes that are reachable
     const { isNodeRunning } = require("./src/elasticsearch/node-utils");
@@ -1824,8 +1816,6 @@ app.get("/api/search", async (req, res) => {
       indicesByNode[node].push(index);
     }
 
-    // Calculate how many results to fetch from each node
-    // To ensure we can fill the requested page, fetch (from + pageSize) from each node, but cap at maxTotal
     const fetchSize = Math.min(from + pageSize, maxTotal);
 
     // For each node, query all its indices in one request
@@ -1845,12 +1835,7 @@ app.get("/api/search", async (req, res) => {
       }
       const es = clientsCache[nodeUrl];
       try {
-        // Compose query: match, autocomplete, and ngram for substring search
-        const shouldQueries = [
-          { match: { "raw_line": { query: q, operator: "and" } } },
-          { match: { "raw_line.autocomplete": { query: q } } },
-          { match: { "raw_line.ngram": { query: q } } }
-        ];
+        // Use wildcard query for substring search
         const response = await es.search({
           index: indices,
           track_total_hits: true,
@@ -1860,11 +1845,13 @@ app.get("/api/search", async (req, res) => {
             _source: ["raw_line"],
             sort: ["_score"],
             query: {
-              bool: {
-                should: shouldQueries,
-                minimum_should_match: 1,
-              },
-            },
+              wildcard: {
+                raw_line: {
+                  value: `*${q}*`,
+                  case_insensitive: true
+                }
+              }
+            }
           }
         });
         const indexResults = response.hits.hits.map((hit) => {
@@ -1901,17 +1888,13 @@ app.get("/api/search", async (req, res) => {
     await Promise.all(searchPromises);
 
     // After collecting allResults and totalCount:
-    // Enforce maxTotal on total and results
     let trimmedTotal = Math.min(totalCount, maxTotal);
-    // Sort allResults by _score (descending)
     allResults.sort((a, b) => b._score - a._score);
-    // Only consider up to maxTotal results
     const limitedResults = allResults.slice(0, maxTotal);
-    // Paginate: slice the results for the requested page
     const pagedResults = limitedResults.slice(from, from + pageSize);
     const executionTime = Date.now() - startTime;
     res.json({
-      results: pagedResults.map(({ _score, ...rest }) => rest), // Remove _score from output
+      results: pagedResults.map(({ _score, ...rest }) => rest),
       total: trimmedTotal,
       searchIndices: searchedIndices,
       page: pageNum,

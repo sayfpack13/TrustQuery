@@ -113,35 +113,15 @@ function createIndexMapping(shards = 1, replicas = 0) {
     settings: {
       number_of_shards: shards,
       number_of_replicas: replicas,
-      max_ngram_diff: 10, // Required for ngram min_gram: 4, max_gram: 10
-      analysis: {
-        analyzer: {
-          ngram_analyzer: {
-            tokenizer: "ngram_tokenizer",
-            filter: ["lowercase"],
-          },
-        },
-        tokenizer: {
-          ngram_tokenizer: {
-            type: "ngram",
-            min_gram: 4,   // Optimized for performance
-            max_gram: 10,  // Allows longer substrings
-          },
-        },
-      },
     },
     mappings: {
       dynamic: "strict",
       properties: {
         raw_line: {
-          type: "text",
-          fields: {
-            ngram: { type: "text", analyzer: "ngram_analyzer", search_analyzer: "ngram_analyzer" },
-            keyword: { type: "keyword" }
-          }
-        },
-      },
-    },
+          type: "wildcard"
+        }
+      }
+    }
   };
 }
 
