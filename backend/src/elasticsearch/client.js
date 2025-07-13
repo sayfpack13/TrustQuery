@@ -113,9 +113,6 @@ function createIndexMapping(shards = 1, replicas = 0) {
     settings: {
       number_of_shards: shards,
       number_of_replicas: replicas,
-      index: {
-        max_ngram_diff: 5
-      },
       analysis: {
         analyzer: {
           ngram_analyzer: {
@@ -126,8 +123,8 @@ function createIndexMapping(shards = 1, replicas = 0) {
         tokenizer: {
           ngram_tokenizer: {
             type: "ngram",
-            min_gram: 3,
-            max_gram: 8,
+            min_gram: 4,   // Optimized for performance
+            max_gram: 10,  // Allows longer substrings
           },
         },
       },
