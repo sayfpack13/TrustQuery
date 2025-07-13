@@ -29,7 +29,7 @@ export default function HomePage() {
   const [totalCollectedData, setTotalCollectedData] = useState(0);
   const [searchedIndicesForTotal, setSearchedIndicesForTotal] = useState([]);
   const [searchMessage, setSearchMessage] = useState("");
-  const [maxTotalResults, setMaxTotalResults] = useState(1000); // New state for max total results
+  const [maxTotalResults, setMaxTotalResults] = useState(100); // New state for max total results
 
   // Sound hooks
 

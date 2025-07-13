@@ -24,8 +24,9 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
+    "inject-sw-version": "node scripts/inject-sw-version.js",
+    "start": "npm run inject-sw-version && react-scripts start",
+    "build": "npm run inject-sw-version && react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },

@@ -17,38 +17,6 @@ import useSound from "./components/useSound";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCircleNotch, faPlay } from "@fortawesome/free-solid-svg-icons";
 
-const preloadResources = (resources) => {
-  const promises = resources.map((resource) => {
-    return new Promise((resolve, reject) => {
-      if (resource.endsWith(".mp3")) {
-        const audio = new Audio();
-        audio.src = resource;
-        audio.oncanplaythrough = () => resolve(resource);
-        audio.onerror = (e) => reject({ resource, error: e });
-      } else if (
-        resource.endsWith(".gif") ||
-        resource.endsWith(".png") ||
-        resource.endsWith(".svg")
-      ) {
-        const img = new Image();
-        img.src = resource;
-        img.onload = () => resolve(resource);
-        img.onerror = (e) => reject({ resource, error: e });
-      } else {
-        // For other file types, use fetch
-        fetch(resource)
-          .then((res) => {
-            if (!res.ok) throw new Error(`Failed to fetch ${resource}`);
-            return res.blob();
-          })
-          .then(() => resolve(resource))
-          .catch((error) => reject({ resource, error }));
-      }
-    });
-  });
-  return Promise.all(promises);
-};
-
 export default function App() {
   const [token, setToken] = useState(null);
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
@@ -80,19 +48,7 @@ export default function App() {
       setCheckingToken(false);
     };
 
-    const resourcesToLoad = [
-      "/sounds/startup.mp3",
-      "/sounds/terminator.mp3",
-      "/images/terminator.gif",
-      "/logo.svg",
-    ];
-
-    Promise.all([
-      tokenValidation(),
-      preloadResources(resourcesToLoad).catch((err) =>
-        console.error("Resource loading failed:", err)
-      ),
-    ]).finally(() => {
+    tokenValidation().finally(() => {
       setIsLoading(false);
     });
   }, []);
