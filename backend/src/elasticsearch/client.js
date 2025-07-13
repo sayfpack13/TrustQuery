@@ -113,6 +113,9 @@ function createIndexMapping(shards = 1, replicas = 0) {
     settings: {
       number_of_shards: shards,
       number_of_replicas: replicas,
+      index: {
+        max_ngram_diff: 5
+      },
       analysis: {
         analyzer: {
           ngram_analyzer: {
