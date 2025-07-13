@@ -125,12 +125,21 @@ function createIndexMapping(shards = 1, replicas = 0) {
             tokenizer: "standard",
             filter: ["lowercase"],
           },
+          ngram_analyzer: {
+            tokenizer: "ngram_tokenizer",
+            filter: ["lowercase"],
+          },
         },
         tokenizer: {
           autocomplete_tokenizer: {
             type: "edge_ngram",
             min_gram: 2,
             max_gram: 10,
+          },
+          ngram_tokenizer: {
+            type: "ngram",
+            min_gram: 3,
+            max_gram: 15,
           },
         },
       },
@@ -145,6 +154,10 @@ function createIndexMapping(shards = 1, replicas = 0) {
             autocomplete: {
               type: "text",
               analyzer: "autocomplete_analyzer",
+            },
+            ngram: {
+              type: "text",
+              analyzer: "ngram_analyzer",
             },
           },
         },

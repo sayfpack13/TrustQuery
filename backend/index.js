@@ -1766,29 +1766,17 @@ app.get("/api/search", async (req, res) => {
       return res.status(400).json({ error: "Search query is required" });
     }
 
-    // Remove per-node and global result limits for full merge
-    // For logging
-    const searchLog = [];
-    // Helper to check if 'raw_line.keyword' exists in mapping
-    async function hasKeywordMapping(es, index) {
-      try {
-        const mapping = await es.indices.getMapping({ index });
-        const props = mapping[index]?.mappings?.properties || mapping[Object.keys(mapping)[0]]?.mappings?.properties;
-        return props && props.raw_line && props.raw_line.fields && props.raw_line.fields.keyword;
-      } catch (e) {
-        return false;
-      }
-    }
-    // Prepare client instances (reuse clients for the same node)
-    const clientsCache = {};
-    let esAvailable = false;
-    const nodeWarnings = [];
+    // Prepare search params
+    let pageSize = parseInt(size) || 20;
+    let pageNum = parseInt(page) || 1;
+    let maxTotal = (max && !isNaN(parseInt(max))) ? parseInt(max) : 10000;
+    const from = (pageNum - 1) * pageSize;
+
     // Build all {node, index} pairs from all running nodes that are reachable (fast TCP check)
     const { isNodeRunning } = require("./src/elasticsearch/node-utils");
     const runningNodeIndexPairs = [];
     for (const [nodeName, nodeData] of Object.entries(nodeMetadata)) {
       if (nodeData.status !== "running" || !Array.isArray(nodeData.indices)) continue;
-      // Fast liveness check (TCP port only, fastMode)
       try {
         const alive = await isNodeRunning(nodeName, { fastMode: true });
         if (!alive) continue;
@@ -1807,14 +1795,23 @@ app.get("/api/search", async (req, res) => {
         message: "No online nodes or indices available for search.",
       });
     }
-    // Calculate per-node max size
-    let maxTotal = (max && !isNaN(parseInt(max))) ? parseInt(max) : 10000;
-    const uniqueNodes = [...new Set(runningNodeIndexPairs.map(pair => pair.node))];
-    const numNodes = uniqueNodes.length || 1;
-    const perNodeLimit = Math.max(1, Math.ceil(maxTotal / numNodes));
-    // For logging
-    const searchPromises = runningNodeIndexPairs.map(async ({ node, index }) => {
-      if (!node || !index) return null;
+
+    // Group indices by node for efficient querying
+    const clientsCache = {};
+    const searchLog = [];
+    let esAvailable = false;
+    const nodeWarnings = [];
+    let totalCount = 0;
+    let allResults = [];
+    let searchedIndices = [];
+    const indicesByNode = {};
+    for (const { node, index } of runningNodeIndexPairs) {
+      if (!indicesByNode[node]) indicesByNode[node] = [];
+      indicesByNode[node].push(index);
+    }
+
+    // For each node, query all its indices in one request
+    const searchPromises = Object.entries(indicesByNode).map(async ([node, indices]) => {
       let nodeUrl = nodeMetadata[node]?.nodeUrl;
       if (!nodeUrl && node.startsWith("http")) nodeUrl = node;
       if (!nodeUrl) nodeUrl = `http://localhost:9200`;
@@ -1826,50 +1823,32 @@ app.get("/api/search", async (req, res) => {
           sniffOnStart: false,
           sniffOnConnectionFault: false,
           maxRetries: 1
-          // requestTimeout removed for unlimited wait
         });
       }
       const es = clientsCache[nodeUrl];
       try {
-        // Check mapping for keyword field
-        const hasKeyword = await hasKeywordMapping(es, index);
-        let queryShould = [];
-        // Enhanced: Add wildcard and fuzzy for single-word queries
-        const isSingleWord = !q.includes(" ");
-        if (hasKeyword) {
-          queryShould = [
-            { term: { "raw_line.keyword": q } },
-            { match: { "raw_line": { query: q, operator: "and" } } }
-          ];
-        } else {
-          queryShould = [
-            { match: { "raw_line": { query: q, operator: "and" } } }
-          ];
-        }
-        // Add fast partial match using autocomplete subfield
-        if (isSingleWord && q.length >= 2) {
-          queryShould.push({ match: { "raw_line.autocomplete": { query: q } } });
-        }
-        // Determine per-node size limit
-        let searchSize = perNodeLimit;
-        if (size === 'all') {
-          searchSize = 100000000; // effectively unlimited, but ES may cap
-        }
+        // Compose query: match, autocomplete, and ngram for substring search
+        const shouldQueries = [
+          { match: { "raw_line": { query: q, operator: "and" } } },
+          { match: { "raw_line.autocomplete": { query: q } } },
+          // Use ngram subfield for fast substring search
+          { match: { "raw_line.ngram": { query: q } } }
+        ];
         const response = await es.search({
-          index,
+          index: indices,
           track_total_hits: true,
-          size: searchSize,
+          from,
+          size: pageSize,
           body: {
             _source: ["raw_line"],
             sort: ["_doc"],
             query: {
               bool: {
-                should: queryShould,
+                should: shouldQueries,
                 minimum_should_match: 1,
               },
             },
           }
-          // timeout removed for unlimited wait
         });
         esAvailable = true;
         const indexResults = response.hits.hits.map((hit) => {
@@ -1892,46 +1871,24 @@ app.get("/api/search", async (req, res) => {
             };
           }
         });
-        searchLog.push({ node, index, count: indexResults.length });
-        return {
-          results: indexResults,
-          total: response.hits.total && response.hits.total.value ? response.hits.total.value : 0,
-          index,
-          node
-        };
+        searchLog.push({ node, indices, count: indexResults.length });
+        searchedIndices.push(...indices.map(idx => ({ node, index: idx })));
+        totalCount += response.hits.total && response.hits.total.value ? response.hits.total.value : 0;
+        allResults.push(...indexResults);
+        return null;
       } catch (indexError) {
-        console.error(`Error searching ${node}/${index}:`, indexError.message);
-        searchLog.push({ node, index, error: indexError.message });
-        nodeWarnings.push({ node, index, error: indexError.message });
+        console.error(`Error searching ${node}/${indices}:`, indexError.message);
+        searchLog.push({ node, indices, error: indexError.message });
+        nodeWarnings.push({ node, indices, error: indexError.message });
         return null;
       }
     });
-    const searchResponses = await Promise.all(searchPromises);
-    let totalCount = 0;
-    const allResults = [];
-    const searchedIndices = [];
-    searchResponses.filter(Boolean).forEach(result => {
-      if (result && result.results) {
-        allResults.push(...result.results);
-        totalCount += result.total || 0;
-        searchedIndices.push({ node: result.node, index: result.index });
-      }
-    });
+    await Promise.all(searchPromises);
+
     // Log which nodes/indices were searched and how many results
     console.log("[SEARCH LOG]", searchLog);
-    // Sort all results by id (or customize as needed)
-    allResults.sort((a, b) => a.id.localeCompare(b.id));
-    // Limit total results to 'max' before paginating
-    const limitedResults = allResults.slice(0, maxTotal);
-    // Paginate in memory (shallow only)
-    let pageSize;
-    if (size === 'all') {
-      pageSize = limitedResults.length;
-    } else {
-      pageSize = parseInt(size) || 10;
-    }
-    const from = (parseInt(page) - 1) * pageSize;
-    const paginatedResults = limitedResults.slice(from, from + pageSize);
+
+    // If no ES available
     if (!esAvailable) {
       return res.json({
         results: [],
@@ -1954,22 +1911,22 @@ app.get("/api/search", async (req, res) => {
       });
     }
     // If there are results in total, but this page is empty (e.g., page out of range)
-    if (paginatedResults.length === 0 && limitedResults.length > 0) {
+    if (allResults.length === 0 && totalCount > 0) {
       return res.json({
         results: [],
-        total: limitedResults.length,
+        total: totalCount,
         searchIndices: searchedIndices,
-        page: parseInt(page),
+        page: pageNum,
         size: pageSize,
         time_ms: Date.now() - startTime
       });
     }
     const executionTime = Date.now() - startTime;
     res.json({
-      results: paginatedResults,
-      total: limitedResults.length,
+      results: allResults,
+      total: totalCount,
       searchIndices: searchedIndices,
-      page: parseInt(page),
+      page: pageNum,
       size: pageSize,
       time_ms: executionTime,
       warnings: nodeWarnings.length > 0 ? nodeWarnings : undefined
