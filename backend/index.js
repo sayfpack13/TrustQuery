@@ -1834,6 +1834,8 @@ app.get("/api/search", async (req, res) => {
         // Check mapping for keyword field
         const hasKeyword = await hasKeywordMapping(es, index);
         let queryShould = [];
+        // Enhanced: Add wildcard and fuzzy for single-word queries
+        const isSingleWord = !q.includes(" ");
         if (hasKeyword) {
           queryShould = [
             { term: { "raw_line.keyword": q } },
@@ -1843,6 +1845,10 @@ app.get("/api/search", async (req, res) => {
           queryShould = [
             { match: { "raw_line": { query: q, operator: "and" } } }
           ];
+        }
+        // Add fast partial match using autocomplete subfield
+        if (isSingleWord && q.length >= 2) {
+          queryShould.push({ match: { "raw_line.autocomplete": { query: q } } });
         }
         // Determine per-node size limit
         let searchSize = perNodeLimit;
