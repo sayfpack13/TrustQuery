@@ -43,22 +43,27 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).then((response) => {
-        // Only cache successful responses
-        if (!response || response.status !== 200 || response.type !== 'basic') {
-          return response;
+  const url = new URL(event.request.url);
+  // Only cache and respond for files explicitly listed in FILES_TO_CACHE
+  if (FILES_TO_CACHE.includes(url.pathname)) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
-        const responseToCache = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
+        return fetch(event.request).then((response) => {
+          // Only cache successful responses
+          if (!response || response.status !== 200 || response.type !== 'basic') {
+            return response;
+          }
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+          return response;
         });
-        return response;
-      });
-    })
-  );
+      })
+    );
+  }
+  // For all other requests (e.g., API, dynamic), just fetch from network
 }); 

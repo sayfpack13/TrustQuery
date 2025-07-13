@@ -247,17 +247,79 @@ app.delete("/api/admin/pending-files/:filename", verifyJwt, async (req, res) => 
   })();
 });
 
-// Parse all .txt files in the unparsed directory with accurate progress
+// Shared helper for parsing and indexing files
+async function parseAndIndexFiles({ files, parseTargetIndex, parseTargetNode, batchSize, onProgress, onFileDone, taskId }) {
+  // Resolve ES client
+  let parseES = getCurrentES();
+  let resolvedNode = parseTargetNode || getConfig("writeNode");
+  if (resolvedNode) {
+    const config = getConfig();
+    const nodeMetadata = config.nodeMetadata || {};
+    let nodeUrl = nodeMetadata[resolvedNode]?.nodeUrl;
+    if (!nodeUrl && resolvedNode.startsWith("http")) {
+      nodeUrl = resolvedNode;
+    }
+    if (nodeUrl) {
+      const { Client } = require("@elastic/elasticsearch");
+      parseES = new Client({ node: nodeUrl });
+      resolvedNode = nodeUrl;
+    }
+  }
+  // Ensure index exists with correct mapping
+  const indexExists = await parseES.indices.exists({ index: parseTargetIndex });
+  if (!indexExists) {
+    await parseES.indices.create({
+      index: parseTargetIndex,
+      body: createIndexMapping(),
+    });
+  }
+  // Parse and index each file
+  let cumulativeProcessedLines = 0;
+  for (const { filePath, parsedFilePath, totalLines } of files) {
+    await parser.parseFile(
+      filePath,
+      async (batch) => {
+        const bulkBody = batch.flatMap((doc) => [{ index: { _index: parseTargetIndex } }, { raw_line: doc }]);
+        if (bulkBody.length > 0) {
+          if (parseES && parseES.bulk) {
+            try {
+              await parseES.bulk({ refresh: false, body: bulkBody });
+            } catch (err) {
+              console.error("Bulk indexing error:", err);
+            }
+          } else {
+            console.warn("Elasticsearch client not available for bulk indexing.");
+          }
+        }
+      },
+      batchSize,
+      (processedLinesInCurrentFile) => {
+        if (onProgress) {
+          onProgress({
+            filePath,
+            processed: processedLinesInCurrentFile,
+            total: totalLines,
+            cumulative: cumulativeProcessedLines + processedLinesInCurrentFile,
+          });
+        }
+      }
+    );
+    cumulativeProcessedLines += totalLines;
+    await fs.rename(filePath, parsedFilePath);
+    if (onFileDone) onFileDone({ filePath, parsedFilePath, totalLines });
+  }
+  return cumulativeProcessedLines;
+}
+
+// Refactored /api/admin/parse-all-unparsed
 app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
   const { targetIndex, targetNode } = req.body;
   const taskId = createTask("Parse All Unparsed Files", "initializing");
   res.json({ taskId });
-
   (async () => {
     try {
       const files = await fs.readdir(UNPARSED_DIR);
       const txtFiles = files.filter((file) => path.extname(file).toLowerCase() === ".txt");
-
       if (txtFiles.length === 0) {
         updateTask(taskId, {
           status: "completed",
@@ -268,35 +330,16 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
         });
         return;
       }
-
-      // === Step 1: Calculate grand total lines across all files ===
+      // Count lines in all files
       let grandTotalLines = 0;
-      updateTask(taskId, {
-        status: "counting lines",
-        message: `Counting lines in ${txtFiles.length} files...`,
-      });
+      const fileObjs = [];
       for (const filename of txtFiles) {
         const filePath = path.join(UNPARSED_DIR, filename);
-        try {
-          const linesInFile = await parser.countLines(filePath);
-          grandTotalLines += linesInFile;
-          // Update total in task as we count, providing early feedback
-          updateTask(taskId, {
-            total: grandTotalLines,
-            message: `Counting lines: ${linesInFile} in ${filename}. Total: ${grandTotalLines} lines found.`,
-          });
-        } catch (countError) {
-          console.warn(`Task ${taskId}: Could not count lines for ${filename}:`, countError.message);
-          // If a file causes an error during counting, you might want to skip it or mark the task as error
-          updateTask(taskId, {
-            status: "error",
-            error: `Error counting lines in ${filename}: ${countError.message}`,
-            completed: true, // Mark this specific file counting as an error
-          });
-          return; // Abort overall task if counting fails
-        }
+        const parsedFilePath = path.join(PARSED_DIR, filename);
+        const totalLines = await parser.countLines(filePath);
+        grandTotalLines += totalLines;
+        fileObjs.push({ filePath, parsedFilePath, totalLines });
       }
-
       if (grandTotalLines === 0) {
         updateTask(taskId, {
           status: "completed",
@@ -307,103 +350,32 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
         });
         return;
       }
-
-      // Determine target index and node for this parsing operation
-      const parseTargetIndex = targetIndex || getSelectedIndex();
-      let parseTargetNode = targetNode || getConfig("writeNode");
-      let parseES = getCurrentES();
-      if (parseTargetNode) {
-        // If parseTargetNode is a node name, resolve to URL
-        const config = getConfig();
-        const nodeMetadata = config.nodeMetadata || {};
-        let nodeUrl = nodeMetadata[parseTargetNode]?.nodeUrl;
-        if (!nodeUrl && parseTargetNode.startsWith("http")) {
-          nodeUrl = parseTargetNode;
-        }
-        if (nodeUrl) {
-          const { Client } = require("@elastic/elasticsearch");
-          parseES = new Client({ node: nodeUrl });
-          parseTargetNode = nodeUrl;
-        }
-      }
-      // Ensure index exists with correct mapping
-      const indexExists = await parseES.indices.exists({ index: parseTargetIndex });
-      if (!indexExists) {
-        await parseES.indices.create({
-          index: parseTargetIndex,
-          body: createIndexMapping(),
-        });
-      }
-
       updateTask(taskId, {
         total: grandTotalLines,
-        message: `Found ${grandTotalLines} lines across ${txtFiles.length} files. Parsing to index '${parseTargetIndex}' via node '${parseTargetNode}'...`,
+        message: `Found ${grandTotalLines} lines across ${txtFiles.length} files. Parsing to index '${targetIndex || getSelectedIndex()}' via node '${targetNode || getConfig("writeNode")}'...`,
       });
-
-      let cumulativeProcessedLines = 0;
-      let filesParsedCount = 0;
-
-      // === Step 2: Start parsing each file ===
-      for (const filename of txtFiles) {
-        const filePath = path.join(UNPARSED_DIR, filename);
-        const parsedFilePath = path.join(PARSED_DIR, filename);
-
-        try {
-          // This call needs to get the actual lines processed for *this* file
-          // The parser.parseFile's progressCallback will update the cumulative progress
-          await parser.parseFile(
-            filePath,
-            async (batch) => {
-              const bulkBody = batch.flatMap((doc) => [{ index: { _index: parseTargetIndex } }, { raw_line: doc }]);
-
-              if (bulkBody.length > 0) {
-                if (parseES && parseES.bulk) {
-                  try {
-                    await parseES.bulk({ refresh: false, body: bulkBody });
-                  } catch (err) {
-                    console.error("Bulk indexing error:", err);
-                  }
-                } else {
-                  console.warn("Elasticsearch client not available for bulk indexing.");
-                }
-              }
-            },
-            getConfig("batchSize"),
-            (processedLinesInCurrentFile) => {
-              // Update the overall task's progress with the cumulative lines processed so far
-              const currentCumulativeProgress = cumulativeProcessedLines + processedLinesInCurrentFile;
-              updateTask(taskId, {
-                status: "processing files",
-                progress: currentCumulativeProgress, // Update overall progress
-                message: `Processing file ${filename}: ${processedLinesInCurrentFile} lines processed. Overall: ${currentCumulativeProgress}/${grandTotalLines} lines.`,
-              });
-            }
-          );
-
-          // After a file is completely parsed, ensure its full line count is added to cumulative total
-          // The `parseFile` promise resolves with the total processed lines for that file
-          const totalLinesProcessedForFile = await parser.countLines(filePath); // Recount to be sure, or modify parseFile to return this
-          cumulativeProcessedLines += totalLinesProcessedForFile;
-
-          filesParsedCount++;
-          await fs.rename(filePath, parsedFilePath); // Move file to parsed directory
-        } catch (fileError) {
-          console.error(`Task ${taskId}: Error processing file ${filename}:`, fileError);
-          updateTask(taskId, {
-            status: "error",
-            error: `Error processing ${filename}: ${fileError.message}`,
-            completed: true, // Mark task as completed with error
-          });
-          // Depending on requirements, you might want to stop the whole process or continue with other files
-          break; // For simplicity, stopping on first file error
-        }
-      }
-
+      let lastProgress = 0;
+      await parseAndIndexFiles({
+        files: fileObjs,
+        parseTargetIndex: targetIndex || getSelectedIndex(),
+        parseTargetNode: targetNode || getConfig("writeNode"),
+        batchSize: getConfig("batchSize"),
+        onProgress: ({ cumulative }) => {
+          if (cumulative !== lastProgress) {
+            updateTask(taskId, {
+              status: "processing files",
+              progress: cumulative,
+              message: `Processing... ${cumulative}/${grandTotalLines} lines.`,
+            });
+            lastProgress = cumulative;
+          }
+        },
+      });
       updateTask(taskId, {
         status: "completed",
-        progress: cumulativeProcessedLines, // Final progress should match grandTotalLines if successful
+        progress: grandTotalLines,
         completed: true,
-        message: `Successfully parsed and moved ${filesParsedCount} out of ${txtFiles.length} files. Total lines processed: ${cumulativeProcessedLines}.`,
+        message: `Successfully parsed and moved ${txtFiles.length} files. Total lines processed: ${grandTotalLines}.`,
       });
       console.log(`Task ${taskId} completed.`);
     } catch (error) {
@@ -469,7 +441,7 @@ app.post("/api/admin/upload", verifyJwt, upload.array("files"), async (req, res)
   }
 });
 
-// PARSE endpoint (single file parsing with accurate progress)
+// Refactored /api/admin/parse/:filename
 app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
   const { filename } = req.params;
   const { targetIndex, targetNode } = req.body;
@@ -486,81 +458,34 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
   } catch (err) {
     return res.status(404).json({ error: "File not found in unparsed directory." });
   }
-  const taskId = createTask("Parse File", "initializing", filename); // Pass filename to task
+  const taskId = createTask("Parse File", "initializing", filename);
   res.json({ taskId });
   (async () => {
     try {
-      // Determine target index and node for this parsing operation
-      const parseTargetIndex = targetIndex || getSelectedIndex();
-      let parseTargetNode = targetNode || getConfig("writeNode");
-      let parseES = getCurrentES();
-      if (parseTargetNode) {
-        // If parseTargetNode is a node name, resolve to URL
-        const config = getConfig();
-        const nodeMetadata = config.nodeMetadata || {};
-        let nodeUrl = nodeMetadata[parseTargetNode]?.nodeUrl;
-        if (!nodeUrl && parseTargetNode.startsWith("http")) {
-          nodeUrl = parseTargetNode;
-        }
-        if (nodeUrl) {
-          const { Client } = require("@elastic/elasticsearch");
-          parseES = new Client({ node: nodeUrl });
-          parseTargetNode = nodeUrl;
-        }
-      }
-      // Ensure index exists with correct mapping
-      const indexExists = await parseES.indices.exists({ index: parseTargetIndex });
-      if (!indexExists) {
-        await parseES.indices.create({
-          index: parseTargetIndex,
-          body: createIndexMapping(),
-        });
-      }
-
-      // === Get total lines for this file once at the beginning ===
-      const totalLinesInFile = await parser.countLines(filePath);
+      const totalLines = await parser.countLines(filePath);
       updateTask(taskId, {
-        total: totalLinesInFile, // Set the fixed total for this file
-        message: `Found ${totalLinesInFile} lines in ${filename}. Parsing to index '${parseTargetIndex}' via node '${parseTargetNode}'...`,
+        total: totalLines,
+        message: `Found ${totalLines} lines in ${filename}. Parsing to index '${targetIndex || getSelectedIndex()}' via node '${targetNode || getConfig("writeNode")}'...`,
       });
-
-      await parser.parseFile(
-        filePath,
-        async (batch) => {
-          const bulkBody = batch.flatMap((doc) => [{ index: { _index: parseTargetIndex } }, { raw_line: doc }]);
-
-          if (bulkBody.length > 0) {
-            if (parseES && parseES.bulk) {
-              try {
-                await parseES.bulk({ refresh: false, body: bulkBody });
-              } catch (err) {
-                console.error("Bulk indexing error:", err);
-              }
-            } else {
-              console.warn("Elasticsearch client not available for bulk indexing.");
-            }
-          }
-        },
-        getConfig("batchSize"),
-        (currentProcessedLines) => {
-          // This callback gives real-time progress
+      await parseAndIndexFiles({
+        files: [{ filePath, parsedFilePath, totalLines }],
+        parseTargetIndex: targetIndex || getSelectedIndex(),
+        parseTargetNode: targetNode || getConfig("writeNode"),
+        batchSize: getConfig("batchSize"),
+        onProgress: ({ processed }) => {
           updateTask(taskId, {
             status: "parsing",
-            progress: currentProcessedLines,
-            // 'total' remains fixed from initial count
-            message: `Parsing file: ${currentProcessedLines}/${totalLinesInFile} lines processed...`,
+            progress: processed,
+            message: `Parsing file: ${processed}/${totalLines} lines processed...`,
           });
-        }
-      );
-
-      await fs.rename(filePath, parsedFilePath);
-
+        },
+      });
       updateTask(taskId, {
         status: "completed",
-        progress: totalLinesInFile, // Final progress should match totalLinesInFile if successful
-        total: totalLinesInFile, // Confirm final total
+        progress: totalLines,
+        total: totalLines,
         completed: true,
-        message: `Parsed and indexed ${totalLinesInFile} lines from ${filename}`,
+        message: `Parsed and indexed ${totalLines} lines from ${filename}`,
       });
       console.log(`Task ${taskId} completed successfully.`);
     } catch (error) {

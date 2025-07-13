@@ -115,6 +115,7 @@ function createIndexMapping(shards = 1, replicas = 0) {
     settings: {
       number_of_shards: shards,
       number_of_replicas: replicas,
+      "index.max_ngram_diff": 12,
       analysis: {
         analyzer: {
           autocomplete_analyzer: {
