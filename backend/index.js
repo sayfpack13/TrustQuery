@@ -1445,6 +1445,19 @@ app.delete("/api/indices/:indexName", verifyJwt, async (req, res) => {
       // Delete the index
       await es.indices.delete({ index: indexName });
 
+      // Remove the index from searchIndices in config.json
+      try {
+        const { getConfig, setConfig } = require('./src/config');
+        const searchIndices = getConfig('searchIndices') || [];
+        const filteredIndices = searchIndices.filter(e => e && e.index !== indexName);
+        if (filteredIndices.length !== searchIndices.length) {
+          await setConfig('searchIndices', filteredIndices);
+          console.log(`🗑️ Removed '${indexName}' from searchIndices in config.json`);
+        }
+      } catch (configError) {
+        console.warn(`⚠️ Failed to update searchIndices in config.json after deleting index:`, configError.message);
+      }
+
       // Sync search indices to remove the deleted index from configuration
       try {
         const { syncSearchIndices } = require("./src/cache/indices-cache");
