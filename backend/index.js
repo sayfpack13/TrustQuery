@@ -4,13 +4,11 @@ const express = require("express");
 const fs = require("fs").promises;
 const path = require("path");
 const parser = require("./parser");
-const { Client } = require("@elastic/elasticsearch");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const cors = require("cors");
 const { syncSearchIndices, getCacheFiltered, refreshClusterCache } = require("./src/cache/indices-cache");
 const { createIndexMapping } = require("./src/elasticsearch/client");
-const pLimit = require('p-limit');
 
 // Configuration management
 const { loadConfig: loadCentralizedConfig, getConfig, setConfig } = require("./src/config");
@@ -127,7 +125,7 @@ initializeServer().catch((error) => {
 });
 
 // Import task helpers from the dedicated tasks module
-const { createTask, updateTask, getAllTasks, getTask, cleanupOldTasks } = require("./src/tasks");
+const { createTask, updateTask, getAllTasks, getTask, cleanupOldTasks } = require("./src/utils/task-utils");
 const { verifyJwt } = require("./src/middleware/auth");
 
 // Admin Login endpoint
@@ -249,8 +247,8 @@ app.delete("/api/admin/pending-files/:filename", verifyJwt, async (req, res) => 
 });
 
 // Shared helper for parsing and indexing files
-const pLimit = require('p-limit');
 async function parseAndIndexFiles({ files, parseTargetIndex, parseTargetNode, batchSize, onProgress, onFileDone, taskId }) {
+  const { default: pLimit } = await import('p-limit');
   // Resolve ES client
   let parseES = getCurrentES();
   let resolvedNode = parseTargetNode || getConfig("writeNode");
@@ -1144,7 +1142,7 @@ app.get("/api/admin/tasks/:taskId", verifyJwt, (req, res) => {
 });
 
 // DELETE a specific task (only if completed or errored)
-const tasksStore = require("./src/tasks");
+const tasksStore = require("./src/utils/task-utils");
 app.delete("/api/admin/tasks/:taskId", verifyJwt, (req, res) => {
   const { taskId } = req.params;
   const task = getTask(taskId);

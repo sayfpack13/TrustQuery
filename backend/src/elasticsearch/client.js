@@ -106,8 +106,6 @@ async function isElasticsearchAvailable() {
   }
 }
 
-// Use shared formatBytes utility
-const { formatBytes } = require("../utils/format");
 
 // Helper function to create proper index mapping
 function createIndexMapping(shards = 1, replicas = 0) {
@@ -155,7 +153,6 @@ module.exports = {
   getES: () => es,
   getWriteES: () => esWrite,
   isElasticsearchAvailable,
-  formatBytes,
   createIndexMapping,
   formatIndexName,
 };

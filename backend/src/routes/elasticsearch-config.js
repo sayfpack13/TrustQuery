@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 
 const { getConfig } = require('../config');
-require('../tasks');
 const { verifyJwt } = require('../middleware/auth');
 
 

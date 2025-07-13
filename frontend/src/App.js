@@ -16,6 +16,11 @@ import Disclaimer from "./pages/Disclaimer";
 import useSound from "./components/useSound";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCircleNotch, faPlay } from "@fortawesome/free-solid-svg-icons";
+import ClusterManagement from "./pages/AdminDashboard/components/ClusterManagement";
+import ConfigurationManagement from "./pages/AdminDashboard/components/ConfigurationManagement";
+import FilesManagement from "./pages/AdminDashboard/components/FilesManagement";
+import AccountManagement from "./pages/AdminDashboard/components/AccountManagement";
+import TaskProgress from "./pages/AdminDashboard/components/TaskProgress";
 
 export default function App() {
   const [token, setToken] = useState(null);
@@ -164,12 +169,19 @@ export default function App() {
                 path="/admin"
                 element={
                   token ? (
-                    <AdminDashboard  />
+                    <AdminDashboard />
                   ) : (
                     <Navigate to="/admin/login" replace />
                   )
                 }
-              />
+              >
+                <Route path="cluster" element={<ClusterManagement />} />
+                <Route path="configuration" element={<ConfigurationManagement />} />
+                <Route path="files" element={<FilesManagement />} />
+                <Route path="accounts" element={<AccountManagement />} />
+                <Route path="tasks" element={<TaskProgress />} />
+                <Route index element={<ClusterManagement />} />
+              </Route>
               <Route path="/privacy-policy" element={<PrivacyPolicy />} />
               <Route path="/terms-of-service" element={<TermsOfService />} />
               <Route path="/disclaimer" element={<Disclaimer />} />

@@ -13,6 +13,7 @@ import {
 import LocalNodeManager from "../components/LocalNodeManager";
 import ClusterSetupWizard from "../components/ClusterSetupWizard";
 import { useClusterManagement } from "../hooks/useClusterManagement";
+import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 
 // Import new components
 import { useAdminDashboard } from "./AdminDashboard/hooks/useAdminDashboard";
@@ -20,9 +21,9 @@ import FilesManagement from "./AdminDashboard/components/FilesManagement";
 import ClusterManagement from "./AdminDashboard/components/ClusterManagement";
 import ConfigurationManagement from "./AdminDashboard/components/ConfigurationManagement";
 import AccountManagement from "./AdminDashboard/components/AccountManagement";
-import TaskDetails from "./AdminDashboard/components/TaskDetails";
 import NodeDetailsModal from "./AdminDashboard/components/NodeDetailsModal";
 import buttonStyles from "../components/ButtonStyles";
+import TaskProgress from './AdminDashboard/components/TaskProgress';
 
 // Simple usePrevious implementation
 function usePrevious(value) {
@@ -72,6 +73,8 @@ function pollNodeStatus(nodeName, desiredStatus, clusterManagement, tasksList, m
 const nodeRefreshDebounceRef = { timer: null, nodes: new Set() };
 
 export default function AdminDashboard() {
+  const location = useLocation();
+  const navigate = useNavigate();
   // Track setup completion
   const [setupCompleted, setSetupCompleted] = useState(false);
   
@@ -93,7 +96,25 @@ export default function AdminDashboard() {
   } = useAdminDashboard();
 
   // === Tab Navigation State ===
-  const [activeTab, setActiveTab] = useState("cluster"); // 'files', 'cluster', 'accounts', 'configuration'
+  // Map tab keys to routes
+  const tabRoutes = {
+    cluster: '/admin/cluster',
+    configuration: '/admin/configuration',
+    files: '/admin/files',
+    accounts: '/admin/accounts',
+    tasks: '/admin/tasks',
+  };
+
+  // Determine active tab from route
+  const getTabFromPath = (pathname) => {
+    if (pathname.startsWith('/admin/cluster')) return 'cluster';
+    if (pathname.startsWith('/admin/configuration')) return 'configuration';
+    if (pathname.startsWith('/admin/files')) return 'files';
+    if (pathname.startsWith('/admin/accounts')) return 'accounts';
+    if (pathname.startsWith('/admin/tasks')) return 'tasks';
+    return 'cluster';
+  };
+  const activeTab = getTabFromPath(location.pathname);
 
   // === Advanced Node Configuration State ===
   const [showLocalNodeManager, setShowLocalNodeManager] = useState(false);
@@ -439,58 +460,68 @@ export default function AdminDashboard() {
             {/* Tab Navigation */}
             <div className="mb-8 border-b border-neutral-700">
               <nav className="flex space-x-8">
-                <button
-                  onClick={() => setupCompleted && setActiveTab("cluster")}
+                <Link
+                  to={tabRoutes.cluster}
                   className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${activeTab === "cluster"
                     ? "border-primary text-primary"
                     : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
                     } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
-                  disabled={!setupCompleted}
+                  tabIndex={!setupCompleted ? -1 : 0}
+                  aria-disabled={!setupCompleted}
+                  onClick={e => { if (!setupCompleted) e.preventDefault(); }}
                 >
                   Node Management
-                </button>
-                <button
-                  onClick={() =>
-                    setupCompleted && setActiveTab("configuration")
-                  }
+                </Link>
+                <Link
+                  to={tabRoutes.configuration}
                   className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${activeTab === "configuration"
                     ? "border-primary text-primary"
                     : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
                     } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
-                  disabled={!setupCompleted}
+                  tabIndex={!setupCompleted ? -1 : 0}
+                  aria-disabled={!setupCompleted}
+                  onClick={e => { if (!setupCompleted) e.preventDefault(); }}
                 >
                   Configuration
-                </button>
-                <button
-                  onClick={() => setupCompleted && setActiveTab("files")}
+                </Link>
+                <Link
+                  to={tabRoutes.files}
                   className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${activeTab === "files"
                     ? "border-primary text-primary"
                     : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
                     } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
-                  disabled={!setupCompleted}
+                  tabIndex={!setupCompleted ? -1 : 0}
+                  aria-disabled={!setupCompleted}
+                  onClick={e => { if (!setupCompleted) e.preventDefault(); }}
                 >
                   File Management
-                </button>
-
-                <button
-                  onClick={() => setupCompleted && setActiveTab("accounts")}
+                </Link>
+                <Link
+                  to={tabRoutes.accounts}
                   className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${activeTab === "accounts"
                     ? "border-primary text-primary"
                     : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
                     } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
-                  disabled={!setupCompleted}
+                  tabIndex={!setupCompleted ? -1 : 0}
+                  aria-disabled={!setupCompleted}
+                  onClick={e => { if (!setupCompleted) e.preventDefault(); }}
                 >
                   Account Management
-                </button>
+                </Link>
+                <Link
+                  to={tabRoutes.tasks}
+                  className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 flex items-center justify-center ${activeTab === "tasks"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-neutral-400 hover:text-neutral-300 hover:border-neutral-300"
+                    } ${!setupCompleted ? "opacity-50 cursor-not-allowed" : ""}`}
+                  tabIndex={!setupCompleted ? -1 : 0}
+                  aria-disabled={!setupCompleted}
+                  onClick={e => { if (!setupCompleted) e.preventDefault(); }}
+                >
+                  Task Progress
+                </Link>
               </nav>
             </div>
-
-            {/* Task Details Component */}
-            <TaskDetails
-              tasks={tasksList}
-              removeTask={removeTask}
-              estimateRemainingTime={estimateRemainingTime}
-            />
 
             {/* Main content area */}
             <div className="mt-8">
@@ -517,6 +548,11 @@ export default function AdminDashboard() {
                   setShowSetupWizard={setShowSetupWizard}
                   onRefreshIndices={clusterManagement.fetchLocalNodes}
                 />
+              )}
+
+              {/* Task Progress Tab */}
+              {activeTab === "tasks" && (
+                <TaskProgress />
               )}
             </div>
           </div>
