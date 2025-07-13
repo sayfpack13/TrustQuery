@@ -1,10 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faTimes,
-  faServer,
-  faInfoCircle,
-  faDatabase,
   faPlus,
   faTrash,
   faExclamationTriangle,
@@ -33,7 +30,6 @@ const NodeDetailsModal = React.memo(function NodeDetailsModal({
   // All hooks must be called at the top, before any early returns
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [showCreateIndexForm, setShowCreateIndexForm] = useState(false);
   const [newIndexName, setNewIndexName] = useState("");
   const [newIndexShards, setNewIndexShards] = useState("1");
@@ -650,7 +646,7 @@ const NodeDetailsModal = React.memo(function NodeDetailsModal({
                 >
                   <FontAwesomeIcon
                     icon={faRefresh}
-                    className={`mr-1 ${isRefreshing ? "fa-spin" : ""}`}
+                    className={`mr-1 ${loading ? "fa-spin" : ""}`}
                   />
                   Refresh
                 </button>
@@ -690,7 +686,7 @@ const NodeDetailsModal = React.memo(function NodeDetailsModal({
                         {index["doc.count"]}
                       </td>
                       <td className="py-3 px-6 text-neutral-300">
-                        {index["store.size"]}
+                        {formatBytes(index["store.size"])}
                       </td>
                       <td className="py-3 px-6">
                         <span
@@ -748,6 +744,12 @@ const NodeDetailsModal = React.memo(function NodeDetailsModal({
                 </div>
               )}
             </div>
+          </div>
+        );
+      default:
+        return (
+          <div className="text-center py-8 text-red-500">
+            Unknown tab selected.
           </div>
         );
     }

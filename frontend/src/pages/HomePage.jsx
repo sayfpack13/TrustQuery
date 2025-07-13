@@ -2,8 +2,6 @@ import React, { useState, useEffect, useRef } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faCircleNotch,
-  faChevronDown,
-  faChevronUp,
 } from "@fortawesome/free-solid-svg-icons";
 import SearchResultItem from "../components/SearchResultItem";
 import useSound from "../components/useSound";
@@ -27,7 +25,6 @@ export default function HomePage() {
   const [itemsPerPage, setItemsPerPage] = useState(20);
   const [totalResults, setTotalResults] = useState(0); // State for total collected data
   const [totalCollectedData, setTotalCollectedData] = useState(0);
-  const [searchedIndicesForTotal, setSearchedIndicesForTotal] = useState([]);
   const [searchMessage, setSearchMessage] = useState("");
   const [maxTotalResults, setMaxTotalResults] = useState(100); // New state for max total results
 
@@ -137,11 +134,9 @@ export default function HomePage() {
         }
         const data = await response.json();
         setTotalCollectedData(data.totalAccounts);
-        setSearchedIndicesForTotal(data.searchIndices || []);
       } catch (error) {
         console.error("Error fetching total collected data:", error);
         setTotalCollectedData(0);
-        setSearchedIndicesForTotal([]);
       }
     };
 
