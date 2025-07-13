@@ -14,7 +14,7 @@ const DEFAULT_CONFIG = {
   nodeMetadata: {}, // Store detailed node configuration
 
   // Search and parsing settings
-  batchSize: 1000,
+  batchSize: 10000,
   minVisibleChars: 2,
   maskingRatio: 0.2,
   usernameMaskingRatio: 0.4,

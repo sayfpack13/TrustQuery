@@ -10,6 +10,7 @@ const multer = require("multer");
 const cors = require("cors");
 const { syncSearchIndices, getCacheFiltered, refreshClusterCache } = require("./src/cache/indices-cache");
 const { createIndexMapping } = require("./src/elasticsearch/client");
+const pLimit = require('p-limit');
 
 // Configuration management
 const { loadConfig: loadCentralizedConfig, getConfig, setConfig } = require("./src/config");
@@ -248,6 +249,7 @@ app.delete("/api/admin/pending-files/:filename", verifyJwt, async (req, res) => 
 });
 
 // Shared helper for parsing and indexing files
+const pLimit = require('p-limit');
 async function parseAndIndexFiles({ files, parseTargetIndex, parseTargetNode, batchSize, onProgress, onFileDone, taskId }) {
   // Resolve ES client
   let parseES = getCurrentES();
@@ -273,41 +275,54 @@ async function parseAndIndexFiles({ files, parseTargetIndex, parseTargetNode, ba
       body: createIndexMapping(),
     });
   }
-  // Parse and index each file
+  // Parallel file processing with concurrency limit
+  const concurrency = 4;
+  const limit = pLimit(concurrency);
   let cumulativeProcessedLines = 0;
-  for (const { filePath, parsedFilePath, totalLines } of files) {
-    await parser.parseFile(
-      filePath,
-      async (batch) => {
-        const bulkBody = batch.flatMap((doc) => [{ index: { _index: parseTargetIndex } }, { raw_line: doc }]);
-        if (bulkBody.length > 0) {
-          if (parseES && parseES.bulk) {
-            try {
-              await parseES.bulk({ refresh: false, body: bulkBody });
-            } catch (err) {
-              console.error("Bulk indexing error:", err);
+  let cumulativeLock = Promise.resolve();
+  const updateCumulative = async (delta) => {
+    await cumulativeLock;
+    cumulativeProcessedLines += delta;
+  };
+  await Promise.all(files.map(({ filePath, parsedFilePath, totalLines }) =>
+    limit(async () => {
+      let lastProgress = 0;
+      await parser.parseFile(
+        filePath,
+        async (batch) => {
+          const bulkBody = batch.flatMap((doc) => [{ index: { _index: parseTargetIndex } }, { raw_line: doc }]);
+          if (bulkBody.length > 0) {
+            if (parseES && parseES.bulk) {
+              try {
+                await parseES.bulk({ refresh: false, body: bulkBody });
+              } catch (err) {
+                console.error("Bulk indexing error:", err);
+              }
+            } else {
+              console.warn("Elasticsearch client not available for bulk indexing.");
             }
-          } else {
-            console.warn("Elasticsearch client not available for bulk indexing.");
+          }
+        },
+        batchSize,
+        (processedLinesInCurrentFile) => {
+          const delta = processedLinesInCurrentFile - lastProgress;
+          lastProgress = processedLinesInCurrentFile;
+          if (onProgress) {
+            updateCumulative(delta).then(() => {
+              onProgress({
+                filePath,
+                processed: processedLinesInCurrentFile,
+                total: totalLines,
+                cumulative: cumulativeProcessedLines,
+              });
+            });
           }
         }
-      },
-      batchSize,
-      (processedLinesInCurrentFile) => {
-        if (onProgress) {
-          onProgress({
-            filePath,
-            processed: processedLinesInCurrentFile,
-            total: totalLines,
-            cumulative: cumulativeProcessedLines + processedLinesInCurrentFile,
-          });
-        }
-      }
-    );
-    cumulativeProcessedLines += totalLines;
-    await fs.rename(filePath, parsedFilePath);
-    if (onFileDone) onFileDone({ filePath, parsedFilePath, totalLines });
-  }
+      );
+      await fs.rename(filePath, parsedFilePath);
+      if (onFileDone) onFileDone({ filePath, parsedFilePath, totalLines });
+    })
+  ));
   return cumulativeProcessedLines;
 }
 

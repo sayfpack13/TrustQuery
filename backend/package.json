@@ -27,6 +27,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.1",
     "nodemon": "^3.1.10",
+    "p-limit": "^6.2.0",
     "yaml": "^2.8.0"
   }
 }

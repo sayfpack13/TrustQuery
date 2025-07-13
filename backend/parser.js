@@ -82,16 +82,6 @@ exports.parseFile = async function (
     const processLine = (line) => {
         totalProcessedLines++;
 
-        const cleanLine = line.trim();
-
-        if (cleanLine.includes(' ') && cleanLine.length > 0) {
-          return;
-        }
-
-        if (line.length > MAX_LINE_LENGTH) {
-          return;
-        }
-
         currentBatch.push(line);
         progressCallback(totalProcessedLines);
 

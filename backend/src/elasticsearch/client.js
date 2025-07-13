@@ -118,25 +118,12 @@ function createIndexMapping(shards = 1, replicas = 0) {
       "index.max_ngram_diff": 12,
       analysis: {
         analyzer: {
-          autocomplete_analyzer: {
-            tokenizer: "autocomplete_tokenizer",
-            filter: ["lowercase"],
-          },
-          lowercase_analyzer: {
-            tokenizer: "standard",
-            filter: ["lowercase"],
-          },
           ngram_analyzer: {
             tokenizer: "ngram_tokenizer",
             filter: ["lowercase"],
           },
         },
         tokenizer: {
-          autocomplete_tokenizer: {
-            type: "edge_ngram",
-            min_gram: 2,
-            max_gram: 10,
-          },
           ngram_tokenizer: {
             type: "ngram",
             min_gram: 3,
@@ -149,18 +136,8 @@ function createIndexMapping(shards = 1, replicas = 0) {
       properties: {
         raw_line: {
           type: "text",
-          analyzer: "lowercase_analyzer",
-          fields: {
-            keyword: { type: "keyword" },
-            autocomplete: {
-              type: "text",
-              analyzer: "autocomplete_analyzer",
-            },
-            ngram: {
-              type: "text",
-              analyzer: "ngram_analyzer",
-            },
-          },
+          analyzer: "ngram_analyzer",
+          search_analyzer: "ngram_analyzer"
         },
       },
     },
