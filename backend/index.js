@@ -272,30 +272,6 @@ async function parseAndIndexFiles({ files, parseTargetIndex, parseTargetNode, ba
     throw new Error(`Target index '${parseTargetIndex}' does not exist. Please create it using the admin interface before indexing.`);
   }
 
-  // Tune index settings for fast bulk indexing
-  let originalSettings = null;
-  try {
-    // Get current settings to restore later
-    const settingsResp = await parseES.indices.getSettings({ index: parseTargetIndex });
-    const idxSettings = settingsResp[parseTargetIndex]?.settings?.index || {};
-    originalSettings = {
-      refresh_interval: idxSettings.refresh_interval || '1s',
-      number_of_replicas: idxSettings.number_of_replicas || '1',
-    };
-    // Set for fast bulk
-    await parseES.indices.putSettings({
-      index: parseTargetIndex,
-      body: {
-        index: {
-          refresh_interval: '-1',
-          number_of_replicas: 0,
-        },
-      },
-    });
-  } catch (err) {
-    console.warn('Could not adjust index settings for fast bulk indexing:', err.message);
-  }
-
   // Parallel file processing with concurrency limit
   const concurrency = getConfig("indexConcurrency") || 4;
   const limit = pLimit(concurrency);
@@ -344,24 +320,6 @@ async function parseAndIndexFiles({ files, parseTargetIndex, parseTargetNode, ba
       if (onFileDone) onFileDone({ filePath, parsedFilePath, totalLines });
     })
   ));
-
-  // Restore index settings after bulk
-  if (originalSettings) {
-    try {
-      await parseES.indices.putSettings({
-        index: parseTargetIndex,
-        body: {
-          index: {
-            refresh_interval: originalSettings.refresh_interval,
-            number_of_replicas: originalSettings.number_of_replicas,
-          },
-        },
-      });
-      await parseES.indices.refresh({ index: parseTargetIndex });
-    } catch (err) {
-      console.warn('Could not restore index settings after bulk indexing:', err.message);
-    }
-  }
 
   return cumulativeProcessedLines;
 }
