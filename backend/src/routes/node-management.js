@@ -5,6 +5,7 @@ const { getConfig, setConfig } = require("../config");
 const net = require("net");
 const { refreshClusterCache } = require("../cache/indices-cache");
 const clusterManager = require("../elasticsearch/cluster-manager");
+const { createIndexMapping } = require("../elasticsearch/client");
 
 // Helper function to check port availability
 async function isPortAvailable(port) {
@@ -159,13 +160,7 @@ router.post("/:nodeName/indices", verifyJwt, async (req, res) => {
         index: indexName,
         wait_for_active_shards: "1",
         timeout: "5s",
-        body: {
-          settings: {
-            "index.routing.allocation.require.custom_id": nodeName,
-            number_of_shards: shards || 1,
-            number_of_replicas: replicas || 0,
-          },
-        },
+        body: createIndexMapping(shards || 1, replicas || 0),
       });
     } catch (err) {
       if (err && err.message && err.message.includes("resource_already_exists_exception")) {

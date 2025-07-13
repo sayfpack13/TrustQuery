@@ -1,6 +1,6 @@
 // Cache version is controlled by the project version in package.json
 // To update the cache, bump the version in package.json (automatically injected)
-const PROJECT_VERSION = '__PROJECT_VERSION__';
+const PROJECT_VERSION = '0.1.0';
 const CACHE_NAME = `trustquery-cache-v${PROJECT_VERSION}`;
 const FILES_TO_CACHE = [
   '/',

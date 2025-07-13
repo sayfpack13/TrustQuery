@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const cors = require("cors");
 const { syncSearchIndices, getCacheFiltered, refreshClusterCache } = require("./src/cache/indices-cache");
+const { createIndexMapping } = require("./src/elasticsearch/client");
 
 // Configuration management
 const { loadConfig: loadCentralizedConfig, getConfig, setConfig } = require("./src/config");
@@ -325,6 +326,14 @@ app.post("/api/admin/parse-all-unparsed", verifyJwt, async (req, res) => {
           parseTargetNode = nodeUrl;
         }
       }
+      // Ensure index exists with correct mapping
+      const indexExists = await parseES.indices.exists({ index: parseTargetIndex });
+      if (!indexExists) {
+        await parseES.indices.create({
+          index: parseTargetIndex,
+          body: createIndexMapping(),
+        });
+      }
 
       updateTask(taskId, {
         total: grandTotalLines,
@@ -498,6 +507,14 @@ app.post("/api/admin/parse/:filename", verifyJwt, async (req, res) => {
           parseES = new Client({ node: nodeUrl });
           parseTargetNode = nodeUrl;
         }
+      }
+      // Ensure index exists with correct mapping
+      const indexExists = await parseES.indices.exists({ index: parseTargetIndex });
+      if (!indexExists) {
+        await parseES.indices.create({
+          index: parseTargetIndex,
+          body: createIndexMapping(),
+        });
       }
 
       // === Get total lines for this file once at the beginning ===
