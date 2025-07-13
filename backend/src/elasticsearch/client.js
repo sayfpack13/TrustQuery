@@ -137,8 +137,10 @@ function createIndexMapping(shards = 1, replicas = 0) {
       properties: {
         raw_line: {
           type: "text",
-          analyzer: "ngram_analyzer",
-          search_analyzer: "ngram_analyzer"
+          fields: {
+            ngram: { type: "text", analyzer: "ngram_analyzer", search_analyzer: "ngram_analyzer" },
+            keyword: { type: "keyword" }
+          }
         },
       },
     },
