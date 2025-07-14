@@ -9,6 +9,7 @@ const multer = require("multer");
 const cors = require("cors");
 const { syncSearchIndices, getCacheFiltered, refreshClusterCache } = require("./src/cache/indices-cache");
 const { createIndexMapping } = require("./src/elasticsearch/client");
+const crypto = require('crypto');
 
 // Configuration management
 const { loadConfig: loadCentralizedConfig, getConfig, setConfig } = require("./src/config");
@@ -287,7 +288,11 @@ async function parseAndIndexFiles({ files, parseTargetIndex, parseTargetNode, ba
       await parser.parseFile(
         filePath,
         async (batch) => {
-          const bulkBody = batch.flatMap((doc) => [{ index: { _index: parseTargetIndex } }, { raw_line: doc }]);
+          // Use hash of raw_line as _id for deduplication
+          const bulkBody = batch.flatMap((doc) => {
+            const id = crypto.createHash('sha256').update(doc).digest('hex');
+            return [{ index: { _index: parseTargetIndex, _id: id } }, { raw_line: doc }];
+          });
           if (bulkBody.length > 0) {
             if (parseES && parseES.bulk) {
               try {
