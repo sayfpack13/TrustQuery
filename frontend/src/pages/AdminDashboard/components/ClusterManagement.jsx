@@ -1376,10 +1376,10 @@ const ClusterManagement = React.memo(function ClusterManagement(props) {
                                     await fetchLocalNodes();
                                     if (typeof fetchAllTasks === 'function') fetchAllTasks();
                                   }}
-                                  disabled={isLoading || !exists}
+                                  disabled={isLoading || !exists || isNodeActionTaskActive(node.name, "Stop Node")}
                                   className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-lg transition-colors flex items-center space-x-2 disabled:bg-neutral-600 disabled:cursor-not-allowed"
                                 >
-                                  {isLoading ? (
+                                  {(isLoading || isNodeActionTaskActive(node.name, "Stop Node")) ? (
                                     <FontAwesomeIcon icon={faSpinner} spin />
                                   ) : (
                                     "Stop"
@@ -1393,7 +1393,7 @@ const ClusterManagement = React.memo(function ClusterManagement(props) {
                                     await fetchLocalNodes();
                                     if (typeof fetchAllTasks === 'function') fetchAllTasks();
                                   }}
-                                  disabled={isLoading || !exists}
+                                  disabled={isLoading || !exists || isNodeActionTaskActive(node.name, "Start Node")}
                                   className={buttonStyles.create}
                                 >
                                   {(isLoading || isNodeActionTaskActive(node.name, "Start Node")) ? (

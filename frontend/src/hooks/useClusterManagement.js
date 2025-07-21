@@ -245,19 +245,22 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
     setNodeActionLoading((prev) => [...prev, nodeName]);
     try {
       await axiosClient.post(`/api/admin/node-management/nodes/${nodeName}/start`);
-      // Immediately fetch tasks so the new task appears in the dashboard
       if (typeof fetchAllTasks === 'function') fetchAllTasks();
       // Poll for node to reach 'running' status
       let attempts = 0;
       let found = false;
-      while (attempts < 10) {
-        await fetchLocalNodes(true); // Only here use forceRefresh
-        const node = localNodes.find((n) => n.name === nodeName);
+      const maxAttempts = 8; // e.g., 8 attempts at 3s = 24s max
+      const pollInterval = 3000; // 3 seconds
+      while (attempts < maxAttempts) {
+        await fetchLocalNodes(true);
+        // Refetch localNodes after fetchLocalNodes
+        const latestNodes = await axiosClient.get('/api/admin/node-management/local-nodes?forceRefresh=true');
+        const node = (latestNodes.data.nodes || []).find((n) => n.name === nodeName);
         if (node && node.status === "running") {
           found = true;
           break;
         }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
         attempts++;
       }
       if (!found) {
@@ -278,24 +281,37 @@ export const useClusterManagement = (showNotification,  fetchAllTasks = null) =>
   const handleStopLocalNode = async (nodeName) => {
     setNodeActionLoading((prev) => [...prev, nodeName]);
     try {
-      await axiosClient.post(`/api/admin/node-management/nodes/${nodeName}/stop`);
-      // Immediately fetch tasks so the new task appears in the dashboard
-      if (typeof fetchAllTasks === 'function') fetchAllTasks();
-      // Poll for node to reach 'stopped' status
-      let attempts = 0;
-      let found = false;
-      while (attempts < 10) {
-        await fetchLocalNodes(true); // Only here use forceRefresh
-        const node = localNodes.find((n) => n.name === nodeName);
-        if (node && node.status === "stopped") {
-          found = true;
-          break;
+      // Start the stop node task and get the taskId
+      const response = await axiosClient.post(`/api/admin/node-management/nodes/${nodeName}/stop`);
+      const taskId = response.data?.taskId;
+      let taskCompleted = false;
+      let taskErrored = false;
+      // Poll the task endpoint for progress if taskId is available
+      if (taskId) {
+        const pollInterval = 2000;
+        const maxAttempts = 30; // up to 1 minute
+        let attempts = 0;
+        while (attempts < maxAttempts) {
+          const taskRes = await axiosClient.get(`/api/admin/tasks/${taskId}`);
+          const task = taskRes.data;
+          if (task.completed || task.status === 'completed') {
+            taskCompleted = true;
+            break;
+          }
+          if (task.status === 'error') {
+            taskErrored = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, pollInterval));
+          attempts++;
         }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        attempts++;
       }
-      if (!found) {
-        showNotificationRef.current('warning', `Node "${nodeName}" did not reach stopped state after stop.`, faExclamationTriangle);
+      // After task is done, refresh nodes
+      await fetchLocalNodes(true);
+      if (taskErrored) {
+        showNotificationRef.current('error', `Failed to stop node: Task error.`, faExclamationTriangle);
+      } else if (!taskCompleted) {
+        showNotificationRef.current('warning', `Node stop task did not complete in time.`, faExclamationTriangle);
       }
     } catch (error) {
       if (error.response && (error.response.status === 404 || error.response.status === 410)) {
