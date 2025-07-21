@@ -1725,10 +1725,10 @@ function isAdminRequest(req) {
 app.get("/api/search", async (req, res) => {
   try {
     const { q, page = 1 } = req.query;
-    const pageSize = parseInt(req.query.size || req.query.itemsPerPage) || 20;
-    const maxTotal = parseInt(req.query.max || req.query.maxTotalResults) || 10000;
+    const userPageSize = parseInt(req.query.size || req.query.itemsPerPage) || 20;
+    const userMaxTotal = parseInt(req.query.max || req.query.maxTotalResults) || 10000;
     const pageNum = parseInt(page) || 1;
-    const from = (pageNum - 1) * pageSize;
+    const from = (pageNum - 1) * userPageSize;
     const config = getConfig();
     const nodeMetadata = config.nodeMetadata || {};
     const isAdmin = isAdminRequest(req);
@@ -1774,7 +1774,10 @@ app.get("/api/search", async (req, res) => {
       indicesByNode[node].push(index);
     }
 
-    const fetchSize = Math.min(from + pageSize, maxTotal);
+    // Calculate the max results to fetch per node (buffer for sorting)
+    const hardCap = 10000;
+    const effectiveMax = Math.min(userMaxTotal, hardCap);
+    const fetchSize = Math.min(from + userPageSize * 2, effectiveMax); // buffer for sorting
 
     // For each node, query all its indices in one request
     const searchPromises = Object.entries(indicesByNode).map(async ([node, indices]) => {
@@ -1843,20 +1846,22 @@ app.get("/api/search", async (req, res) => {
         return null;
       }
     });
-    await Promise.all(searchPromises);
+    await Promise.allSettled(searchPromises);
 
     // After collecting allResults and totalCount:
-    let trimmedTotal = Math.min(totalCount, maxTotal);
+    let trimmedTotal = Math.min(totalCount, effectiveMax);
     allResults.sort((a, b) => b._score - a._score);
-    const limitedResults = allResults.slice(0, maxTotal);
-    const pagedResults = limitedResults.slice(from, from + pageSize);
+    const limitedResults = allResults.slice(0, effectiveMax);
+    const pagedResults = limitedResults.slice(from, from + userPageSize);
     const executionTime = Date.now() - startTime;
     res.json({
       results: pagedResults.map(({ _score, ...rest }) => rest),
       total: trimmedTotal,
       searchIndices: searchedIndices,
       page: pageNum,
-      size: pageSize,
+      size: userPageSize,
+      max_allowed: hardCap,
+      effective_max: effectiveMax,
       time_ms: executionTime,
       warnings: nodeWarnings.length > 0 ? nodeWarnings : undefined
     });
