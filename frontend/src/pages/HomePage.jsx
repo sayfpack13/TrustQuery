@@ -27,6 +27,8 @@ export default function HomePage() {
   const [totalCollectedData, setTotalCollectedData] = useState(0);
   const [searchMessage, setSearchMessage] = useState("");
   const [maxTotalResults, setMaxTotalResults] = useState(100); // New state for max total results
+  const [searchAfterStack, setSearchAfterStack] = useState([]); // Stack of search_after values for deep pagination
+  const [currentSearchAfter, setCurrentSearchAfter] = useState(null); // Current search_after value
 
   // Sound hooks
 
@@ -143,7 +145,7 @@ export default function HomePage() {
     fetchTotalCollectedData();
   }, []);
 
-  const fetchResults = async (queryToFetch, pageToFetch) => {
+  const fetchResults = async (queryToFetch, pageToFetch, searchAfter = null) => {
     setStatus("Searching...");
     setHasSearchedAndFound(false);
     setShowAlertAnimation(false);
@@ -162,7 +164,10 @@ export default function HomePage() {
       // Build the search URL
       let searchUrl = `/api/search?q=${encodeURIComponent(
         queryToFetch
-      )}&page=${pageToFetch}&size=${itemsPerPage}&max=${maxTotalResults}`; // Add max param
+      )}&page=${pageToFetch}&size=${itemsPerPage}&max=${maxTotalResults}`;
+      if (searchAfter) {
+        searchUrl += `&search_after=${encodeURIComponent(JSON.stringify(searchAfter))}`;
+      }
 
       const res = await fetch(searchUrl, {
         headers: headers,
@@ -172,6 +177,19 @@ export default function HomePage() {
       setResults(data.results || []);
       setTotalResults(data.total || 0);
       setSearchWarning(data.warning || "");
+
+      // Track search_after for deep pagination
+      if (data.results && data.results.length > 0) {
+        const lastResult = data.results[data.results.length - 1];
+        // Use _score and id for search_after
+        if (lastResult && typeof lastResult._score !== "undefined" && lastResult.id) {
+          setCurrentSearchAfter([lastResult._score, lastResult.id]);
+        } else {
+          setCurrentSearchAfter(null);
+        }
+      } else {
+        setCurrentSearchAfter(null);
+      }
 
       // Set search message based on results
       if (data.searchedIndices && data.searchedIndices.length > 0) {
@@ -212,11 +230,21 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }; // FIX: New useEffect to trigger search when searchTerm or currentPage changes
+  };
   useEffect(() => {
     if (searchTerm) {
-      fetchResults(searchTerm, currentPage);
+      // For page 1, reset searchAfterStack and use from/size
+      if (currentPage === 1) {
+        setSearchAfterStack([]);
+        setCurrentSearchAfter(null);
+        fetchResults(searchTerm, 1, null);
+      } else {
+        // For deep pages, use search_after from stack
+        const prevSearchAfter = searchAfterStack[currentPage - 2] || null;
+        fetchResults(searchTerm, currentPage, prevSearchAfter);
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, currentPage]);
 
   const handleSearchButtonClick = () => {
@@ -244,7 +272,15 @@ export default function HomePage() {
       pageNumber <= totalPages &&
       pageNumber !== currentPage
     ) {
-      // Just update the page number; the useEffect will handle the fetch
+      // If going forward, push current search_after to stack
+      if (pageNumber > currentPage && currentSearchAfter) {
+        setSearchAfterStack((prev) => {
+          const newStack = [...prev];
+          newStack[currentPage - 1] = currentSearchAfter;
+          return newStack;
+        });
+      }
+      // If going backward, just update page (stack will be used)
       setCurrentPage(pageNumber);
     }
   };

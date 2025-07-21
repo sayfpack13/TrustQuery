@@ -1724,7 +1724,7 @@ function isAdminRequest(req) {
 // GET search endpoint (public endpoint)
 app.get("/api/search", async (req, res) => {
   try {
-    const { q, page = 1 } = req.query;
+    const { q, page = 1, search_after: userSearchAfter } = req.query;
     const userPageSize = parseInt(req.query.size || req.query.itemsPerPage) || 20;
     const userMaxTotal = parseInt(req.query.max || req.query.maxTotalResults) || 10000;
     const pageNum = parseInt(page) || 1;
@@ -1778,6 +1778,9 @@ app.get("/api/search", async (req, res) => {
     const hardCap = 10000;
     const effectiveMax = Math.min(userMaxTotal, hardCap);
     const fetchSize = Math.min(from + userPageSize * 2, effectiveMax); // buffer for sorting
+    const terminateAfter = effectiveMax; // per-shard early termination
+    const preFilterShardSize = Math.max(1, Math.floor(effectiveMax / userPageSize));
+    let earlyTerminated = false;
 
     // For each node, query all its indices in one request
     const searchPromises = Object.entries(indicesByNode).map(async ([node, indices]) => {
@@ -1797,24 +1800,40 @@ app.get("/api/search", async (req, res) => {
       const es = clientsCache[nodeUrl];
       try {
         // Use wildcard query for substring search
+        const searchBody = {
+          _source: ["raw_line"],
+          sort: ["_score", "_id"],
+          query: {
+            wildcard: {
+              raw_line: {
+                value: `*${q}*`,
+                case_insensitive: true
+              }
+            }
+          },
+          terminate_after: terminateAfter,
+          pre_filter_shard_size: preFilterShardSize
+        };
+        if (userSearchAfter) {
+          // Use search_after for deep pagination
+          try {
+            const parsedSearchAfter = JSON.parse(userSearchAfter);
+            if (Array.isArray(parsedSearchAfter)) {
+              searchBody.search_after = parsedSearchAfter;
+            }
+          } catch (e) {
+            // Ignore parse error, fallback to from/size
+          }
+        } else {
+          searchBody.from = 0;
+          searchBody.size = fetchSize;
+        }
         const response = await es.search({
           index: indices,
           track_total_hits: true,
-          from: 0, // Always fetch from 0 for merging
-          size: fetchSize,
-          body: {
-            _source: ["raw_line"],
-            sort: ["_score"],
-            query: {
-              wildcard: {
-                raw_line: {
-                  value: `*${q}*`,
-                  case_insensitive: true
-                }
-              }
-            }
-          }
+          body: searchBody
         });
+        if (response.terminated_early) earlyTerminated = true;
         const indexResults = response.hits.hits.map((hit) => {
           const parsedAccount = parser.parseLineForDisplay(hit._source.raw_line);
           if (isAdmin) {
@@ -1862,6 +1881,10 @@ app.get("/api/search", async (req, res) => {
       size: userPageSize,
       max_allowed: hardCap,
       effective_max: effectiveMax,
+      terminate_after: terminateAfter,
+      pre_filter_shard_size: preFilterShardSize,
+      used_search_after: !!userSearchAfter,
+      early_terminated: earlyTerminated,
       time_ms: executionTime,
       warnings: nodeWarnings.length > 0 ? nodeWarnings : undefined
     });
