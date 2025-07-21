@@ -1802,7 +1802,7 @@ app.get("/api/search", async (req, res) => {
         // Use wildcard query for substring search
         const searchBody = {
           _source: ["raw_line"],
-          sort: ["_score", "_id"],
+          // sort: ["_score", "_id"], // REMOVE sort for fastest results
           query: {
             wildcard: {
               raw_line: {
