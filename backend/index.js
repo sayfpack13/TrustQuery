@@ -1812,7 +1812,6 @@ app.get("/api/search", async (req, res) => {
             }
           },
           terminate_after: terminateAfter,
-          pre_filter_shard_size: preFilterShardSize
         };
         if (userSearchAfter) {
           // Use search_after for deep pagination
@@ -1831,6 +1830,7 @@ app.get("/api/search", async (req, res) => {
         const response = await es.search({
           index: indices,
           track_total_hits: true,
+          pre_filter_shard_size: preFilterShardSize, // <-- move here
           body: searchBody
         });
         if (response.terminated_early) earlyTerminated = true;
