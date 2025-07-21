@@ -182,6 +182,28 @@ export const useAdminDashboard = () => {
     }
   };
 
+  // Function to clear all tasks from the list (dismiss all from UI and backend)
+  const clearAllTasks = async () => {
+    try {
+      // Try to call a bulk delete endpoint if available
+      // await axiosClient.delete('/api/admin/tasks');
+      // Otherwise, delete each task individually
+      await Promise.all(tasksList.map(async (task) => {
+        try {
+          await axiosClient.delete(`/api/admin/tasks/${task.taskId}`);
+        } catch (err) {
+          // Ignore backend errors for now
+        }
+      }));
+    } catch (err) {
+      // Ignore errors for now
+    }
+    setTasksList([]);
+    localStorage.removeItem("currentTaskId");
+    setCurrentRunningTaskId(null);
+    setLastNotifiedTaskId(null);
+  };
+
   // Effect to play sound when error state changes (for general errors, not task errors)
   useEffect(() => {
     if (error) {
@@ -248,6 +270,7 @@ export const useAdminDashboard = () => {
     estimateRemainingTime,
     removeTask,
     setError,
+    clearAllTasks,
 
     // Setters
     setCurrentRunningTaskId,
