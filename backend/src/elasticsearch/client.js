@@ -5,6 +5,7 @@ const { Client } = require("@elastic/elasticsearch");
 const { getConfig } = require("../config");
 const { getEnvAndConfig } = require("./node-config");
 const { buildNodeMetadata } = require("./node-metadata");
+const { isPortOpen } = require("./node-utils");
 
 let es;
 let esWrite;
@@ -96,9 +97,22 @@ function getSingleNodeClient(nodeOrUrl) {
 }
 
 // Helper function to check if Elasticsearch is available
-async function isElasticsearchAvailable() {
+async function isElasticsearchAvailable(opts = {}) {
   try {
     if (!es) return false;
+    // Get the first node URL from the client config
+    const nodeUrl = (es.connectionPool && es.connectionPool.connections && es.connectionPool.connections.length > 0)
+      ? es.connectionPool.connections[0].url.href
+      : null;
+    if (!nodeUrl) return false;
+    const urlObj = new URL(nodeUrl);
+    const host = urlObj.hostname;
+    const port = parseInt(urlObj.port) || 9200;
+    // Fast TCP port check by default
+    const portOpen = await isPortOpen(host, port, 300);
+    if (!portOpen) return false;
+    if (!opts.fullHttpCheck) return true;
+    // If fullHttpCheck is requested, do a real ES ping
     await es.ping();
     return true;
   } catch (error) {

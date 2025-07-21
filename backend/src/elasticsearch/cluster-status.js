@@ -1,7 +1,5 @@
-const { getES } = require("../elasticsearch/client");
 const { getConfig } = require("../config");
-const { isNodeRunning } = require("./node-process");
-const { getNodeMetadata, listNodes } = require("./node-metadata");
+const { listNodes } = require("./node-metadata");
 
 /**
  * Get cluster status

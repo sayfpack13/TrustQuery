@@ -274,14 +274,14 @@ async function removeNode(nodeName) {
   let wasRunning = false;
   try {
     // Check if node is running and stop it first
-    wasRunning = await isNodeRunning(nodeName);
+    wasRunning = await isNodeRunning(nodeName); // default is fast TCP port check
     if (wasRunning) {
       try {
         await stopNode(nodeName);
 
         // Wait a moment and verify it's actually stopped
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        const stillRunning = await isNodeRunning(nodeName);
+        const stillRunning = await isNodeRunning(nodeName); // default is fast TCP port check
         if (stillRunning) {
           throw new Error(
             `Node ${nodeName} is still running after stopping. Please manually stop the node.`

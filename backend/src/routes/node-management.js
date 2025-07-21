@@ -7,17 +7,7 @@ const { refreshClusterCache } = require("../cache/indices-cache");
 const clusterManager = require("../elasticsearch/cluster-manager");
 const { createIndexMapping } = require("../elasticsearch/client");
 
-// Helper function to check port availability
-async function isPortAvailable(port) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once("error", () => resolve(false));
-    server.once("listening", () => {
-      server.close(() => resolve(true));
-    });
-    server.listen(port, "0.0.0.0");
-  });
-}
+
 
 const router = express.Router();
 
@@ -953,7 +943,6 @@ router.post("/nodes/repair-and-verify", verifyJwt, async (req, res) => {
 // GET all local nodes and indices-by-nodes (for frontend dashboard)
 router.get("/local-nodes", verifyJwt, async (req, res) => {
   try {
-    const { listNodes } = require("../elasticsearch/node-metadata");
     const { getConfig } = require("../config");
     const forceRefresh = req.query.forceRefresh === "true";
     if (forceRefresh) {

@@ -2,9 +2,9 @@ const net = require("net");
 const { getConfig } = require("../config");
 
 /**
- * Check if a node is running and ready (TCP port + HTTP check)
+ * Check if a node is running and ready (TCP port check by default, HTTP check only if opts.fullHttpCheck is true)
  * @param {string} nodeName
- * @param {object} [opts] - { fastMode: boolean } if true, only check port
+ * @param {object} [opts] - { fullHttpCheck: boolean } if true, also check HTTP endpoint
  */
 async function isNodeRunning(nodeName, opts = {}) {
   const nodeMetadata = getConfig("nodeMetadata") || {};
@@ -28,11 +28,11 @@ async function isNodeRunning(nodeName, opts = {}) {
     host = "localhost";
     port = 9200;
   }
-  // First, check if the port is open
+  // Always use fast TCP port check by default
   const portOpen = await isPortOpen(host, port, 300);
   if (!portOpen) return false;
-  if (opts.fastMode) return true;
-  // Next, check if the Elasticsearch HTTP endpoint responds (HEAD, short timeout)
+  if (!opts.fullHttpCheck) return true;
+  // If fullHttpCheck is requested, check the Elasticsearch HTTP endpoint (HEAD, short timeout)
   try {
     const url = `http://${host}:${port}/`;
     const controller = new AbortController();

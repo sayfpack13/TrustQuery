@@ -1,13 +1,3 @@
-const fs = require("fs").promises;
-const path = require("path");
-const { getSingleNodeClient } = require("../elasticsearch/client");
-const { getConfig, setConfig } = require("../config");
-const clusterManager = require("../elasticsearch/cluster-manager");
-const { getClient } = require("../elasticsearch/client");
-const { buildNodeMetadata } = require("../elasticsearch/node-metadata");
-const { isPortOpen } = require("../elasticsearch/node-utils");
-
-// Refactored: All indices are now stored in nodeMetadata in config.json
 
 // Get indices for all nodes from config.nodeMetadata
 async function getCacheFiltered() {
@@ -43,7 +33,7 @@ async function refreshClusterCache() {
     const { isNodeRunning } = require("../elasticsearch/node-utils");
     let nodeActuallyRunning = false;
     try {
-      nodeActuallyRunning = await isNodeRunning(nodeName, { fastMode: true });
+      nodeActuallyRunning = await isNodeRunning(nodeName); // default is fast TCP port check
     } catch (e) {
       nodeActuallyRunning = false;
     }
